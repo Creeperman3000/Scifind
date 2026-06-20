@@ -4,7 +4,7 @@
 
 This project stores physics formulas and their variables in a structured SQL database. Each formula is broken down into terms, and each term is a product of coefficients and variables raised to exponents. A LaTeX compilation engine reads the structured data and renders display LaTeX.
 
-There are 6 tables: `formulas`, `formula_items`, `formula_conditions`, `formula_relations`, `variables`, `variable_units`.
+There are 6 tables: `formulas`, `formula_items`, `conditions`, `formula_relations`, `variables`, `units`.
 
 ---
 
@@ -12,35 +12,35 @@ There are 6 tables: `formulas`, `formula_items`, `formula_conditions`, `formula_
 
 One row per equation.
 
-| Column      | Type        | i18n | Notes                            |
-| ----------- | ----------- | ---- | -------------------------------- |
-| id          | TEXT PK     |      | `newton_second`                  |
-| name        | TEXT (JSON) | ✓    | `{"en":"Newton's Second Law"}`   |
-| science     | TEXT (JSON) | ✓    | Physics (might expand)           |
-| branch      | TEXT (JSON) | ✓    | Classical Mechanics              |
-| topic       | TEXT (JSON) | ✓    | Kinematics                       |
-| difficulty  | INTEGER     |      | 1–10                             |
-| description | TEXT (JSON) | ✓    |                                  |
-| links       | TEXT (JSON) | ✓    | `[{"label":{i18n},"url":"..."}]` |
-| created_at  | TEXT        |      |                                  |
-| updated_at  | TEXT        |      |                                  |
+| Column      | Type        | i18n | Notes                                    |
+| ----------- | ----------- | ---- | ---------------------------------------- |
+| id          | TEXT PK     |      | `newton_second_law_of_motion`            |
+| name        | TEXT (JSON) | ✓    | `{"en":"Newton's second law of motion"}` |
+| science     | TEXT (JSON) | ✓    | Physics                                  |
+| branch      | TEXT (JSON) | ✓    | Classical mechanics                      |
+| topic       | TEXT (JSON) | ✓    | Kinematics                               |
+| difficulty  | INTEGER     |      | 1–10                                     |
+| description | TEXT (JSON) | ✓    |                                          |
+| links       | TEXT (JSON) | ✓    | `[{"label":{i18n},"url":"..."}]`         |
+| created     | TEXT        |      |                                          |
+| modified    | TEXT        |      |                                          |
 
 
-| id              | name (en)           | branch              | topic              | difficulty |
-| --------------- | ------------------- | ------------------- | ------------------ | ---------- |
-| `newton_second` | Newton's Second Law | Classical Mechanics | Dynamics           | 2          |
-| `suvat_v2`      | SUVAT               | Classical Mechanics | Kinematics         | 3          |
-| `ideal_gas_law` | Ideal Gas Law       | Thermodynamics      | Equations of State | 4          |
+| id                            | name (en)                     | branch              | topic              | difficulty |
+| ----------------------------- | ----------------------------- | ------------------- | ------------------ | ---------- |
+| `newton_second_law_of_motion` | Newton's second law of motion | Classical mechanics | Dynamics           | 2          |
+| `suvat_v2`                    | SUVAT                         | Classical mechanics | Kinematics         | 3          |
+| `ideal_gas_law`               | Ideal gas law                 | Thermodynamics      | Equations of state | 4          |
 
 **Notes:**
 - Related/alternative formulas are stored in `formula_relations`, not as JSON columns here.
-- Condition-triggered alternatives are stored in `formula_conditions`, not here.
+- Condition-triggered alternatives are stored in `conditions`, not here.
 
 ---
 
 ## 2. `formula_items`
 
-Breaks a formula into terms and their factors (products). Every row represents one factor in the product that makes up one summand.
+Breaks a formula into terms and their factors (products).
 
 | Column         | Type       | Notes                                                                                       |
 | -------------- | ---------- | ------------------------------------------------------------------------------------------- |
@@ -49,12 +49,12 @@ Breaks a formula into terms and their factors (products). Every row represents o
 | term           | INTEGER    | groups factors that multiply together (same term = multiply, different term = add/subtract) |
 | is_primary     | BOOLEAN    | 1 = primary variable (left of =), 0 = variable on the other side                            |
 | sort_order     | INTEGER    | order within a term's product (left to right)                                               |
-| coeff_value    | REAL       | NULL = implied 1                                                                            |
+| coeff_value    | REAL       | NULL = 1                                                                                    |
 | coeff_special  | TEXT       | `"pi"`, `"e"`                                                                               |
 | coeff_exponent | REAL       | default 1                                                                                   |
 | variable_id    | TEXT FK    | NULL = pure-coefficient row; `REFERENCES variables(id)`                                     |
 | var_exponent   | REAL       | default 1                                                                                   |
-| label          | TEXT       | subscript, e.g. `"1"`, `"initial"`, `"total"`                                               |
+| label          | TEXT       | subscript, e.g. `"1"`                                                                       |
 | latex_prefix   | TEXT       | LaTeX wrapper before, e.g. `\overline{`, `\hat{`, `\left\lvert`                             |
 | latex_suffix   | TEXT       | LaTeX wrapper after, e.g. `}`, `\right\rvert`                                               |
 
@@ -62,10 +62,10 @@ Breaks a formula into terms and their factors (products). Every row represents o
 
 All items are stored as they would appear on the right side of `=`. The `is_primary` flag marks items that move to the left side for display ⇒ when they cross `=`, their exponent sign flips.
 
-- Different `term` = addition between them.
-- Same `term` = multiplication.
-- `is_primary=1` → moves left of `=` → exponent sign flips.
-- `is_primary=0` → stays right of `=` → exponent unchanged.
+- different `term` = addition between them
+- same `term` = multiplication
+- `is_primary=1` → moves left of `=` → exponent sign flips (we are dividing by it)
+- `is_primary=0` → stays right of `=` → exponent unchanged
 - After flipping, items in the same `term` that were split across sides are multiplied together in the rendered equation.
 
 **Example — F = ma stored as RHS:**
@@ -76,7 +76,7 @@ All items are stored as they would appear on the right side of `=`. The `is_prim
 | mass   | 0          | 1          | RHS          | 1           |
 | accel  | 0          | 1          | RHS          | 1           |
 
-Rendered: `F¹ = m¹·a¹` → F = ma
+ `1 = F⁻¹·m¹·a¹` → F = ma
 
 ### Examples
 
@@ -88,7 +88,6 @@ Rendered: `F¹ = m¹·a¹` → F = ma
 | 1    | 0          | 0          | mass         | 1            |
 | 1    | 0          | 1          | acceleration | 1            |
 
-Stored: force⁻¹·mass¹·acceleration¹ → flip is_primary: force¹ = mass¹·acceleration¹ ✓
 
 **Ek = ½mv²:**
 
@@ -99,7 +98,6 @@ Stored: force⁻¹·mass¹·acceleration¹ → flip is_primary: force¹ = mass¹
 | 1    | 0          | 1          |             |                | mass        | 1            |       |
 | 1    | 0          | 2          |             |                | velocity    | 2            |       |
 
-Stored: Ek⁻¹·2⁻¹·mass¹·velocity² → flip is_primary: Ek¹ = 2⁻¹·mass¹·velocity² ✓
 
 **v² = u² + 2as:**
 
@@ -111,7 +109,6 @@ Stored: Ek⁻¹·2⁻¹·mass¹·velocity² → flip is_primary: Ek¹ = 2⁻¹·
 | 3    | 0          | 1          |             | acceleration | 1            |         |
 | 3    | 0          | 2          |             | length       | 1            |         |
 
-Stored: v_f⁻² + v_i² + 2·accel¹·length¹ → flip is_primary: v_f² = v_i² + 2·accel¹·length¹ ✓
 
 **ΔU = Q − W (work done by system):**
 
@@ -122,7 +119,6 @@ Stored: v_f⁻² + v_i² + 2·accel¹·length¹ → flip is_primary: v_f² = v_i
 | 3    | 0          | 0          | -1          | 1              |                        |              |
 | 3    | 0          | 1          |             |                | work                   | 1            |
 
-Stored: ΔU⁻¹ + heat¹ + (−1)·work¹ → flip is_primary: ΔU¹ = heat¹ − work¹ ✓
 
 **m₁u₁ + m₂u₂ = m₁v₁ + m₂v₂ (conservation of momentum):**
 
@@ -137,7 +133,6 @@ Stored: ΔU⁻¹ + heat¹ + (−1)·work¹ → flip is_primary: ΔU¹ = heat¹ �
 | 4    | 0          | 0          | mass        | 1            | 2       |
 | 4    | 0          | 1          | velocity    | 1            | final   |
 
-Stored: m₁⁻¹·u₁⁻¹ + m₂⁻¹·u₂⁻¹ + m₁¹·v₁¹ + m₂¹·v₂¹ → flip is_primary: m₁¹·u₁¹ + m₂¹·u₂¹ = m₁¹·v₁¹ + m₂¹·v₂¹ ✓
 
 **PV = nRT (Ideal Gas Law):**
 
@@ -149,7 +144,6 @@ Stored: m₁⁻¹·u₁⁻¹ + m₂⁻¹·u₂⁻¹ + m₁¹·v₁¹ + m₂¹·v
 | 2    | 0          | 1          | gas_constant | 1            |
 | 2    | 0          | 2          | temperature  | 1            |
 
-Stored: P⁻¹·V⁻¹ + n¹·R¹·T¹ → flip is_primary: P¹·V¹ = n¹·R¹·T¹ ✓
 
 **T² ∝ a³ (Kepler's Third Law) with coefficient 4π²:**
 
@@ -162,7 +156,6 @@ Stored: P⁻¹·V⁻¹ + n¹·R¹·T¹ → flip is_primary: P¹·V¹ = n¹·R¹�
 | 2    | 0          | 3          |             |               |                | mass                   | -1           |
 | 2    | 0          | 4          |             |               |                | length                 | 3            |
 
-Stored: T⁻² = 4¹·π²·G⁻¹·M⁻¹·L³ → flip is_primary: T² = 4¹·π²·G⁻¹·M⁻¹·L³ ✓
 
 **1/R = 1/R₁ + 1/R₂ (parallel resistance):**
 
@@ -172,13 +165,12 @@ Stored: T⁻² = 4¹·π²·G⁻¹·M⁻¹·L³ → flip is_primary: T² = 4¹·
 | 2    | 0          | 0          | resistance  | -1           | 1     |
 | 3    | 0          | 0          | resistance  | -1           | 2     |
 
-Stored: R¹ + R₁⁻¹ + R₂⁻¹ → flip is_primary: R⁻¹ = R₁⁻¹ + R₂⁻¹ ✓
 
 ---
 
-## 3. `formula_conditions`
+## 3. `conditions`
 
-Togglable assumptions for a formula. Each condition has a default state. When toggled off, the display swaps to an alternative formula.
+Togglable assumptions for a formula. Each condition has a default state. When toggled, the display swaps to an alternative formula.
 
 | Column                 | Type        | i18n | Notes                                                                |
 | ---------------------- | ----------- | ---- | -------------------------------------------------------------------- |
@@ -188,8 +180,10 @@ Togglable assumptions for a formula. Each condition has a default state. When to
 | default_on             | BOOLEAN     |      | 1 = on by default (hidden from user unless explicitly shown)         |
 | alternative_formula_id | TEXT FK     |      | `REFERENCES formulas(id)` — shown when this condition is toggled OFF |
 | sort_order             | INTEGER     |      |                                                                      |
+| created                | TEXT        |      |                                                                      |
+| modified               | TEXT        |      |                                                                      |
 
-**Bidirectional linking:** Query forward with `formula_conditions.formula_id` → `alternative_formula_id`. Query backward with `SELECT * FROM formula_conditions WHERE alternative_formula_id = ?` to find all formulas that lead to this one.
+**Bidirectional linking:** Query forward with `conditions.formula_id` → `alternative_formula_id`. Query backward with `SELECT * FROM conditions WHERE alternative_formula_id = ?` to find all formulas that lead to this one.
 
 | formula_id      | condition_text (en)    | default_on | alternative_formula_id |
 | --------------- | ---------------------- | ---------- | ---------------------- |
@@ -197,17 +191,13 @@ Togglable assumptions for a formula. Each condition has a default state. When to
 | `boyles_law`    | Constant temperature   | 1          | `ideal_gas_law`        |
 | `boyles_law`    | Constant amount of gas | 1          | `ideal_gas_law`        |
 
-**Note:** By default, conditions are not displayed as a module in the UI. They are hidden unless the user expands them.
+**Note:** In the UI, the user has an option below the equation to change the equation by toggling these assumptions.
 
 ---
 
 ## 4. `formula_relations`
 
 Junction table for typed relationships between formulas. Replaces JSON array columns `alternative_formulas`, `related_formulas`, and `conditioned_formulas`.
-
-### Why junction tables instead of JSON arrays?
-
-> JSON arrays in a column are like writing related formula IDs on a sticky note and sticking it to the formula. If you rename a formula, you must find and update every sticky note that mentions it — easy to miss one. A junction table is like a proper filing cabinet: each relationship is its own row with database-enforced links. Rename a formula, and the database automatically updates or refuses the change. You can also ask "what does this formula relate to?" AND "what relates to this formula?" with equal ease.
 
 ```sql
 -- Forward: what is this formula related to?
@@ -218,18 +208,18 @@ SELECT formula_id FROM formula_relations WHERE related_id = 'newton_second';
 ```
 
 | Column                         | Type    | Notes                                                                         |
-| --------                       | ------  | -------                                                                       |
+| ------------------------------ | ------- | ----------------------------------------------------------------------------- |
 | formula_id                     | TEXT FK | source formula; `REFERENCES formulas(id)`                                     |
 | related_id                     | TEXT FK | target formula; `REFERENCES formulas(id)`                                     |
 | relation_type                  | TEXT    | `alternative`, `derivation`, `special_case`, `prerequisite`, `generalization` |
 | UNIQUE(formula_id, related_id) |         | prevents duplicate entries                                                    |
 
 
-| formula_id       | related_id      | relation_type   |
-| ------------     | -----------     | --------------- |
-| `kinetic_energy` | `work_energy`   | derivation      |
-| `ideal_gas_law`  | `boyles_law`    | special_case    |
-| `ideal_gas_law`  | `van_der_waals` | generalization  |
+| formula_id       | related_id      | relation_type  |
+| ---------------- | --------------- | -------------- |
+| `kinetic_energy` | `work_energy`   | derivation     |
+| `ideal_gas_law`  | `boyles_law`    | special_case   |
+| `ideal_gas_law`  | `van_der_waals` | generalization |
 
 ---
 
@@ -237,163 +227,60 @@ SELECT formula_id FROM formula_relations WHERE related_id = 'newton_second';
 
 One row per physical quantity. Used as a dictionary for all symbols that can appear in formulas.
 
-| Column      | Type        | i18n   | Notes                                                                            |
-| --------    | ------      | ------ | -------                                                                          |
-| id          | TEXT PK     |        | slug, e.g. `force`                                                               |
-| name        | TEXT (JSON) | ✓      | `{"en":"Force"}`                                                                 |
-| science     | TEXT (JSON) | ✓      |                                                                                  |
-| branch      | TEXT (JSON) | ✓      |                                                                                  |
-| topic       | TEXT (JSON) | ✓      |                                                                                  |
-| difficulty  | INTEGER     |        | 1–10                                                                             |
-| description | TEXT (JSON) | ✓      |                                                                                  |
-| links       | TEXT (JSON) | ✓      |                                                                                  |
-| si_unit     | TEXT        |        | `newton`                                                                         |
-| latex       | TEXT        |        | LaTeX symbol: `\theta`, `\sin`, `\infty`, `\Delta`; NULL → auto-generate from id |
-| base_dims   | TEXT (JSON) |        | `{"M":1,"L":1,"T":-2,"I":0,"Θ":0,"N":0,"J":0}`                                   |
-| created_at  | TEXT        |        |                                                                                  |
-| updated_at  | TEXT        |        |                                                                                  |
+| Column      | Type        | i18n | Notes                                          |
+| ----------- | ----------- | ---- | ---------------------------------------------- |
+| id          | TEXT PK     |      | `force`                                        |
+| name        | TEXT (JSON) | ✓    | `{"en":"Force"}`                               |
+| latex       | TEXT        |      | `F`                                            |
+| science     | TEXT (JSON) | ✓    |                                                |
+| branch      | TEXT (JSON) | ✓    |                                                |
+| topic       | TEXT (JSON) | ✓    |                                                |
+| difficulty  | INTEGER     |      | 1–10                                           |
+| description | TEXT (JSON) | ✓    |                                                |
+| links       | TEXT (JSON) | ✓    |                                                |
+| si_unit     | TEXT        |      | `newton`                                       |
+| base_dims   | TEXT (JSON) |      | `{"M":1,"L":1,"T":-2,"I":0,"Θ":0,"N":0,"J":0}` |
+| created     | TEXT        |      |                                                |
+| modified    | TEXT        |      |                                                |
 
 **Base dimension keys:** M (mass), L (length), T (time), I (electric current), Θ (temperature), N (amount of substance), J (luminous intensity).
 
-**`latex` column** handles all special LaTeX symbol rendering:
-
-| Kind               | variable_id   | latex value   | Renders as   |
-| ------             | ------------- | ------------- | ------------ |
-| Greek letter       | theta         | `\theta`      | θ            |
-| Capital Greek      | delta         | `\Delta`      | Δ            |
-| Standard function  | sin           | `\sin`        | sin          |
-| Constant           | pi            | `\pi`         | π            |
-| Infinity           | infty         | `\infty`      | ∞            |
-| Arrow              | to            | `\to`         | →            |
-| Relation           | proportional  | `\propto`     | ∝            |
-| Accent             | hbar          | `\hbar`       | ℏ            |
-| Vector operator    | nabla         | `\nabla`      | ∇            |
-| Partial derivative | partial       | `\partial`    | ∂            |
-
-When `latex` is NULL, the engine auto-generates a LaTeX variable name from the `id` (e.g., `velocity` → `v`, `mass` → `m`). Override it when the auto-generated name doesn't match physics conventions.
-
-| id           | name (en)    | latex    | si_unit     | base_dims                            |
-| ----         | -----------  | -------  | ---------   | -----------                          |
-| force        | Force        | `F`      | N           | `{"M":1,"L":1,"T":-2}`               |
-| velocity     | Velocity     | `v`      | m·s⁻¹       | `{"L":1,"T":-1}`                     |
-| theta        | Angle        | `\theta` | rad         | `{}`                                 |
-| gas_constant | Gas constant | `R`      | J·mol⁻¹·K⁻¹ | `{"M":1,"L":2,"T":-2,"N":-1,"Θ":-1}` |
-| infinity     | Infinity     | `\infty` |             | `{}`                                 |
-
 ---
 
-## 6. `variable_units`
+## 6. `units`
 
 Alternative units for each variable with conversion factors to SI.
 
-| Column       | Type       | Notes                                                                |
-| --------     | ------     | -------                                                              |
-| id           | INTEGER PK |                                                                      |
-| variable_id  | TEXT FK    | `REFERENCES variables(id)`                                           |
-| unit         | TEXT       | display label: `cm`, `°C`                                            |
-| symbol       | TEXT       | LaTeX symbol: `cm`, `\text{\textdegree C}`                           |
-| factor_to_si | REAL       | multiply by this to get SI (1 for SI itself)                         |
-| offset       | REAL       | additive conversion (0 except for temperature: °C→K = 273.15)        |
-| is_default   | BOOLEAN    | 1 = default display unit (the SI unit for this variable)             |
-| unit_system  | TEXT       | `"SI"`, `"CGS"`, `"Imperial"`, NULL (NULL = available in any system) |
+| Column       | Type    | Notes                                                                |
+| ------------ | ------- | -------------------------------------------------------------------- |
+| id           | TEXT PK | `millimeter`, `degree_celsius`                                       |
+| variable_id  | TEXT FK | `REFERENCES variables(id)`                                           |
+| symbol       | TEXT    | LaTeX symbol: `mm`, `\text{\textdegree C}`                           |
+| factor_to_si | REAL    | multiply by this to get SI (1 for SI itself)                         |
+| offset       | REAL    | additive conversion (0 except for temperature)                       |
+| si_unit      | BOOLEAN | 1 = default display unit                                             |
+| unit_system  | TEXT    | `"SI"`, `"CGS"`, `"Imperial"`, NULL (NULL = available in any system) |
 
-**Default behavior:** Every variable uses SI units by default. The `is_default` flag marks which row in `variable_units` is the SI default for that variable. When a user globally switches to CGS (or overrides an individual variable), the app applies the matching `unit_system` tag for base variables, then auto-computes derived variable units from their `base_dims`.
+**Default behavior:** Every variable uses SI units by default. The `si_unit` flag marks which row in `units` is the SI default for that variable. When a user globally switches to CGS (or overrides an individual variable), the app applies the matching `unit_system` tag for base variables, then auto-computes derived variable units from their `base_dims`.
 
-| variable_id   | unit   | symbol               | factor_to_si  | offset   | is_default   | unit_system   |
-| ------------- | ------ | --------             | ------------- | -------- | ------------ | ------------- |
-| length        | m      | m                    | 1             | 0        | 1            | SI            |
-| length        | cm     | cm                   | 0.01          | 0        | 0            | CGS           |
-| temperature   | K      | K                    | 1             | 0        | 1            | SI            |
-| temperature   | °C     | \text{\textdegree C} | 1             | 273.15   | 0            | generic       |
-| mass          | kg     | kg                   | 1             | 0        | 1            | SI            |
-| mass          | g      | g                    | 0.001         | 0        | 0            | CGS           |
-| force         | N      | N                    | 1             | 0        | 1            | SI            |
-| force         | dyn    | dyn                  | 1e-5          | 0        | 0            | CGS           |
+| id             | variable_id | symbol               | factor_to_si | offset | si_unit | unit_system |
+| -------------- | ----------- | -------------------- | ------------ | ------ | ------- | ----------- |
+| meter          | length      | m                    | 1            | 0      | 1       | SI          |
+| centimeter     | length      | cm                   | 0.01         | 0      | 0       | CGS         |
+| kelvin         | temperature | K                    | 1            | 0      | 1       | SI          |
+| degree_celsius | temperature | \text{\textdegree C} | 1            | 273.15 | 0       | generic     |
+| kilogram       | mass        | kg                   | 1            | 0      | 1       | SI          |
+| gram           | mass        | g                    | 0.001        | 0      | 0       | CGS         |
+| newton         | force       | N                    | 1            | 0      | 1       | SI          |
+| dyne           | force       | dyn                  | 1e-5         | 0      | 0       | CGS         |
 
-**Auto-conversion of derived units:** When the user switches `length→cm` (factor 0.01) and `mass→g` (factor 0.001), the app looks up each variable's `base_dims` and computes the combined conversion factor:
-
-| Variable           | base_dims      | Computed factor             | Composed unit symbol  |
-| ----------         | -----------    | ----------------            | --------------------- |
-| force (M¹·L¹·T⁻²)  | M:1, L:1, T:-2 | 0.001¹ × 0.01¹ × 1⁻² = 10⁻⁵ | g·cm·s⁻² (= dyn)      |
-| energy (M¹·L²·T⁻²) | M:1, L:2, T:-2 | 0.001¹ × 0.01² × 1⁻² = 10⁻⁷ | g·cm²·s⁻² (= erg)     |
-
-The app can either match the result against `variable_units` (e.g., find `dyn` for force) or compose the unit label from the base symbols.
 
 ---
 
-## Rendering
-
-### Structural rendering rule
-
-```
-primary_terms   = filter(formula_items, is_primary=1)
-other_terms     = filter(formula_items, is_primary=0)
-
-render(terms):
-  for each unique term value (sorted ascending):
-    items = same term, sorted by sort_order
-    rendered = join items (multiplication)
-  return join rendered terms with " + "
-
-// is_primary items cross the equals sign → exponent sign flips
-flip_sign(items):
-  for each item: exponent = -exponent
-
-result = render(flip_sign(primary_terms)) + " = " + render(other_terms)
-```
-
-**Sign convention:** A term with `coeff_value=-1` and no variable renders as the minus sign. When the first item in a term has `coeff_value` negative, the "+" between terms is rendered as "-".
-
-### LaTeX compilation engine
-
-The structural data from `formula_items` is fed to a LaTeX compilation engine that produces the final display LaTeX. The engine handles all typographic details:
-
-| What               | How                                       | Source                                                  |
-| ------             | -----                                     | --------                                                |
-| Variable symbol    | `\theta`, `\sin`, `v`                     | `variables.latex` (auto-generated from id if NULL)      |
-| Subscript label    | `_{1}`, `_{\text{initial}}`               | `label` column (numeric bare subscript, text `\text{}`) |
-| Exponent           | `^{2}`, `^{-1}`                           | `var_exponent`, `coeff_exponent`                        |
-| Fraction           | `\frac{1}{2}`                             | Negative `coeff_exponent` of a pure coefficient         |
-| Special constant   | `\pi`, `e`                                | `coeff_special`                                         |
-| Accent/overline    | `\overline{v}`, `\hat{F}`                 | `latex_prefix` / `latex_suffix` wrapping the factor     |
-| Delimiters         | `\lvert x \rvert`, `\langle \psi \rangle` | `latex_prefix` / `latex_suffix`                         |
-| Negation           | `- W`                                     | `coeff_value=-1` without coefficient display            |
-| Greek letters      | `\Delta`, `\theta`, `\mu`                 | `variables.latex`                                       |
-| Standard functions | `\sin`, `\cos`, `\lim`, `\det`            | `variables.latex`                                       |
-| Named operators    | `\nabla`, `\partial`, `\Box`              | `variables.latex`                                       |
-| Relation symbols   | `\propto`, `\approx`, `\neq`              | `variables.latex`                                       |
-| Arrows             | `\to`, `\Rightarrow`                      | `variables.latex`                                       |
-| Infinity           | `\infty`                                  | `variables.latex`                                       |
-
-### What is OUT OF SCOPE for v1 (may be handled later)
+### What is **out of scope** for v1 (may be handled later)
 
 - Variable-sized symbols with limits: `∑`, `∫`, `∏` with lower/upper bounds
 - Matrices and determinants
 - Cases/environments
 - Arbitrary nested sub-expressions
 - Multi-line equations
-
----
-
-## Table relationships diagram
-
-```
-formulas ──1:N──→ formula_items
-formulas ──1:N──→ formula_conditions
-formulas ──1:N──→ formula_relations   (as source)
-formulas ──1:N──→ formula_relations   (as target via related_id)
-formula_items ──N:1──→ variables
-formula_conditions ──N:1──→ formulas (via alternative_formula_id)
-variable_units ──N:1──→ variables
-```
-
----
-
-## Constraints and integrity
-
-- All foreign keys use `REFERENCES` for referential integrity.
-- `formula_relations` has `UNIQUE(formula_id, related_id)` — no duplicate relationships.
-- `formula_items` has `UNIQUE(formula_id, term, sort_order)` — no conflicting item orderings.
-- `term` values on one formula need not be contiguous or start at 1. They just need to be consistent for grouping.
-- The `conditioned_formulas`, `alternative_formulas`, and `related_formulas` JSON arrays have been removed from `formulas` — all relationships go through `formula_relations` and `formula_conditions`.
-- The `formulas` JSON array has been removed from `variables` — formula membership is derived from `SELECT DISTINCT formula_id FROM formula_items WHERE variable_id = ?`.
