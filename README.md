@@ -44,7 +44,6 @@ Breaks a formula into terms and their factors (products).
 
 | Column         | Type       | Notes                                                                                       |
 | -------------- | ---------- | ------------------------------------------------------------------------------------------- |
-| id             | INTEGER PK |                                                                                             |
 | formula_id     | TEXT FK    | `REFERENCES formulas(id)`                                                                   |
 | term           | INTEGER    | groups factors that multiply together (same term = multiply, different term = add/subtract) |
 | is_primary     | BOOLEAN    | 1 = primary variable (left of =), 0 = variable on the other side                            |
@@ -57,6 +56,8 @@ Breaks a formula into terms and their factors (products).
 | label          | TEXT       | subscript, e.g. `"1"`                                                                       |
 | latex_prefix   | TEXT       | LaTeX wrapper before, e.g. `\overline{`, `\hat{`, `\left\lvert`                             |
 | latex_suffix   | TEXT       | LaTeX wrapper after, e.g. `}`, `\right\rvert`                                               |
+
+**Note:** `coeff_special`, `latex`, `latex_prefix`, `latex_suffix` are simple strings. The rendering engine does not parse or interpret them.
 
 ### How `term` and `is_primary` work
 
@@ -170,26 +171,26 @@ All items are stored as they would appear on the right side of `=`. The `is_prim
 
 ## 3. `conditions`
 
-Togglable assumptions for a formula. Each condition has a default state. When toggled, the display swaps to an alternative formula.
+Togglable assumptions for a formula. Each condition has a default state. When toggled, the display swaps the formula for a different one (e.g. `ΔU = Q − W` → `ΔU = −W`).
 
-| Column                 | Type        | i18n | Notes                                                                |
-| ---------------------- | ----------- | ---- | -------------------------------------------------------------------- |
-| id                     | INTEGER PK  |      |                                                                      |
-| formula_id             | TEXT FK     |      | `REFERENCES formulas(id)`                                            |
-| condition_text         | TEXT (JSON) | ✓    | `{"en":"Ideal gas assumption"}`                                      |
-| default_on             | BOOLEAN     |      | 1 = on by default (hidden from user unless explicitly shown)         |
-| alternative_formula_id | TEXT FK     |      | `REFERENCES formulas(id)` — shown when this condition is toggled OFF |
-| sort_order             | INTEGER     |      |                                                                      |
-| created                | TEXT        |      |                                                                      |
-| modified               | TEXT        |      |                                                                      |
+| Column                 | Type        | i18n | Notes                                  |
+| ---------------------- | ----------- | ---- | -------------------------------------- |
+| id                     | INTEGER PK  |      | `ideal_gas_assumption`                 |
+| name                   | TEXT (JSON) | ✓    | `{"en":"Ideal gas assumption"}`        |
+| formula_id             | TEXT FK     |      | `REFERENCES formulas(id)`              |
+| replacement_formula_id | TEXT FK     |      | `REFERENCES formulas(id)`              |
+| default_on             | BOOLEAN     |      | 1 = assumption is by default performed |
+| sort_order             | INTEGER     |      |                                        |
+| created                | TEXT        |      |                                        |
+| modified               | TEXT        |      |                                        |
 
-**Bidirectional linking:** Query forward with `conditions.formula_id` → `alternative_formula_id`. Query backward with `SELECT * FROM conditions WHERE alternative_formula_id = ?` to find all formulas that lead to this one.
+**Bidirectional linking:** Query forward with `conditions.formula_id` → `replacement_formula_id`. Query backward with `SELECT * FROM conditions WHERE replacement_formula_id = ?` to find all formulas that lead to this one.
 
-| formula_id      | condition_text (en)    | default_on | alternative_formula_id |
-| --------------- | ---------------------- | ---------- | ---------------------- |
-| `ideal_gas_law` | Ideal gas assumption   | 1          | `van_der_waals`        |
-| `boyles_law`    | Constant temperature   | 1          | `ideal_gas_law`        |
-| `boyles_law`    | Constant amount of gas | 1          | `ideal_gas_law`        |
+| id                | name (en)              | formula_id      | replacement_formula_id | default_on |
+| ----------------- | ---------------------- | --------------- | ---------------------- | ---------- |
+| `ideal_gas_swap`  | Ideal gas assumption   | `ideal_gas_law` | `van_der_waals`        | 1          |
+| `boyles_isotherm` | Constant temperature   | `boyles_law`    | `ideal_gas_law`        | 1          |
+| `boyles_fixed_n`  | Constant amount of gas | `boyles_law`    | `ideal_gas_law`        | 1          |
 
 **Note:** In the UI, the user has an option below the equation to change the equation by toggling these assumptions.
 
