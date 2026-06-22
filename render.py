@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Validate all formulas render to correct LaTeX using the shared library.
+Validate all Scifind formulas render to correct LaTeX.
 """
 
 import json

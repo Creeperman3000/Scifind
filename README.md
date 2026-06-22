@@ -1,4 +1,6 @@
-# Physics Cheat Sheet
+# Scifind
+
+A structured physics formula database with a CLI tool and Flask web application. Formulas, variables, and units are stored in a normalized SQL schema with full LaTeX rendering, i18n support, and multiple export formats.
 
 ## Idea
 
@@ -8,7 +10,7 @@ There are 6 tables: `formulas`, `formula_items`, `conditions`, `formula_relation
 
 ## CLI Tool
 
-`formula.py` — command-line interface for the database.
+`formula.py` — command-line interface for the Scifind database.
 
 | Command       | Description                                      |
 | ------------- | ------------------------------------------------ |
@@ -45,7 +47,7 @@ formula import data.csv                          # single CSV with === headers
 
 ## Web Application
 
-`webapp.py` — Flask app with browse, search, export/import, and locale support.
+`webapp.py` — Flask web application for Scifind.
 
 - Browse formulas by branch/topic tree
 - View formula details with rendered KaTeX LaTeX

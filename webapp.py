@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Flask webapp for the physics formula cheat-sheet."""
+"""Flask webapp for Scifind — a structured physics formula database."""
 
 import html
 import io

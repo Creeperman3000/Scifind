@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-formula — CLI tool for the physics formula cheat-sheet database.
+Scifind — CLI tool for the structured physics formula database.
 
 Usage:
     formula init                            Create and seed the database
@@ -370,7 +370,7 @@ def cmd_import(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Physics formula cheat-sheet",
+        description="Scifind — structured physics formula database",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent("""
             Examples:

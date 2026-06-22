@@ -1,5 +1,5 @@
 """
-Shared library for the physics formula cheat-sheet.
+Shared library for Scifind.
 Provides DB connection, LaTeX rendering, dimension formatting,
 SI unit parsing, and CSV import/export.
 """
