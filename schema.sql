@@ -2,9 +2,9 @@ PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 
 -- ============================================================
--- 1. formulas
+-- 1. formula
 -- ============================================================
-CREATE TABLE IF NOT EXISTS formulas (
+CREATE TABLE IF NOT EXISTS formula (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL,       -- JSON i18n: {"en-us":"...","en-uk":"..."}
     science     TEXT,                -- JSON i18n
@@ -18,34 +18,34 @@ CREATE TABLE IF NOT EXISTS formulas (
 );
 
 -- ============================================================
--- 2. formula_items
+-- 2. formula_item
 -- ============================================================
-CREATE TABLE IF NOT EXISTS formula_items (
-    formula_id     TEXT NOT NULL REFERENCES formulas(id),
-    term           INTEGER NOT NULL,
-    is_primary     INTEGER NOT NULL DEFAULT 0 CHECK (is_primary IN (0,1)),
-    sort_order     INTEGER NOT NULL DEFAULT 0,
-    coeff_value    REAL,
-    coeff_special  TEXT,
-    coeff_exponent REAL DEFAULT 1,
-    variable_id    TEXT REFERENCES variables(id),
-    var_exponent   REAL DEFAULT 1,
-    label          TEXT,
-    latex_prefix   TEXT,
-    latex_suffix   TEXT,
-    latex_override TEXT,
+CREATE TABLE IF NOT EXISTS formula_item (
+    formula_id       TEXT NOT NULL REFERENCES formula(id),
+    term             INTEGER NOT NULL,
+    is_primary       INTEGER NOT NULL DEFAULT 0 CHECK (is_primary IN (0,1)),
+    sort_order       INTEGER NOT NULL DEFAULT 0,
+    coeff_value      REAL,
+    coeff_special    TEXT,
+    coeff_exponent   REAL DEFAULT 1,
+    quantity_id      TEXT REFERENCES quantity(id),
+    var_exponent     REAL DEFAULT 1,
+    label            TEXT,
+    latex_prefix     TEXT,
+    latex_suffix     TEXT,
+    symbol_overwrite TEXT,
 
     PRIMARY KEY (formula_id, term, is_primary, sort_order)
 );
 
 -- ============================================================
--- 3. conditions
+-- 3. condition
 -- ============================================================
-CREATE TABLE IF NOT EXISTS conditions (
+CREATE TABLE IF NOT EXISTS condition (
     id                     INTEGER PRIMARY KEY AUTOINCREMENT,
     name                   TEXT NOT NULL,       -- JSON i18n
-    formula_id             TEXT NOT NULL REFERENCES formulas(id),
-    replacement_formula_id TEXT NOT NULL REFERENCES formulas(id),
+    formula_id             TEXT NOT NULL REFERENCES formula(id),
+    replacement_formula_id TEXT NOT NULL REFERENCES formula(id),
     default_on             INTEGER NOT NULL DEFAULT 1 CHECK (default_on IN (0,1)),
     sort_order             INTEGER NOT NULL DEFAULT 0,
     created                TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
@@ -53,11 +53,11 @@ CREATE TABLE IF NOT EXISTS conditions (
 );
 
 -- ============================================================
--- 4. formula_relations
+-- 4. formula_relation
 -- ============================================================
-CREATE TABLE IF NOT EXISTS formula_relations (
-    formula_id    TEXT NOT NULL REFERENCES formulas(id),
-    related_id    TEXT NOT NULL REFERENCES formulas(id),
+CREATE TABLE IF NOT EXISTS formula_relation (
+    formula_id    TEXT NOT NULL REFERENCES formula(id),
+    related_id    TEXT NOT NULL REFERENCES formula(id),
     relation_type TEXT NOT NULL CHECK (relation_type IN (
         'alternative', 'derivation', 'special_case', 'prerequisite', 'generalization'
     )),
@@ -66,19 +66,19 @@ CREATE TABLE IF NOT EXISTS formula_relations (
 );
 
 -- ============================================================
--- 5. variables
+-- 5. quantity
 -- ============================================================
-CREATE TABLE IF NOT EXISTS variables (
+CREATE TABLE IF NOT EXISTS quantity (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL,       -- JSON i18n
-    latex       TEXT NOT NULL,
+    symbol      TEXT NOT NULL,
     science     TEXT,                -- JSON i18n
     branch      TEXT,                -- JSON i18n
     topic       TEXT,                -- JSON i18n
     difficulty  INTEGER CHECK (difficulty BETWEEN 1 AND 10),
     description TEXT,                -- JSON i18n
     links       TEXT,                -- JSON array
-    si_unit     TEXT,                -- JSON array: [{"unit":"<id>","exponent":<n>},...]
+    default_unit TEXT,               -- JSON array: [{"unit":"<id>","exponent":<n>},...]
     dim_M       REAL NOT NULL DEFAULT 0,
     dim_L       REAL NOT NULL DEFAULT 0,
     dim_T       REAL NOT NULL DEFAULT 0,
@@ -91,28 +91,28 @@ CREATE TABLE IF NOT EXISTS variables (
 );
 
 -- ============================================================
--- 6. units
+-- 6. unit
 -- ============================================================
-CREATE TABLE IF NOT EXISTS units (
+CREATE TABLE IF NOT EXISTS unit (
     id           TEXT PRIMARY KEY,
-    variable_id  TEXT NOT NULL REFERENCES variables(id),
-    symbol       TEXT NOT NULL,
     name         TEXT NOT NULL,        -- JSON i18n: {"en-us":"Meter","en-uk":"Metre"}
-    factor_to_si REAL NOT NULL DEFAULT 1,
-    offset       REAL NOT NULL DEFAULT 0,
-    si_unit      INTEGER NOT NULL DEFAULT 0 CHECK (si_unit IN (0,1)),
-    unit_system  TEXT CHECK (unit_system IN ('SI','CGS','Imperial') OR unit_system IS NULL)
+    symbol       TEXT NOT NULL,
+    quantity_id  TEXT NOT NULL REFERENCES quantity(id),
+    default_unit INTEGER NOT NULL DEFAULT 0 CHECK (default_unit IN (0,1)),
+    unit_system  TEXT CHECK (unit_system IN ('SI','CGS','Imperial') OR unit_system IS NULL),
+    factor       REAL NOT NULL DEFAULT 1,
+    offset       REAL NOT NULL DEFAULT 0
 );
 
 -- ============================================================
 -- Indexes
 -- ============================================================
-CREATE INDEX IF NOT EXISTS idx_formula_items_variable    ON formula_items(variable_id);
-CREATE INDEX IF NOT EXISTS idx_conditions_formula        ON conditions(formula_id);
-CREATE INDEX IF NOT EXISTS idx_conditions_replacement    ON conditions(replacement_formula_id);
-CREATE INDEX IF NOT EXISTS idx_formula_relations_formula ON formula_relations(formula_id);
-CREATE INDEX IF NOT EXISTS idx_formula_relations_related ON formula_relations(related_id);
-CREATE INDEX IF NOT EXISTS idx_units_variable            ON units(variable_id);
+CREATE INDEX IF NOT EXISTS idx_formula_item_quantity    ON formula_item(quantity_id);
+CREATE INDEX IF NOT EXISTS idx_condition_formula        ON condition(formula_id);
+CREATE INDEX IF NOT EXISTS idx_condition_replacement    ON condition(replacement_formula_id);
+CREATE INDEX IF NOT EXISTS idx_formula_relation_formula ON formula_relation(formula_id);
+CREATE INDEX IF NOT EXISTS idx_formula_relation_related ON formula_relation(related_id);
+CREATE INDEX IF NOT EXISTS idx_unit_quantity            ON unit(quantity_id);
 
 -- ============================================================
 -- FTS5 full-text search
@@ -121,13 +121,13 @@ CREATE VIRTUAL TABLE IF NOT EXISTS formula_fts USING fts5(
     formula_id UNINDEXED,
     name,
     description,
-    variables    -- space-separated variable names that appear in the formula
+    quantities    -- space-separated quantity names that appear in the formula
 );
 
-CREATE VIRTUAL TABLE IF NOT EXISTS variable_fts USING fts5(
-    variable_id UNINDEXED,
+CREATE VIRTUAL TABLE IF NOT EXISTS quantity_fts USING fts5(
+    quantity_id UNINDEXED,
     name,
-    latex
+    symbol
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS unit_fts USING fts5(

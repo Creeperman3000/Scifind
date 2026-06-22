@@ -33,12 +33,12 @@
 </ul>
 {% endif %}
 
-{% if variables %}
-<h3>Variables</h3>
+{% if quantities %}
+<h3>Quantities</h3>
 <ul>
-{% for v in variables %}
-  <li>${{ v.latex }}$ &mdash; <b><a href="/variable/{{ v.id }}">{{ v.name_en }}</a></b>
-  {% if v.si_html %} &mdash; {{ v.si_html | safe }}{% endif %}
+{% for v in quantities %}
+  <li>${{ v.symbol }}$ &mdash; <b><a href="/quantity/{{ v.id }}">{{ v.name_en }}</a></b>
+  {% if v.default_unit_html %} &mdash; {{ v.default_unit_html | safe }}{% endif %}
   </li>
 {% endfor %}
 </ul>

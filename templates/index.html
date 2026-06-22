@@ -9,13 +9,13 @@
 <tr>
   <td>${{ u.symbol }}$</td>
   <td><a href="/unit/{{ u.id }}">{{ u.name_en }}</a></td>
-  <td>${{ u.var_latex }}$</td>
-  <td><a href="/variable/{{ u.variable_id }}">{{ u.var_name }}</a></td>
+  <td>${{ u.quantity_symbol }}$</td>
+  <td><a href="/quantity/{{ u.quantity_id }}">{{ u.quantity_name }}</a></td>
 </tr>
 {% endfor %}
 </table>
 
-<h2><a href="/variables">Variables</a></h2>
+<h2><a href="/quantities">Quantities</a></h2>
 
 {% for science, branches in by_science.items() %}
 <h3>{{ science }}</h3>

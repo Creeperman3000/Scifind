@@ -21,14 +21,14 @@ if str(_project_dir) not in sys.path:
 
 from formula_lib import (
     get_conn, render_formula_items, render_dimensions_latex,
-    render_si_unit_html, render_si_unit_latex, parse_si_unit_json,
-    decompose_si_unit_parts,
+    render_default_unit_html, render_default_unit_latex, parse_default_unit_json,
+    decompose_default_unit_parts,
     render_unit_decomposition, is_composite_unit,
     get_formula_detail, get_formula_items,
-    get_formula_conditions, get_formula_relations, get_formula_variables,
-    get_variable_detail, get_variable_units, get_variable_formulas,
+    get_formula_conditions, get_formula_relations, get_formula_quantities,
+    get_quantity_detail, get_quantity_units, get_quantity_formulas,
     get_unit_detail,
-    get_base_units, get_all_variables, get_all_formulas, get_formulas_by_science,
+    get_base_units, get_all_quantities, get_all_formulas, get_formulas_by_science,
     search, migrate_db,
     export_csv, export_csv_dir, export_xlsx, export_ods,
     import_csv, import_csv_dir, import_xlsx, import_ods, rebuild_fts,
@@ -47,7 +47,7 @@ _dim_unit_symbol_map = None
 
 @app.before_request
 def detect_locale():
-    """Detect user locale from ?locale param → session → Accept-Language."""
+    """Detect user locale from ?locale param -> session -> Accept-Language."""
     locale = request.args.get("locale")
     if locale in ("en-us", "en-uk"):
         session["locale"] = locale
@@ -85,7 +85,6 @@ def _l(row, locale, *fields):
         raw = r.get(f)
         if raw and isinstance(raw, str) and (raw.startswith("{") or raw.startswith('"')):
             r[f"{f}_en"] = locale_en(raw, locale)
-        # handle raw_name -> name pattern
         raw_key = f"{f}_raw"
         if raw_key in r and r[raw_key] and isinstance(r[raw_key], str) and r[raw_key].startswith("{"):
             r[f] = locale_en(r[raw_key], locale)
@@ -97,7 +96,7 @@ def _unit_name_map(db, locale):
     cache_key = "_unit_names_" + locale
     if hasattr(g, cache_key):
         return getattr(g, cache_key)
-    rows = db.execute("SELECT id, name FROM units").fetchall()
+    rows = db.execute("SELECT id, name FROM unit").fetchall()
     result = {r["id"]: locale_en(r["name"], locale) for r in rows}
     setattr(g, cache_key, result)
     return result
@@ -127,7 +126,7 @@ def render_formula(formula_items):
 
 @app.template_global()
 def unit_name(unit_id):
-    """Render a unit name with links, decomposing composites (e.g. 'metre_per_second')."""
+    """Render a unit name with links, decomposing composites."""
     loc = g.locale if hasattr(g, "locale") else "en-us"
     names = _unit_name_map(g.db, loc) if "db" in g else _unit_name_map(get_db(), loc)
     return Markup(render_unit_decomposition(
@@ -139,26 +138,26 @@ def unit_name(unit_id):
 
 
 @app.template_global()
-def fmt_dim(dim_M=0, dim_L=0, dim_T=0, dim_I=0, dim_Θ=0, dim_N=0, dim_J=0):
+def fmt_dim(dim_M=0, dim_L=0, dim_T=0, dim_I=0, dim_Theta=0, dim_N=0, dim_J=0):
     global _dim_var_latex_map, _dim_unit_symbol_map
     if _dim_var_latex_map is None:
         _dim_var_latex_map = {}
         _dim_unit_symbol_map = {}
         db = get_db()
-        for var_id in ("mass", "length", "period", "electric_current",
-                       "temperature", "amount", "luminous_intensity"):
-            row = db.execute("SELECT latex FROM variables WHERE id=?", (var_id,)).fetchone()
+        for qid in ("mass", "length", "period", "electric_current",
+                     "temperature", "amount", "luminous_intensity"):
+            row = db.execute("SELECT symbol FROM quantity WHERE id=?", (qid,)).fetchone()
             if row:
-                _dim_var_latex_map[var_id] = f"\\mathrm{{{row['latex']}}}"
-            row = db.execute("SELECT symbol FROM units WHERE variable_id=? AND si_unit=1", (var_id,)).fetchone()
+                _dim_var_latex_map[qid] = f"\\mathrm{{{row['symbol']}}}"
+            row = db.execute("SELECT symbol FROM unit WHERE quantity_id=? AND default_unit=1", (qid,)).fetchone()
             if row:
                 sym = row["symbol"]
                 if sym.startswith("\\mathrm"):
-                    _dim_unit_symbol_map[var_id] = sym
+                    _dim_unit_symbol_map[qid] = sym
                 else:
-                    _dim_unit_symbol_map[var_id] = f"\\mathrm{{{sym}}}"
+                    _dim_unit_symbol_map[qid] = f"\\mathrm{{{sym}}}"
     return render_dimensions_latex(
-        dim_M, dim_L, dim_T, dim_I, dim_Θ, dim_N, dim_J,
+        dim_M, dim_L, dim_T, dim_I, dim_Theta, dim_N, dim_J,
         var_latex_map=_dim_var_latex_map,
         unit_symbol_map=_dim_unit_symbol_map,
         mode=g.get("dim_mode", "var"),
@@ -166,8 +165,8 @@ def fmt_dim(dim_M=0, dim_L=0, dim_T=0, dim_I=0, dim_Θ=0, dim_N=0, dim_J=0):
 
 
 @app.template_global()
-def si_unit_latex(si_unit_json):
-    return render_si_unit_latex(si_unit_json)
+def default_unit_latex(default_unit_json):
+    return render_default_unit_latex(default_unit_json)
 
 
 _SYMBOL_MATH = {
@@ -192,7 +191,6 @@ def render_symbol(symbol):
     s = symbol.strip()
     if s in _SYMBOL_MATH:
         return _SYMBOL_MATH[s]
-    # Already wrapped in \mathrm{} or has braces that make it safe
     if s.startswith("\\mathrm{") or s.startswith("\\") or s.startswith("{}"):
         return s
     return "\\mathrm{" + html.escape(s) + "}"
@@ -210,19 +208,19 @@ def uniq_topics(formulas):
     return out
 
 
-# ── Home ─────────────────────────────────────────────
+# Home
 
 @app.route("/")
 def index():
     db = get_db()
     locale = g.locale
     base_units = get_base_units(db)
-    base_units = [_l(u, locale, "name", "var_name") for u in base_units]
+    base_units = [_l(u, locale, "name", "quantity_name") for u in base_units]
     by_science = get_formulas_by_science(db)
     return render_template("index.html", base_units=base_units, by_science=by_science)
 
 
-# ── Formula ──────────────────────────────────────────
+# Formula
 
 @app.route("/formula/<formula_id>")
 def formula_detail(formula_id):
@@ -236,44 +234,44 @@ def formula_detail(formula_id):
     latex = render_formula_items(items) if items else ""
     conds = get_formula_conditions(db, formula_id)
     relations = get_formula_relations(db, formula_id)
-    variables = get_formula_variables(db, formula_id)
+    quantities = get_formula_quantities(db, formula_id)
     unit_names = _unit_name_map(db, locale)
-    parsed_vars = []
-    for v in variables:
-        v = _l(v, locale, "name")
-        si_html = render_si_unit_html(v["si_unit"],
+    parsed_quantities = []
+    for q in quantities:
+        q = _l(q, locale, "name")
+        si_html = render_default_unit_html(q["default_unit"],
                      unit_url_func=lambda uid: f"/unit/{uid}",
                      unit_name_func=lambda uid: unit_names.get(uid, uid.replace("_"," ").title()),
                      locale=locale)
-        parsed_vars.append(dict(v, si_html=si_html))
+        parsed_quantities.append(dict(q, default_unit_html=si_html))
     return render_template(
         "formula.html",
         formula=row, latex=latex, conds=conds,
-        relations=relations, variables=parsed_vars,
+        relations=relations, quantities=parsed_quantities,
     )
 
 
-# ── Variable ─────────────────────────────────────────
+# Quantity
 
-@app.route("/variable/<variable_id>")
-def variable_detail(variable_id):
+@app.route("/quantity/<quantity_id>")
+def quantity_detail(quantity_id):
     db = get_db()
     locale = g.locale
-    v = get_variable_detail(db, variable_id)
-    if not v:
-        return "Variable not found", 404
-    v = _l(v, locale, "name", "description")
+    q = get_quantity_detail(db, quantity_id)
+    if not q:
+        return "Quantity not found", 404
+    q = _l(q, locale, "name", "description")
     unit_names = _unit_name_map(db, locale)
-    units = [_l(u, locale, "name") for u in get_variable_units(db, variable_id)]
-    formulas = get_variable_formulas(db, variable_id)
+    units = [_l(u, locale, "name") for u in get_quantity_units(db, quantity_id)]
+    formulas = get_quantity_formulas(db, quantity_id)
     return render_template(
-        "variable.html",
-        var=v,
+        "quantity.html",
+        q=q,
         units=units, formulas=formulas,
     )
 
 
-# ── Unit ─────────────────────────────────────────────
+# Unit
 
 @app.route("/unit/<unit_id>")
 def unit_detail(unit_id):
@@ -282,12 +280,12 @@ def unit_detail(unit_id):
     if not u:
         return "Unit not found", 404
     if is_composite_unit(unit_id):
-        return redirect(f"/variable/{u['variable_id']}")
+        return redirect(f"/quantity/{u['quantity_id']}")
     u = _l(u, g.locale, "name")
     return render_template("unit.html", unit=u)
 
 
-# ── Search ───────────────────────────────────────────
+# Search
 
 @app.route("/search")
 def search_page():
@@ -298,26 +296,26 @@ def search_page():
     return render_template("search.html", query=q, results=results)
 
 
-# ── All Variables ────────────────────────────────────
+# All Quantities
 
-@app.route("/variables")
-def all_variables():
+@app.route("/quantities")
+def all_quantities():
     db = get_db()
     locale = g.locale
     unit_names = _unit_name_map(db, locale)
-    vars = get_all_variables(db)
+    quantities = get_all_quantities(db)
     rows = []
-    for v in vars:
-        v = _l(v, locale, "name")
-        si_html = render_si_unit_html(v["si_unit"],
+    for q in quantities:
+        q = _l(q, locale, "name")
+        si_html = render_default_unit_html(q["default_unit"],
                      unit_url_func=lambda uid: f"/unit/{uid}",
                      unit_name_func=lambda uid: unit_names.get(uid, uid.replace("_"," ").title()),
                      locale=locale)
-        rows.append(dict(v, si_html=si_html))
-    return render_template("variables.html", vars=rows)
+        rows.append(dict(q, default_unit_html=si_html))
+    return render_template("quantities.html", quantities=rows)
 
 
-# ── All Formulas ─────────────────────────────────────
+# All Formulas
 
 @app.route("/formulas")
 def all_formulas():
@@ -332,7 +330,7 @@ def all_formulas():
     return render_template("formulas.html", formulas=formulas)
 
 
-# ── Export & Import ───────────────────────────────────
+# Export & Import
 
 @app.route("/export")
 def export():
@@ -359,7 +357,6 @@ def export():
             headers={"Content-Disposition": "attachment; filename=formulas.ods"},
         )
 
-    # default: CSV (per-table files bundled as ZIP)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         with tempfile.TemporaryDirectory() as tmp:
@@ -372,6 +369,7 @@ def export():
         mimetype="application/zip",
         headers={"Content-Disposition": "attachment; filename=formulas_csv.zip"},
     )
+
 
 @app.route("/import", methods=["POST"])
 def import_file():

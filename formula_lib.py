@@ -1,7 +1,7 @@
 """
 Shared library for Scifind.
 Provides DB connection, LaTeX rendering, dimension formatting,
-SI unit parsing, and CSV import/export.
+default unit parsing, and CSV import/export.
 """
 
 import csv
@@ -17,10 +17,10 @@ from pathlib import Path
 
 DEFAULT_DB = str(Path.home() / ".local" / "share" / "formula" / "formulas.db")
 
-DIM_ORDER = ["M", "L", "T", "I", "Θ", "N", "J"]
-DIM_COLS = ["dim_M", "dim_L", "dim_T", "dim_I", "dim_Θ", "dim_N", "dim_J"]
+DIM_ORDER = ["M", "L", "T", "I", "\u0398", "N", "J"]
+DIM_COLS = ["dim_M", "dim_L", "dim_T", "dim_I", "dim_\u0398", "dim_N", "dim_J"]
 DIM_VAR_IDS = {"M": "mass", "L": "length", "T": "period", "I": "electric_current",
-               "Θ": "temperature", "N": "amount", "J": "luminous_intensity"}
+               "\u0398": "temperature", "N": "amount", "J": "luminous_intensity"}
 
 
 def db_path():
@@ -54,34 +54,34 @@ def rebuild_fts(conn):
     conn.execute("DELETE FROM formula_fts")
     rows = conn.execute("""
         SELECT f.id, f.name, f.description,
-               COALESCE(group_concat(v.name_en, ' '), '') AS vars
-        FROM formulas f
-        LEFT JOIN formula_items fi ON fi.formula_id = f.id
+               COALESCE(group_concat(q.name_en, ' '), '') AS vars
+        FROM formula f
+        LEFT JOIN formula_item fi ON fi.formula_id = f.id
         LEFT JOIN (SELECT DISTINCT id, json_extract(name, '$.en-us') AS name_en
-                   FROM variables) v ON v.id = fi.variable_id
+                   FROM quantity) q ON q.id = fi.quantity_id
         GROUP BY f.id
     """).fetchall()
     for r in rows:
         conn.execute(
-            "INSERT INTO formula_fts (formula_id, name, description, variables) VALUES (?, ?, ?, ?)",
+            "INSERT INTO formula_fts (formula_id, name, description, quantities) VALUES (?, ?, ?, ?)",
             (r["id"], r["name"], r["description"], r["vars"]),
         )
 
-    conn.execute("DELETE FROM variable_fts")
+    conn.execute("DELETE FROM quantity_fts")
     vrows = conn.execute("""
-        SELECT id, json_extract(name, '$.en-us') AS name_en, latex
-        FROM variables
+        SELECT id, json_extract(name, '$.en-us') AS name_en, symbol
+        FROM quantity
     """).fetchall()
     for r in vrows:
         conn.execute(
-            "INSERT INTO variable_fts (variable_id, name, latex) VALUES (?, ?, ?)",
-            (r["id"], r["name_en"], r["latex"]),
+            "INSERT INTO quantity_fts (quantity_id, name, symbol) VALUES (?, ?, ?)",
+            (r["id"], r["name_en"], r["symbol"]),
         )
 
     conn.execute("DELETE FROM unit_fts")
     urows = conn.execute("""
         SELECT id, json_extract(name, '$.en-us') AS name_en, symbol
-        FROM units
+        FROM unit
     """).fetchall()
     for r in urows:
         conn.execute(
@@ -95,19 +95,18 @@ def rebuild_fts(conn):
 
 def migrate_db(conn):
     """Apply schema migrations for existing databases."""
-    cols = [r[1] for r in conn.execute("PRAGMA table_info(units)").fetchall()]
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(unit)").fetchall()]
     if "name" not in cols:
-        conn.execute("ALTER TABLE units ADD COLUMN name TEXT NOT NULL DEFAULT '{}'")
-        for row in conn.execute("SELECT id FROM units").fetchall():
+        conn.execute("ALTER TABLE unit ADD COLUMN name TEXT NOT NULL DEFAULT '{}'")
+        for row in conn.execute("SELECT id FROM unit").fetchall():
             uid = row["id"]
             en_name = uid.replace("_", " ").title()
-            conn.execute("UPDATE units SET name = ? WHERE id = ?",
+            conn.execute("UPDATE unit SET name = ? WHERE id = ?",
                          (json.dumps({"en": en_name}), uid))
         conn.commit()
 
     # Migrate old JSON i18n {"en":"..."} to {"en-us":"..."}
-    for table in ("formulas", "variables", "units", "conditions"):
-        # Check if the table has a name column
+    for table in ("formula", "quantity", "unit", "condition"):
         tcols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
         json_cols = []
         for c in ("name", "science", "branch", "topic", "description"):
@@ -120,7 +119,6 @@ def migrate_db(conn):
                 WHERE json_extract({col}, '$.en') IS NOT NULL
                   AND json_extract({col}, '$.en-us') IS NULL
             """)
-            # Remove the old $.en key
             conn.execute(f"""
                 UPDATE {table}
                 SET {col} = json_remove({col}, '$.en')
@@ -129,12 +127,12 @@ def migrate_db(conn):
             """)
     conn.commit()
 
-    # Add en-uk locale keys for known US/UK spelling differences in units
+    # Add en-uk locale keys for known US/UK spelling differences
     UK_OVERRIDES = {
         "Meter": "Metre", "Centimeter": "Centimetre", "Decimeter": "Decimetre",
         "Liter": "Litre", "Center of Mass": "Centre of Mass",
     }
-    for row in conn.execute("SELECT id, name FROM units WHERE json_extract(name, '$.en-uk') IS NULL").fetchall():
+    for row in conn.execute("SELECT id, name FROM unit WHERE json_extract(name, '$.en-uk') IS NULL").fetchall():
         try:
             d = json.loads(row["name"])
             en_us = d.get("en-us", "")
@@ -143,7 +141,7 @@ def migrate_db(conn):
                     uk_val = en_us.replace(us_spelling, uk_spelling)
                     if uk_val != en_us:
                         conn.execute(
-                            "UPDATE units SET name = json_set(name, '$.en-uk', ?) WHERE id = ?",
+                            "UPDATE unit SET name = json_set(name, '$.en-uk', ?) WHERE id = ?",
                             (uk_val, row["id"]),
                         )
                         break
@@ -158,12 +156,12 @@ def migrate_db(conn):
         "N": "\\newton",
     }
     for old, new in symbol_migrations.items():
-        conn.execute("UPDATE units SET symbol = ? WHERE symbol = ?", (new, old))
+        conn.execute("UPDATE unit SET symbol = ? WHERE symbol = ?", (new, old))
     conn.commit()
 
-    # Ensure FTS tables exist (for databases created before search was expanded)
+    # Ensure FTS tables exist
     for fts_sql in [
-        "CREATE VIRTUAL TABLE IF NOT EXISTS variable_fts USING fts5(variable_id UNINDEXED, name, latex)",
+        "CREATE VIRTUAL TABLE IF NOT EXISTS quantity_fts USING fts5(quantity_id UNINDEXED, name, symbol)",
         "CREATE VIRTUAL TABLE IF NOT EXISTS unit_fts USING fts5(unit_id UNINDEXED, name, symbol)",
     ]:
         try:
@@ -172,7 +170,7 @@ def migrate_db(conn):
             pass
     conn.commit()
 
-    # Seed new variables and units (derived quantities, non-SI units)
+    # Seed new data
     _SCRIPT_DIR = Path(__file__).parent
     units_seed = _SCRIPT_DIR / "seed_units.sql"
     if units_seed.exists():
@@ -187,7 +185,7 @@ def fmt_num(n):
     return s.rstrip(".")
 
 
-# ── Dimension rendering ────────────────────────────────
+# Dimension rendering
 
 def render_dimensions(dim_M=0, dim_L=0, dim_T=0, dim_I=0, dim_Theta=0, dim_N=0, dim_J=0):
     """Render dimension exponents as human-readable string."""
@@ -205,12 +203,12 @@ def render_dimensions(dim_M=0, dim_L=0, dim_T=0, dim_I=0, dim_Theta=0, dim_N=0, 
 
 
 def render_dimensions_latex(dim_M=0, dim_L=0, dim_T=0, dim_I=0, dim_Theta=0, dim_N=0, dim_J=0,
-                            var_latex_map=None, unit_symbol_map=None, mode="variables"):
+                            var_latex_map=None, unit_symbol_map=None, mode="var"):
     """Render dimension exponents as LaTeX.
 
-    var_latex_map: dict mapping variable_id → LaTeX string from variables.latex
-    unit_symbol_map: dict mapping variable_id → unit symbol for LaTeX from units.symbol
-    mode: "variables" (default, uses var_latex_map) or "units" (uses unit_symbol_map)
+    var_latex_map: dict mapping quantity_id to LaTeX symbol from quantity.symbol
+    unit_symbol_map: dict mapping quantity_id to unit symbol for LaTeX from unit.symbol
+    mode: "var" (default, uses var_latex_map) or "unit" (uses unit_symbol_map)
     """
     vals = [dim_M, dim_L, dim_T, dim_I, dim_Theta, dim_N, dim_J]
     lookup = var_latex_map if (mode == "var" and var_latex_map) else unit_symbol_map
@@ -234,29 +232,29 @@ def render_dimensions_latex(dim_M=0, dim_L=0, dim_T=0, dim_I=0, dim_Theta=0, dim
 
 def dims_from_row(row):
     """Extract dimension values from a row (dict or sqlite3.Row)."""
-    cols = ["dim_M", "dim_L", "dim_T", "dim_I", "dim_Θ", "dim_N", "dim_J"]
+    cols = ["dim_M", "dim_L", "dim_T", "dim_I", "dim_\u0398", "dim_N", "dim_J"]
     return [dict(row).get(c, 0) or 0 for c in cols]
 
 
-# ── SI unit rendering ──────────────────────────────────
+# Default unit rendering
 
-def parse_si_unit_json(si_unit_json):
-    """Parse si_unit JSON and return list of (unit_id, exponent)."""
-    if not si_unit_json:
+def parse_default_unit_json(default_unit_json):
+    """Parse default_unit JSON and return list of (unit_id, exponent)."""
+    if not default_unit_json:
         return []
     try:
-        parts = json.loads(si_unit_json)
+        parts = json.loads(default_unit_json)
         return [(p["unit"], p["exponent"]) for p in parts]
     except (json.JSONDecodeError, KeyError, TypeError):
         return []
 
 
-def decompose_si_unit_parts(si_unit_json):
-    """Parse si_unit JSON and decompose composite units (e.g. metre_per_second) into base parts.
+def decompose_default_unit_parts(default_unit_json):
+    """Parse default_unit JSON and decompose composite units (e.g. metre_per_second) into base parts.
 
     Returns list of (unit_id, exponent) with composites expanded.
     """
-    parts = parse_si_unit_json(si_unit_json)
+    parts = parse_default_unit_json(default_unit_json)
     result = []
     for uid, exp in parts:
         comp = unit_id_components(uid)
@@ -272,9 +270,9 @@ def decompose_si_unit_parts(si_unit_json):
     return result
 
 
-def render_si_unit_html(si_unit_json, unit_url_func=None, unit_name_func=None, locale="en-us"):
-    """Render si_unit JSON as HTML with links."""
-    parts = decompose_si_unit_parts(si_unit_json)
+def render_default_unit_html(default_unit_json, unit_url_func=None, unit_name_func=None, locale="en-us"):
+    """Render default_unit JSON as HTML with links."""
+    parts = decompose_default_unit_parts(default_unit_json)
     if not parts:
         return ""
     ls = _get_ls(locale)
@@ -311,7 +309,7 @@ def _render_unit_group(parts, url_func, name_func=None, locale="en-us"):
     return "-".join(items)
 
 
-# ── Unit ID decomposition ──────────────────────────────
+# Unit ID decomposition
 
 def is_composite_unit(unit_id):
     """Return True if the unit ID describes a derived/composite unit."""
@@ -333,8 +331,6 @@ def _strip_unit_suffix(uid):
 
 def _parse_unit_part(part_str):
     """Parse a numerator/denominator part string into [(unit_id, exponent)]."""
-    # Suffixes contain underscores that split() would eat, so replace
-    # them with markers before splitting so "metre_sq" → ["metre","\x00sq"].
     SUFFIXES = ["_sq"] + [f"_{s}" for s in
         ("mass", "energy", "luminous", "mechanical", "thermal",
          "gravitational", "molar", "specific", "radiant")]
@@ -374,7 +370,6 @@ def _parse_unit_part(part_str):
                 tok = tokens[i]
             else:
                 break
-        # Strip any suffix markers (_sq → exp=2, _mass → strip, etc.)
         for marker, orig in sorted(markers.items(), key=lambda x: -len(x[0])):
             if tok == marker:
                 tok = ""
@@ -408,7 +403,7 @@ def unit_id_components(unit_id):
         return None  # Simple unit
 
     num_str = parts[0]
-    den_str = "_per_".join(parts[1:])  # In case there are multiple _per_ (unlikely)
+    den_str = "_per_".join(parts[1:])
     nums = _parse_unit_part(num_str)
     dens = _parse_unit_part(den_str)
     return (nums, dens)
@@ -474,12 +469,7 @@ def _exp_word(exp, locale="en-us"):
 
 
 def render_unit_decomposition(unit_id, name_func, url_func=None, locale="en-us"):
-    """Render a unit name with links, decomposing composite units into components.
-
-    Simple units (metre, newton) are returned as linked names.
-    Composite units (metre_per_second) are decomposed into linked components.
-    Exponents use natural language (squared, cubed, to the Nth).
-    """
+    """Render a unit name with links, decomposing composite units into components."""
     comp = unit_id_components(unit_id)
     if comp is None:
         name = name_func(unit_id) if name_func else unit_id.replace("_", " ").title()
@@ -490,7 +480,6 @@ def render_unit_decomposition(unit_id, name_func, url_func=None, locale="en-us")
 
     nums, dens = comp
 
-    # Move negative-exponent numerator parts to denominator
     fixed_nums = []
     fixed_dens = list(dens) if dens else []
     for uid, exp in nums:
@@ -510,7 +499,7 @@ def render_unit_decomposition(unit_id, name_func, url_func=None, locale="en-us")
     return _render_unit_group(fixed_nums, url_func, name_func, locale)
 
 
-# ── LaTeX rendering helpers ────────────────────────────
+# LaTeX rendering helpers
 
 def _is_integer(n):
     if n is None:
@@ -519,12 +508,7 @@ def _is_integer(n):
 
 
 def _render_exp(exp, base_str):
-    """Render a variable/coeff part with exponent handling.
-
-    For integer exponents: var^{exp} or just var for exp=1.
-    For negative integer exponents: frac{1}{var^{abs(exp)}}
-    For fractional exponents: sqrt[den]{var^{num}}
-    """
+    """Render a variable/coeff part with exponent handling."""
     if exp is None or exp == 1:
         return base_str
 
@@ -537,7 +521,6 @@ def _render_exp(exp, base_str):
             return "\\frac{1}{" + inner + "}"
         return base_str + "^{" + fmt_num(iexp) + "}"
 
-    # fractional exponent → root
     try:
         f = Fraction(exp).limit_denominator(100)
         num = f.numerator
@@ -560,7 +543,7 @@ def _render_exp(exp, base_str):
 
 
 def render_variable(item, flipped):
-    var = item["latex_override"] or item["var_latex"] or item["variable_id"] or "?"
+    var = item["symbol_overwrite"] or item["quantity_symbol"] or item["quantity_id"] or "?"
     prefix = item["latex_prefix"] or ""
     suffix = item["latex_suffix"] or ""
 
@@ -601,7 +584,6 @@ def render_coeff(item, first_in_term):
 
     if body is not None:
         body = _render_exp(coeff_exp, body)
-        # suppress "1" when it would just be "1"
         if coeff_special is None and body == "1":
             body = None
     elif coeff_exp is not None and coeff_exp != 1:
@@ -615,37 +597,26 @@ def render_coeff(item, first_in_term):
 
 
 def _render_items_group(items, flipped):
-    """Render a list of items, returning (numerator_str, denominator_str).
-
-    Splits items by sign of the rendered exponent:
-    - items with non-negative exponents → numerator
-    - items with negative exponents → denominator
-    """
+    """Render a list of items, returning (numerator_str, denominator_str)."""
     num_parts = []
     den_parts = []
     for i, item in enumerate(items):
         c, neg = render_coeff(item, first_in_term=(i == 0))
 
-        if item["variable_id"]:
+        if item["quantity_id"]:
             exp = item["var_exponent"] if item["var_exponent"] is not None else 1
             if flipped:
                 exp = -exp
             if exp < 0:
-                # denominator: make exponent positive
                 den_item = dict(item)
                 if flipped:
                     den_item["var_exponent"] = -item["var_exponent"] if item["var_exponent"] is not None else -1
                 else:
                     den_item["var_exponent"] = item["var_exponent"]
-                # We want positive exp in denominator, so flip back
-                # For den, exp < 0 means it goes to denominator.
-                # render_variable with negative exp will produce \frac{1}{...}
-                # We want just the positive part, so set exp positive
                 if flipped:
                     den_item["var_exponent"] = -(item["var_exponent"] if item["var_exponent"] is not None else 1)
                 else:
                     den_item["var_exponent"] = item["var_exponent"] if item["var_exponent"] is not None else 1
-                # Actually, we need to set the exponent to its absolute value
                 v = render_variable(dict(item, var_exponent=abs(exp) if not flipped else abs(item["var_exponent"] if item["var_exponent"] is not None else 1)), flipped=False)
                 if c:
                     den_parts.append(c)
@@ -656,7 +627,6 @@ def _render_items_group(items, flipped):
                     num_parts.append(c)
                 num_parts.append(v)
         elif c:
-            # coeff-only item — sign already in c
             if neg:
                 den_parts.append(c)
             else:
@@ -666,7 +636,7 @@ def _render_items_group(items, flipped):
 
 
 def render_formula_items(items):
-    """Build LaTeX string from formula_items rows. Handles fractions for negatives."""
+    """Build LaTeX string from formula_item rows. Handles fractions for negatives."""
     by_term = defaultdict(list)
     for item in items:
         by_term[item["term"]].append(item)
@@ -679,20 +649,15 @@ def render_formula_items(items):
         primary = [i for i in term_items if i["is_primary"]]
         non_primary = [i for i in term_items if not i["is_primary"]]
 
-        # LHS: primary items (exponents flipped)
         lhs_num, lhs_den = _render_items_group(primary, flipped=True)
         if lhs_num or lhs_den:
             if lhs_den:
-                # Need to handle sign for the numerator
-                # Check if numerator starts with a minus sign
                 has_neg = lhs_num.startswith("-")
                 clean_num = lhs_num.lstrip("-")
                 if has_neg:
                     lhs_str = f"-\\frac{{{clean_num}}}{{{lhs_den}}}"
                 else:
                     lhs_str = f"\\frac{{{lhs_num}}}{{{lhs_den}}}" if lhs_num else f"\\frac{{1}}{{{lhs_den}}}"
-
-                # If the numerator is just a negative coeff like "-", handle it
                 if lhs_str == "\\frac{}{}":
                     lhs_str = "\\frac{1}{" + lhs_den + "}"
             else:
@@ -700,7 +665,6 @@ def render_formula_items(items):
             if lhs_str:
                 lhs_terms.append(lhs_str)
 
-        # RHS: non-primary items (exponents as-is)
         rhs_num, rhs_den = _render_items_group(non_primary, flipped=False)
         if rhs_num or rhs_den:
             if rhs_den:
@@ -736,7 +700,7 @@ def render_formula_items(items):
     return f"{lhs} = {rhs}"
 
 
-# ── Common queries ─────────────────────────────────────
+# Common queries
 
 def get_formula_detail(conn, formula_id):
     return conn.execute(
@@ -744,16 +708,16 @@ def get_formula_detail(conn, formula_id):
         " json_extract(branch, '$.en-us') AS branch_en,"
         " json_extract(topic, '$.en-us') AS topic_en,"
         " json_extract(description, '$.en-us') AS description_en"
-        " FROM formulas WHERE id = ?",
+        " FROM formula WHERE id = ?",
         (formula_id,),
     ).fetchone()
 
 
 def get_formula_items(conn, formula_id):
     return conn.execute("""
-        SELECT fi.*, v.latex AS var_latex
-        FROM formula_items fi
-        LEFT JOIN variables v ON v.id = fi.variable_id
+        SELECT fi.*, q.symbol AS quantity_symbol
+        FROM formula_item fi
+        LEFT JOIN quantity q ON q.id = fi.quantity_id
         WHERE fi.formula_id = ?
         ORDER BY fi.term, fi.is_primary DESC, fi.sort_order
     """, (formula_id,)).fetchall()
@@ -764,8 +728,8 @@ def get_formula_conditions(conn, formula_id):
         SELECT c.default_on, json_extract(c.name, '$.en-us') AS name_en,
                c.replacement_formula_id,
                json_extract(f2.name, '$.en-us') AS replacement_name
-        FROM conditions c
-        JOIN formulas f2 ON f2.id = c.replacement_formula_id
+        FROM condition c
+        JOIN formula f2 ON f2.id = c.replacement_formula_id
         WHERE c.formula_id = ?
         ORDER BY c.sort_order
     """, (formula_id,)).fetchall()
@@ -775,65 +739,65 @@ def get_formula_relations(conn, formula_id):
     return conn.execute("""
         SELECT fr.relation_type, fr.related_id,
                json_extract(f2.name, '$.en-us') AS related_name
-        FROM formula_relations fr
-        JOIN formulas f2 ON f2.id = fr.related_id
+        FROM formula_relation fr
+        JOIN formula f2 ON f2.id = fr.related_id
         WHERE fr.formula_id = ?
         ORDER BY fr.relation_type
     """, (formula_id,)).fetchall()
 
 
-def get_formula_variables(conn, formula_id):
+def get_formula_quantities(conn, formula_id):
     return conn.execute("""
-        SELECT DISTINCT v.id, v.name, v.latex, json_extract(v.name, '$.en-us') AS name_en,
-               v.si_unit, v.dim_M, v.dim_L, v.dim_T, v.dim_I, v.dim_Θ, v.dim_N, v.dim_J
-        FROM formula_items fi
-        JOIN variables v ON v.id = fi.variable_id
+        SELECT DISTINCT q.id, q.name, q.symbol, json_extract(q.name, '$.en-us') AS name_en,
+               q.default_unit, q.dim_M, q.dim_L, q.dim_T, q.dim_I, q.dim_\u0398, q.dim_N, q.dim_J
+        FROM formula_item fi
+        JOIN quantity q ON q.id = fi.quantity_id
         WHERE fi.formula_id = ?
-        ORDER BY v.id
+        ORDER BY q.id
     """, (formula_id,)).fetchall()
 
 
-def get_variable_detail(conn, variable_id):
+def get_quantity_detail(conn, quantity_id):
     return conn.execute(
         "SELECT *, json_extract(name, '$.en-us') AS name_en,"
         " json_extract(description, '$.en-us') AS description_en"
-        " FROM variables WHERE id = ?",
-        (variable_id,),
+        " FROM quantity WHERE id = ?",
+        (quantity_id,),
     ).fetchone()
 
 
-def get_variable_units(conn, variable_id):
+def get_quantity_units(conn, quantity_id):
     return conn.execute("""
         SELECT u.*, json_extract(u.name, '$.en-us') AS name_en
-        FROM units u WHERE u.variable_id = ?
-        ORDER BY u.si_unit DESC, u.unit_system
-    """, (variable_id,)).fetchall()
+        FROM unit u WHERE u.quantity_id = ?
+        ORDER BY u.default_unit DESC, u.unit_system
+    """, (quantity_id,)).fetchall()
 
 
-def get_variable_formulas(conn, variable_id):
+def get_quantity_formulas(conn, quantity_id):
     return conn.execute("""
         SELECT DISTINCT f.id, json_extract(f.name, '$.en-us') AS name_en,
                json_extract(f.branch, '$.en-us') AS branch_en,
                json_extract(f.topic, '$.en-us') AS topic_en,
                f.difficulty
-        FROM formula_items fi
-        JOIN formulas f ON f.id = fi.formula_id
-        WHERE fi.variable_id = ?
+        FROM formula_item fi
+        JOIN formula f ON f.id = fi.formula_id
+        WHERE fi.quantity_id = ?
         ORDER BY f.branch, f.topic, f.difficulty, f.id
-    """, (variable_id,)).fetchall()
+    """, (quantity_id,)).fetchall()
 
 
 def get_unit_detail(conn, unit_id):
     return conn.execute("""
-        SELECT u.*, json_extract(v.name, '$.en-us') AS var_name,
+        SELECT u.*, json_extract(q.name, '$.en-us') AS quantity_name,
                json_extract(u.name, '$.en-us') AS name_en
-        FROM units u JOIN variables v ON v.id = u.variable_id
+        FROM unit u JOIN quantity q ON q.id = u.quantity_id
         WHERE u.id = ?
     """, (unit_id,)).fetchone()
 
 
 def search(conn, query, limit=30):
-    """Full-text search across formulas, variables, and units."""
+    """Full-text search across formulas, quantities, and units."""
     terms = " OR ".join(f'"{w}"*' for w in query.split())
 
     formulas = conn.execute("""
@@ -844,20 +808,20 @@ def search(conn, query, limit=30):
                json_extract(f.topic, '$.en-us') AS topic_en,
                f.difficulty, NULL AS extra
         FROM formula_fts fts
-        JOIN formulas f ON f.id = fts.formula_id
+        JOIN formula f ON f.id = fts.formula_id
         WHERE formula_fts MATCH ?
         ORDER BY rank
         LIMIT ?
     """, (terms, limit)).fetchall()
 
-    variables = conn.execute("""
-        SELECT 'variable' AS kind, fts.variable_id AS id,
-               v.name AS name,
+    quantities = conn.execute("""
+        SELECT 'quantity' AS kind, fts.quantity_id AS id,
+               q.name AS name,
                fts.name AS name_en, NULL, NULL, NULL,
-               v.latex AS extra
-        FROM variable_fts fts
-        JOIN variables v ON v.id = fts.variable_id
-        WHERE variable_fts MATCH ?
+               q.symbol AS extra
+        FROM quantity_fts fts
+        JOIN quantity q ON q.id = fts.quantity_id
+        WHERE quantity_fts MATCH ?
         LIMIT ?
     """, (terms, limit)).fetchall()
 
@@ -867,36 +831,36 @@ def search(conn, query, limit=30):
                fts.name AS name_en, NULL, NULL, NULL,
                fts.symbol AS extra
         FROM unit_fts fts
-        JOIN units u ON u.id = fts.unit_id
+        JOIN unit u ON u.id = fts.unit_id
         WHERE unit_fts MATCH ?
         LIMIT ?
     """, (terms, limit)).fetchall()
 
-    return list(formulas) + list(variables) + list(units)
+    return list(formulas) + list(quantities) + list(units)
 
 
 def get_base_units(conn):
-    """Return SI base units with their variable info."""
+    """Return SI base units with their quantity info."""
     return conn.execute("""
          SELECT u.id, u.symbol, u.name, json_extract(u.name, '$.en-us') AS name_en,
-               v.id AS variable_id, v.latex AS var_latex,
-               v.name AS var_name_raw, json_extract(v.name, '$.en-us') AS var_name
-        FROM units u
-        JOIN variables v ON v.id = u.variable_id
-        WHERE u.si_unit = 1 AND v.id IN ('length','mass','temperature','period',
+               q.id AS quantity_id, q.symbol AS quantity_symbol,
+               q.name AS quantity_name_raw, json_extract(q.name, '$.en-us') AS quantity_name
+        FROM unit u
+        JOIN quantity q ON q.id = u.quantity_id
+        WHERE u.default_unit = 1 AND q.id IN ('length','mass','temperature','period',
               'electric_current','amount','luminous_intensity')
-        ORDER BY v.id
+        ORDER BY q.id
     """).fetchall()
 
 
-def get_all_variables(conn):
-    """Return all variables with si_unit parsed and dimensions."""
+def get_all_quantities(conn):
+    """Return all quantities with default_unit parsed and dimensions."""
     return conn.execute("""
-        SELECT v.id, v.name, v.latex, json_extract(v.name, '$.en-us') AS name_en,
-               v.si_unit,
-               v.dim_M, v.dim_L, v.dim_T, v.dim_I, v.dim_Θ, v.dim_N, v.dim_J
-        FROM variables v
-        ORDER BY v.id
+        SELECT q.id, q.name, q.symbol, json_extract(q.name, '$.en-us') AS name_en,
+               q.default_unit,
+               q.dim_M, q.dim_L, q.dim_T, q.dim_I, q.dim_\u0398, q.dim_N, q.dim_J
+        FROM quantity q
+        ORDER BY q.id
     """).fetchall()
 
 
@@ -908,20 +872,20 @@ def get_all_formulas(conn):
                f.branch, json_extract(f.branch, '$.en-us') AS branch_en,
                f.topic, json_extract(f.topic, '$.en-us') AS topic_en,
                f.difficulty
-        FROM formulas f
+        FROM formula f
         ORDER BY f.science, f.branch, f.topic, f.difficulty, f.id
     """).fetchall()
 
 
 def get_formulas_by_science(conn):
-    """Return formulas grouped by science → branch → topic."""
+    """Return formulas grouped by science -> branch -> topic."""
     rows = conn.execute("""
         SELECT f.id, f.name, json_extract(f.name, '$.en-us') AS name_en,
                f.science, json_extract(f.science, '$.en-us') AS science_en,
                f.branch, json_extract(f.branch, '$.en-us') AS branch_en,
                f.topic, json_extract(f.topic, '$.en-us') AS topic_en,
                f.difficulty
-        FROM formulas f
+        FROM formula f
         ORDER BY f.science, f.branch, f.topic, f.difficulty, f.id
     """).fetchall()
     by_science = defaultdict(lambda: defaultdict(list))
@@ -930,16 +894,14 @@ def get_formulas_by_science(conn):
     return dict(by_science)
 
 
-
-def render_si_unit_latex(si_unit_json):
-    """Render si_unit JSON as siunitx LaTeX string."""
-    parts = parse_si_unit_json(si_unit_json)
+def render_default_unit_latex(default_unit_json):
+    """Render default_unit JSON as siunitx LaTeX string."""
+    parts = parse_default_unit_json(default_unit_json)
     if not parts:
         return ""
     num_parts = []
     den_parts = []
     for uid, exp in parts:
-        # Map unit IDs to siunitx macros
         symbol_map = {
             "meter": "\\meter", "kilogram": "\\kilogram", "second": "\\second",
             "kelvin": "\\kelvin", "newton": "\\newton", "ohm": "\\ohm",
@@ -967,58 +929,59 @@ def _siunitx_group(parts):
             items.append(f"{sym}^{{{fmt_num(exp)}}}")
     return "\\,".join(items)
 
-TABLE_ORDER = ["variables", "units", "formulas", "formula_items", "conditions", "formula_relations"]
+
+TABLE_ORDER = ["quantity", "unit", "formula", "formula_item", "condition", "formula_relation"]
 
 TABLE_COLUMNS = {
-    "formulas": [
+    "formula": [
         "id", "name", "science", "branch", "topic", "difficulty",
         "description", "links",
     ],
-    "formula_items": [
+    "formula_item": [
         "formula_id", "term", "is_primary", "sort_order",
         "coeff_value", "coeff_special", "coeff_exponent",
-        "variable_id", "var_exponent", "label",
-        "latex_prefix", "latex_suffix", "latex_override",
+        "quantity_id", "var_exponent", "label",
+        "latex_prefix", "latex_suffix", "symbol_overwrite",
     ],
-    "conditions": [
+    "condition": [
         "name", "formula_id", "replacement_formula_id", "default_on", "sort_order",
     ],
-    "formula_relations": [
+    "formula_relation": [
         "formula_id", "related_id", "relation_type",
     ],
-    "variables": [
-        "id", "name", "latex", "science", "branch", "topic",
-        "difficulty", "description", "links", "si_unit",
-        "dim_M", "dim_L", "dim_T", "dim_I", "dim_Θ", "dim_N", "dim_J",
+    "quantity": [
+        "id", "name", "symbol", "science", "branch", "topic",
+        "difficulty", "description", "links", "default_unit",
+        "dim_M", "dim_L", "dim_T", "dim_I", "dim_\u0398", "dim_N", "dim_J",
     ],
-    "units": [
-        "id", "variable_id", "symbol", "name", "factor_to_si", "offset",
-        "si_unit", "unit_system",
+    "unit": [
+        "id", "name", "symbol", "quantity_id", "default_unit", "unit_system", "factor", "offset",
     ],
 }
 
+
 TABLE_INSERT = {
-    "formulas": """INSERT OR REPLACE INTO formulas
+    "formula": """INSERT OR REPLACE INTO formula
         (id, name, science, branch, topic, difficulty, description, links)
         VALUES (?,?,?,?,?,?,?,?)""",
-    "formula_items": """INSERT OR REPLACE INTO formula_items
+    "formula_item": """INSERT OR REPLACE INTO formula_item
         (formula_id, term, is_primary, sort_order, coeff_value, coeff_special,
-         coeff_exponent, variable_id, var_exponent, label,
-         latex_prefix, latex_suffix, latex_override)
+         coeff_exponent, quantity_id, var_exponent, label,
+         latex_prefix, latex_suffix, symbol_overwrite)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-    "conditions": """INSERT OR REPLACE INTO conditions
+    "condition": """INSERT OR REPLACE INTO condition
         (name, formula_id, replacement_formula_id, default_on, sort_order)
         VALUES (?,?,?,?,?)""",
-    "formula_relations": """INSERT OR REPLACE INTO formula_relations
+    "formula_relation": """INSERT OR REPLACE INTO formula_relation
         (formula_id, related_id, relation_type)
         VALUES (?,?,?)""",
-    "variables": """INSERT OR REPLACE INTO variables
-        (id, name, latex, science, branch, topic,
-         difficulty, description, links, si_unit,
-         dim_M, dim_L, dim_T, dim_I, dim_Θ, dim_N, dim_J)
+    "quantity": """INSERT OR REPLACE INTO quantity
+        (id, name, symbol, science, branch, topic,
+         difficulty, description, links, default_unit,
+         dim_M, dim_L, dim_T, dim_I, dim_\u0398, dim_N, dim_J)
         VALUES (?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?)""",
-    "units": """INSERT OR REPLACE INTO units
-        (id, variable_id, symbol, name, factor_to_si, offset, si_unit, unit_system)
+    "unit": """INSERT OR REPLACE INTO unit
+        (id, name, symbol, quantity_id, default_unit, unit_system, factor, offset)
         VALUES (?,?,?,?,?,?,?,?)""",
 }
 
@@ -1066,7 +1029,7 @@ def export_xlsx(conn, path):
     for table, cols, rows in _table_rows(conn):
         if first:
             ws = wb.active
-            ws.title = table[:31]  # sheet name max 31 chars
+            ws.title = table[:31]
             first = False
         else:
             ws = wb.create_sheet(title=table[:31])
@@ -1177,7 +1140,6 @@ def import_ods(conn, path):
 def _import_worksheets(conn, sheets):
     """Import from a dict of {table_name: (headers, rows)}. Returns counts."""
     counts = {}
-    # sheets may have truncated names — match by prefix
     table_map = {}
     for name in sheets:
         for t in TABLE_ORDER:
@@ -1209,9 +1171,7 @@ def import_csv(conn, csv_str):
         expected = TABLE_COLUMNS[current_table]
         cleaned = []
         for row in rows_buffer:
-            # map CSV columns to expected columns by index
             vals = [row[i] if i < len(row) else "" for i in col_indices]
-            # convert empty strings to None for nullable columns
             cleaned.append(tuple(None if v == "" else v for v in vals))
         conn.executemany(sql, cleaned)
         counts[current_table] = len(rows_buffer)
@@ -1237,4 +1197,3 @@ def import_csv(conn, csv_str):
     flush()
     conn.commit()
     return counts
-

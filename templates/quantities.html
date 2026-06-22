@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}All Quantities{% endblock %}
+{% block content %}
+
+<h2>All Quantities</h2>
+
+<table border="1" cellpadding="4" cellspacing="0">
+<tr><th>Symbol</th><th>Name</th><th>Default Unit</th><th>Dimensions</th></tr>
+{% for q in quantities %}
+<tr>
+  <td>${{ q.symbol }}$</td>
+  <td><a href="/quantity/{{ q.id }}">{{ q.name_en }}</a></td>
+  <td>{{ q.default_unit_html | safe }}</td>
+  <td>${{ fmt_dim(q.dim_M, q.dim_L, q.dim_T, q.dim_I, q.dim_Θ, q.dim_N, q.dim_J) }}$</td>
+</tr>
+{% endfor %}
+</table>
+
+<p><a href="/">&larr; Back to home</a></p>
+
+{% endblock %}

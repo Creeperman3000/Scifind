@@ -7,9 +7,9 @@ Usage:
     formula list [options]                  List formulas
     formula show <id>                       Show formula details
     formula search <query>                  Full-text search
-    formula variables [--formula F]         List variables
-    formula variable <id>                   Show variable details
-    formula units [--variable V]            List units
+    formula quantities [--formula F]        List quantities
+    formula quantity <id>                   Show quantity details
+    formula units [--quantity Q]            List units
     formula browse                          Browse branch/topic tree
     formula export [options]                Export all tables
     formula import <file>                   Import tables from file
@@ -29,10 +29,10 @@ if str(_project_dir) not in sys.path:
 from formula_lib import (
     db_path, get_conn, en, rebuild_fts, migrate_db,
     render_formula_items, render_dimensions, dims_from_row, DIM_ORDER, DIM_COLS,
-    render_si_unit_html, parse_si_unit_json,
+    render_default_unit_html, parse_default_unit_json,
     get_formula_detail, get_formula_items,
-    get_formula_conditions, get_formula_relations, get_formula_variables,
-    get_variable_detail, get_variable_units, get_variable_formulas,
+    get_formula_conditions, get_formula_relations, get_formula_quantities,
+    get_quantity_detail, get_quantity_units, get_quantity_formulas,
     get_formulas_by_science,
     search,
     export_csv, export_csv_dir, export_xlsx, export_ods,
@@ -42,7 +42,7 @@ from formula_lib import (
 SCRIPT_DIR = _project_dir
 
 
-# ── Init ────────────────────────────────────────────────
+# Init
 
 def cmd_init(args):
     conn = get_conn()
@@ -63,7 +63,7 @@ def cmd_init(args):
     print(f"  {changes} SQL statements executed, {n} formulas indexed for search.")
 
 
-# ── List ────────────────────────────────────────────────
+# List
 
 def cmd_list(args):
     conn = get_conn()
@@ -89,7 +89,7 @@ def cmd_list(args):
                json_extract(f.branch, '$.en-us') AS branch_en,
                json_extract(f.topic, '$.en-us') AS topic_en,
                f.difficulty
-        FROM formulas f
+        FROM formula f
     """
     if where:
         sql += " WHERE " + " AND ".join(where)
@@ -106,16 +106,16 @@ def cmd_list(args):
         t = r["topic_en"] or "General"
         by_branch.setdefault(b, {}).setdefault(t, []).append(r)
     for branch, topics in by_branch.items():
-        print(f"\n── \033[1m{branch}\033[0m ──")
+        print(f"\n\u2500\u2500 \033[1m{branch}\033[0m \u2500\u2500")
         for topic, formulas in topics.items():
             print(f"  \033[33m{topic}\033[0m:")
             for f in formulas:
-                s = "★" * min(f["difficulty"], 5) + "☆" * max(0, 5 - min(f["difficulty"], 5))
+                s = "\u2605" * min(f["difficulty"], 5) + "\u2606" * max(0, 5 - min(f["difficulty"], 5))
                 print(f"    {f['id']:40s} {s}  {f['name_en']}")
     print()
 
 
-# ── Show ────────────────────────────────────────────────
+# Show
 
 def cmd_show(args):
     conn = get_conn()
@@ -126,7 +126,7 @@ def cmd_show(args):
     items = get_formula_items(conn, args.id)
     conds = get_formula_conditions(conn, args.id)
     relations = get_formula_relations(conn, args.id)
-    variables = get_formula_variables(conn, args.id)
+    quantities = get_formula_quantities(conn, args.id)
     conn.close()
 
     name = en(row["name"])
@@ -134,11 +134,11 @@ def cmd_show(args):
     diff = row["difficulty"]
     branch = en(row["branch"])
     topic = en(row["topic"])
-    stars = "★" * min(diff, 5) + "☆" * max(0, 5 - min(diff, 5))
+    stars = "\u2605" * min(diff, 5) + "\u2606" * max(0, 5 - min(diff, 5))
 
     print(f"\n  \033[1m{name}\033[0m  {stars}")
     if branch:
-        print(f"  \033[33m{branch}\033[0m → \033[36m{topic}\033[0m  (difficulty {diff}/10)")
+        print(f"  \033[33m{branch}\033[0m \u2192 \033[36m{topic}\033[0m  (difficulty {diff}/10)")
 
     if items:
         latex = render_formula_items(items)
@@ -151,24 +151,24 @@ def cmd_show(args):
         print(f"\n  \033[2m{wrapped}\033[0m")
 
     if conds:
-        print(f"\n  \033[1mAssumptions:\033[0m")
+        print(f"\n  \033[1mConditions:\033[0m")
         for c in conds:
-            state = "☑" if c["default_on"] else "☐"
-            print(f"    {state} {c['name_en']}  →  {c['replacement_formula_id']}")
+            state = "\u2611" if c["default_on"] else "\u2610"
+            print(f"    {state} {c['name_en']}  \u2192  {c['replacement_formula_id']}")
 
-    if variables:
-        print(f"\n  \033[1mVariables:\033[0m")
-        for v in variables:
-            print(f"    ${v['latex']}$  {v['name_en']}  (\033[90m{v['id']}\033[0m)")
+    if quantities:
+        print(f"\n  \033[1mQuantities:\033[0m")
+        for q in quantities:
+            print(f"    ${q['symbol']}$  {q['name_en']}  (\033[90m{q['id']}\033[0m)")
 
     if relations:
         print(f"\n  \033[1mRelated:\033[0m")
         for r in relations:
-            print(f"    \033[90m{r['relation_type']}\033[0m → {r['related_id']}  ({r['related_name']})")
+            print(f"    \033[90m{r['relation_type']}\033[0m \u2192 {r['related_id']}  ({r['related_name']})")
     print()
 
 
-# ── Search ──────────────────────────────────────────────
+# Search
 
 def cmd_search(args):
     conn = get_conn()
@@ -180,64 +180,64 @@ def cmd_search(args):
     print(f"\n  \033[1m{len(rows)} result(s)\033[0m for \033[33m'{args.query}'\033[0m\n")
     for r in rows:
         if r["kind"] == "formula":
-            s = "★" * min(r["difficulty"], 5) + "☆" * max(0, 5 - min(r["difficulty"], 5))
+            s = "\u2605" * min(r["difficulty"], 5) + "\u2606" * max(0, 5 - min(r["difficulty"], 5))
             print(f"  \033[36mformula \033[0m{r['id']:40s} {s}  {r['name_en']}")
-        elif r["kind"] == "variable":
-            print(f"  \033[32mvariable\033[0m {r['id']:40s}        {r['name_en']} ($\\{r['extra']}$)")
+        elif r["kind"] == "quantity":
+            print(f"  \033[32mquantity\033[0m {r['id']:40s}        {r['name_en']} ($\\{r['extra']}$)")
         elif r["kind"] == "unit":
             print(f"  \033[33munit    \033[0m{r['id']:40s}        {r['name_en']} ($\\{r['extra']}$)")
     print()
 
 
-# ── Variables list ─────────────────────────────────────
+# Quantities list
 
-def cmd_variables(args):
+def cmd_quantities(args):
     conn = get_conn()
     if args.formula:
-        rows = get_formula_variables(conn, args.formula)
+        rows = get_formula_quantities(conn, args.formula)
     else:
         rows = conn.execute("""
-            SELECT v.id, v.latex, json_extract(v.name, '$.en-us') AS name_en,
-                   v.si_unit, v.dim_M, v.dim_L, v.dim_T, v.dim_I, v.dim_Θ, v.dim_N, v.dim_J
-            FROM variables v ORDER BY v.id
+            SELECT q.id, q.symbol, json_extract(q.name, '$.en-us') AS name_en,
+                   q.default_unit, q.dim_M, q.dim_L, q.dim_T, q.dim_I, q.dim_\u0398, q.dim_N, q.dim_J
+            FROM quantity q ORDER BY q.id
         """).fetchall()
     conn.close()
     if not rows:
-        print("No variables found.")
+        print("No quantities found.")
         return
-    print(f"\n  \033[1mVariables\033[0m" + (f" for \033[33m{args.formula}\033[0m" if args.formula else "") + "\n")
-    for v in rows:
-        dims = render_dimensions(*dims_from_row(v))
-        unit_parts = parse_si_unit_json(v["si_unit"])
+    print(f"\n  \033[1mQuantities\033[0m" + (f" for \033[33m{args.formula}\033[0m" if args.formula else "") + "\n")
+    for q in rows:
+        dims = render_dimensions(*dims_from_row(q))
+        unit_parts = parse_default_unit_json(q["default_unit"])
         unit_str = "\u00b7".join(f"{uid}^{exp}" for uid, exp in unit_parts) if unit_parts else ""
-        print(f"  ${v['latex']}$  \033[1m{v['name_en']}\033[0m  (\033[90m{v['id']}\033[0m)")
-        print(f"      Dimensions: \033[2m{dims}\033[0m" + (f"  SI: {unit_str}" if unit_str else ""))
+        print(f"  ${q['symbol']}$  \033[1m{q['name_en']}\033[0m  (\033[90m{q['id']}\033[0m)")
+        print(f"      Dimensions: \033[2m{dims}\033[0m" + (f"  default unit: {unit_str}" if unit_str else ""))
     print()
 
 
-# ── Variable detail ────────────────────────────────────
+# Quantity detail
 
-def cmd_variable(args):
+def cmd_quantity(args):
     conn = get_conn()
-    v = get_variable_detail(conn, args.id)
-    if not v:
-        print(f"Variable '{args.id}' not found.")
+    q = get_quantity_detail(conn, args.id)
+    if not q:
+        print(f"Quantity '{args.id}' not found.")
         sys.exit(1)
-    units = get_variable_units(conn, args.id)
-    formulas = get_variable_formulas(conn, args.id)
+    units = get_quantity_units(conn, args.id)
+    formulas = get_quantity_formulas(conn, args.id)
     conn.close()
 
-    name = en(v["name"])
-    desc = en(v["description"])
-    dims = render_dimensions(v["dim_M"], v["dim_L"], v["dim_T"], v["dim_I"], v["dim_Θ"], v["dim_N"], v["dim_J"])
-    unit_parts = parse_si_unit_json(v["si_unit"])
+    name = en(q["name"])
+    desc = en(q["description"])
+    dims = render_dimensions(q["dim_M"], q["dim_L"], q["dim_T"], q["dim_I"], q["dim_\u0398"], q["dim_N"], q["dim_J"])
+    unit_parts = parse_default_unit_json(q["default_unit"])
     unit_str = "\u00b7".join(f"{uid}^{exp}" for uid, exp in unit_parts) if unit_parts else ""
 
-    print(f"\n  \033[1m${v['latex']}$ — {name}\033[0m  (\033[90m{v['id']}\033[0m)")
+    print(f"\n  \033[1m${q['symbol']}$ \u2014 {name}\033[0m  (\033[90m{q['id']}\033[0m)")
     if dims:
         print(f"  Dimensions: \033[2m{dims}\033[0m")
     if unit_str:
-        print(f"  SI unit: {unit_str}")
+        print(f"  Default unit: {unit_str}")
 
     if desc:
         wrapped = textwrap.fill(desc, width=72, initial_indent="  ", subsequent_indent="  ")
@@ -246,48 +246,48 @@ def cmd_variable(args):
     if units:
         print(f"\n  \033[1mUnits:\033[0m")
         for u in units:
-            s = "✓" if u["si_unit"] else " "
+            s = "\u2713" if u["default_unit"] else " "
             off = f" + {u['offset']}" if u["offset"] else ""
-            print(f"    [{s}] ${u['symbol']}$  {u['id']}  [{u['unit_system'] or 'any'}]  ×{u['factor_to_si']}{off} → SI")
+            print(f"    [{s}] ${u['symbol']}$  {u['id']}  [{u['unit_system'] or 'any'}]  \u00d7{u['factor']}{off} \u2192 SI")
 
     if formulas:
         print(f"\n  \033[1mAppears in formulas:\033[0m")
         for f in formulas:
-            s = "★" * min(f["difficulty"], 5) + "☆" * max(0, 5 - min(f["difficulty"], 5))
+            s = "\u2605" * min(f["difficulty"], 5) + "\u2606" * max(0, 5 - min(f["difficulty"], 5))
             print(f"    {f['id']:40s} {s}  {f['name_en']}")
     print()
 
 
-# ── Units ───────────────────────────────────────────────
+# Units
 
 def cmd_units(args):
     conn = get_conn()
-    if args.variable:
+    if args.quantity:
         rows = conn.execute("""
-            SELECT u.*, json_extract(v.name, '$.en-us') AS var_name
-            FROM units u JOIN variables v ON v.id = u.variable_id
-            WHERE u.variable_id = ?
-            ORDER BY u.si_unit DESC, u.unit_system
-        """, (args.variable,)).fetchall()
+            SELECT u.*, json_extract(q.name, '$.en-us') AS quantity_name
+            FROM unit u JOIN quantity q ON q.id = u.quantity_id
+            WHERE u.quantity_id = ?
+            ORDER BY u.default_unit DESC, u.unit_system
+        """, (args.quantity,)).fetchall()
     else:
         rows = conn.execute("""
-            SELECT u.*, json_extract(v.name, '$.en-us') AS var_name
-            FROM units u JOIN variables v ON v.id = u.variable_id
-            ORDER BY v.id, u.si_unit DESC, u.unit_system
+            SELECT u.*, json_extract(q.name, '$.en-us') AS quantity_name
+            FROM unit u JOIN quantity q ON q.id = u.quantity_id
+            ORDER BY q.id, u.default_unit DESC, u.unit_system
         """).fetchall()
     conn.close()
     if not rows:
         print("No units found.")
         return
-    print(f"\n  \033[1mUnits\033[0m" + (f" for \033[33m{args.variable}\033[0m" if args.variable else "") + "\n")
+    print(f"\n  \033[1mUnits\033[0m" + (f" for \033[33m{args.quantity}\033[0m" if args.quantity else "") + "\n")
     for u in rows:
-        s = "✓" if u["si_unit"] else " "
+        s = "\u2713" if u["default_unit"] else " "
         off = f" + {u['offset']}" if u["offset"] else ""
-        print(f"  [{s}] ${u['symbol']}$  \033[1m{u['id']}\033[0m  [{u['unit_system'] or 'any'}]  ×{u['factor_to_si']}{off} → SI")
+        print(f"  [{s}] ${u['symbol']}$  \033[1m{u['id']}\033[0m  [{u['unit_system'] or 'any'}]  \u00d7{u['factor']}{off} \u2192 SI")
     print()
 
 
-# ── Browse ──────────────────────────────────────────────
+# Browse
 
 def cmd_browse(args):
     conn = get_conn()
@@ -295,7 +295,7 @@ def cmd_browse(args):
         SELECT f.id, json_extract(f.name, '$.en-us') AS name_en,
                json_extract(f.branch, '$.en-us') AS branch_en,
                json_extract(f.topic, '$.en-us') AS topic_en, f.difficulty
-        FROM formulas f ORDER BY f.branch, f.topic, f.difficulty, f.id
+        FROM formula f ORDER BY f.branch, f.topic, f.difficulty, f.id
     """).fetchall()
     conn.close()
     tree = {}
@@ -308,12 +308,12 @@ def cmd_browse(args):
         for topic, formulas in topics.items():
             print(f"    \033[33m{topic}\033[0m")
             for f in formulas:
-                s = "★" * min(f["difficulty"], 5) + "☆" * max(0, 5 - min(f["difficulty"], 5))
+                s = "\u2605" * min(f["difficulty"], 5) + "\u2606" * max(0, 5 - min(f["difficulty"], 5))
                 print(f"      {f['id']:38s} {s}  {f['name_en']}")
     print()
 
 
-# ── Export ──────────────────────────────────────────────
+# Export
 
 def cmd_export(args):
     conn = get_conn()
@@ -341,7 +341,7 @@ def cmd_export(args):
     conn.close()
 
 
-# ── Import ──────────────────────────────────────────────
+# Import
 
 def cmd_import(args):
     conn = get_conn()
@@ -366,11 +366,11 @@ def cmd_import(args):
         print(f"  {table}: {n} rows")
 
 
-# ── Main ────────────────────────────────────────────────
+# Main
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Scifind — structured physics formula database",
+        description="Scifind \u2014 structured physics formula database",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent("""
             Examples:
@@ -378,9 +378,9 @@ def main():
               formula list --branch "Classical mechanics" --difficulty 1-3
               formula show newton_second_law_of_motion
               formula search "heat work"
-              formula variables
-              formula variable length
-              formula units --variable length
+              formula quantities
+              formula quantity length
+              formula units --quantity length
               formula export --output backup.csv
               formula export --format csvdir -o ./backup
               formula export --format xlsx -o formulas.xlsx
@@ -407,14 +407,14 @@ def main():
     p_search.add_argument("query", help="Search terms")
     p_search.add_argument("--limit", "-l", type=int, default=20, help="Max results")
 
-    p_vars = sub.add_parser("variables", help="List variables")
-    p_vars.add_argument("--formula", "-f", help="Filter by formula ID")
+    p_quantities = sub.add_parser("quantities", help="List quantities")
+    p_quantities.add_argument("--formula", "-f", help="Filter by formula ID")
 
-    p_var = sub.add_parser("variable", help="Show variable details")
-    p_var.add_argument("id", help="Variable ID")
+    p_quantity = sub.add_parser("quantity", help="Show quantity details")
+    p_quantity.add_argument("id", help="Quantity ID")
 
     p_units = sub.add_parser("units", help="List units")
-    p_units.add_argument("--variable", "-v", help="Filter by variable ID")
+    p_units.add_argument("--quantity", "-q", help="Filter by quantity ID")
 
     sub.add_parser("browse", help="Browse by branch/topic")
 
@@ -435,8 +435,8 @@ def main():
         "list": cmd_list,
         "show": cmd_show,
         "search": cmd_search,
-        "variables": cmd_variables,
-        "variable": cmd_variable,
+        "quantities": cmd_quantities,
+        "quantity": cmd_quantity,
         "units": cmd_units,
         "browse": cmd_browse,
         "export": cmd_export,

@@ -1,16 +1,16 @@
 {% extends "base.html" %}
-{% block title %}{{ var.name_en }}{% endblock %}
+{% block title %}{{ q.name_en }}{% endblock %}
 {% block content %}
 
-<h2>${{ var.latex }}$ &mdash; {{ var.name_en }}</h2>
-<p><small>{{ var.id }}</small></p>
+<h2>${{ q.symbol }}$ &mdash; {{ q.name_en }}</h2>
+<p><small>{{ q.id }}</small></p>
 
-{% if var.dim_M or var.dim_L or var.dim_T or var.dim_I or var.dim_Θ or var.dim_N or var.dim_J %}
-<p><b>Dimensions:</b> ${{ fmt_dim(var.dim_M, var.dim_L, var.dim_T, var.dim_I, var.dim_Θ, var.dim_N, var.dim_J) }}$</p>
+{% if q.dim_M or q.dim_L or q.dim_T or q.dim_I or q.dim_Θ or q.dim_N or q.dim_J %}
+<p><b>Dimensions:</b> ${{ fmt_dim(q.dim_M, q.dim_L, q.dim_T, q.dim_I, q.dim_Θ, q.dim_N, q.dim_J) }}$</p>
 {% endif %}
 
-{% if var.description_en %}
-<p><i>{{ var.description_en }}</i></p>
+{% if q.description_en %}
+<p><i>{{ q.description_en }}</i></p>
 {% endif %}
 
 {% if units %}
@@ -19,11 +19,11 @@
 <tr><th></th><th>Symbol</th><th>Unit</th><th>System</th><th>Factor to SI</th></tr>
 {% for u in units %}
 <tr>
-  <td>{% if u.si_unit %}&#x2713;{% endif %}</td>
+  <td>{% if u.default_unit %}&#x2713;{% endif %}</td>
   <td>${{ render_symbol(u.symbol) }}$</td>
   <td>{{ unit_name(u.id) }}</td>
   <td>{{ u.unit_system or "any" }}</td>
-  <td>&times;{{ u.factor_to_si }}{% if u.offset %} + {{ u.offset }}{% endif %}</td>
+  <td>&times;{{ u.factor }}{% if u.offset %} + {{ u.offset }}{% endif %}</td>
 </tr>
 {% endfor %}
 </table>
