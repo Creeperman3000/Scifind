@@ -159,6 +159,10 @@ def migrate_db(conn):
         conn.execute("UPDATE unit SET symbol = ? WHERE symbol = ?", (new, old))
     conn.commit()
 
+    # Normalize double backslashes in symbols: \\command → \command
+    conn.execute("UPDATE unit SET symbol = substr(symbol, 2) WHERE symbol LIKE '\\\\%' AND symbol NOT LIKE '\\\\mathrm%'")
+    conn.commit()
+
     # Ensure FTS tables exist
     for fts_sql in [
         "CREATE VIRTUAL TABLE IF NOT EXISTS quantity_fts USING fts5(quantity_id UNINDEXED, name, symbol)",

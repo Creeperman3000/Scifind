@@ -34,10 +34,10 @@ INSERT INTO unit (id, name, symbol, quantity_id, default_unit, unit_system, fact
   ('kilogram',       '{"en-us": "Kilogram"}',                              'kg',               'mass',         1, 'SI',  1,      0),
   ('gram',           '{"en-us": "Gram"}',                                  'g',                'mass',         0, 'CGS', 0.001,  0),
   ('kelvin',         '{"en-us": "Kelvin"}',                                'K',                'temperature',  1, 'SI',  1,      0),
-  ('degree_celsius', '{"en-us": "Degree Celsius"}',                        '\\degreeCelsius',  'temperature',  0, NULL, 1,     273.15),
-  ('newton',         '{"en-us": "Newton"}',                                '\\newton',         'force',        1, 'SI',  1,      0),
+  ('degree_celsius', '{"en-us": "Degree Celsius"}',                        '\degreeCelsius',   'temperature',  0, NULL, 1,     273.15),
+  ('newton',         '{"en-us": "Newton"}',                                '\newton',          'force',        1, 'SI',  1,      0),
   ('dyne',           '{"en-us": "Dyne"}',                                  'dyn',              'force',        0, 'CGS', 0.00001,0),
-  ('ohm',            '{"en-us": "Ohm"}',                                   '\\ohm',            'resistance',   1, 'SI',  1,      0),
+  ('ohm',            '{"en-us": "Ohm"}',                                   '\ohm',             'resistance',   1, 'SI',  1,      0),
   ('second',         '{"en-us": "Second"}',                                's',                'period',       1, 'SI',  1,      0);
 
 -- --------------------------------------------------
