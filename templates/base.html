@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>{% block title %}Physics Formulas{% endblock %}</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body, {
+      delimiters: [{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],
+      macros: {
+        '\\kilogram': '\\mathrm{kg}',
+        '\\meter': '\\mathrm{m}',
+        '\\second': '\\mathrm{s}',
+        '\\newton': '\\mathrm{N}',
+        '\\ohm': '\\Omega',
+        '\\degreeCelsius': '{}^{\\circ}\\mathrm{C}',
+        '\\celsius': '{}^{\\circ}\\mathrm{C}',
+        '\\kelvin': '\\mathrm{K}',
+        '\\gram': '\\mathrm{g}',
+        '\\hertz': '\\mathrm{Hz}',
+        '\\centi': '\\mathrm{c}',
+        '\\textdegree': '{}^{\\circ}',
+      }
+    });"></script>
+</head>
+<body>
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;">
+    <a href="/" style="text-decoration:none;color:inherit;"><h1>Physics Formulas</h1></a>
+    <div style="display:flex;align-items:center;gap:10px;">
+      <form method="get" action="/export" style="display:inline">
+        <select name="format" aria-label="Export format">
+          <option value="csv">CSV</option>
+          <option value="xlsx">XLSX</option>
+          <option value="ods">ODS</option>
+        </select>
+        <button type="submit">Export</button>
+      </form>
+      <form method="post" action="/import" enctype="multipart/form-data" style="display:inline">
+        <input type="file" name="file" onchange="this.form.submit()" style="display:none" id="import-file">
+        <button type="button" onclick="document.getElementById('import-file').click()">Import</button>
+      </form>
+      <form method="get" id="dim-mode-form">
+        {% for k, v in request.args.items() if k not in ('dim_mode',) %}
+          <input type="hidden" name="{{ k }}" value="{{ v }}">
+        {% endfor %}
+        <select name="dim_mode" onchange="this.form.submit()" aria-label="Dimension mode">
+          <option value="var" {{ 'selected' if g.dim_mode == 'var' }}>Dim: Var</option>
+          <option value="unit" {{ 'selected' if g.dim_mode == 'unit' }}>Dim: Unit</option>
+        </select>
+      </form>
+      <form method="get" id="locale-form">
+        {% for k, v in request.args.items() if k != 'locale' %}
+          <input type="hidden" name="{{ k }}" value="{{ v }}">
+        {% endfor %}
+        <select name="locale" onchange="this.form.submit()" aria-label="Language">
+          <option value="en-us" {{ 'selected' if g.locale == 'en-us' }}>🇺🇸 EN</option>
+          <option value="en-uk" {{ 'selected' if g.locale == 'en-uk' }}>🇬🇧 EN</option>
+        </select>
+      </form>
+    </div>
+  </div>
+  <form action="/search" method="get">
+    <input type="text" name="q" placeholder="Search formulas..." size="40">
+    <button type="submit">Search</button>
+  </form>
+  <hr>
+  {% block content %}{% endblock %}
+</body>
+</html>

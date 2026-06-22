@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Search results{% endblock %}
+{% block content %}
+
+{% if query %}
+<h2>Search results for "{{ query }}"</h2>
+{% if results %}
+<ul>
+{% for r in results %}
+  <li>
+    {% if r.kind == 'formula' %}
+    <a href="/formula/{{ r.id }}"><b>{{ locale_text(r.name) }}</b></a>
+    <small>formula &mdash; {{ r.branch_en }} &rarr; {{ r.topic_en }}</small>
+    {% elif r.kind == 'variable' %}
+    <a href="/variable/{{ r.id }}"><b>{{ locale_text(r.name) }}</b></a>
+    <small>variable &mdash; ${{ r.extra }}$</small>
+    {% elif r.kind == 'unit' %}
+    <a href="/unit/{{ r.id }}"><b>{{ locale_text(r.name) }}</b></a>
+    <small>unit &mdash; ${{ r.extra }}$</small>
+    {% endif %}
+  </li>
+{% endfor %}
+</ul>
+{% else %}
+<p>No results.</p>
+{% endif %}
+{% else %}
+<p>Enter a search query above.</p>
+{% endif %}
+
+<p><a href="/">&larr; Back to list</a></p>
+
+{% endblock %}

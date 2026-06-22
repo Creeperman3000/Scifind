@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Physics Formulas{% endblock %}
+{% block content %}
+
+<h2>SI Base Units</h2>
+<table border="1" cellpadding="4" cellspacing="0">
+<tr><th>Unit</th><th>Name</th><th>Symbol</th><th>Quantity</th></tr>
+{% for u in base_units %}
+<tr>
+  <td>${{ u.symbol }}$</td>
+  <td><a href="/unit/{{ u.id }}">{{ u.name_en }}</a></td>
+  <td>${{ u.var_latex }}$</td>
+  <td><a href="/variable/{{ u.variable_id }}">{{ u.var_name }}</a></td>
+</tr>
+{% endfor %}
+</table>
+
+<h2><a href="/variables">Variables</a></h2>
+
+{% for science, branches in by_science.items() %}
+<h3>{{ science }}</h3>
+<ul>
+{% for branch, formulas in branches.items() %}
+  <li>
+    <b>{{ branch }}</b>
+    <ul>
+    {% for topic in uniq_topics(formulas) %}
+      <li><a href="/formulas?topic={{ topic|urlencode }}">{{ topic }}</a></li>
+    {% endfor %}
+    </ul>
+  </li>
+{% endfor %}
+</ul>
+{% endfor %}
+
+<h2><a href="/formulas">Formulas</a></h2>
+
+
+{% endblock %}

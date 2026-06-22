@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}All Formulas{% endblock %}
+{% block content %}
+
+<h2>All Formulas</h2>
+
+<table border="1" cellpadding="4" cellspacing="0">
+<tr><th>Name</th><th>Science</th><th>Branch</th><th>Topic</th><th>Difficulty</th></tr>
+{% for f in formulas %}
+<tr>
+  <td><a href="/formula/{{ f.id }}">{{ f.name_en }}</a></td>
+  <td>{{ f.science_en or "" }}</td>
+  <td>{{ f.branch_en or "" }}</td>
+  <td>{{ f.topic_en or "" }}</td>
+  <td>{{ f.difficulty }}/10</td>
+</tr>
+{% endfor %}
+</table>
+
+<p><a href="/">&larr; Back to home</a></p>
+
+{% endblock %}

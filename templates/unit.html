@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}{{ unit.name_en or unit.id }}{% endblock %}
+{% block content %}
+
+<h2>{{ unit.name_en }}</h2>
+
+<table border="1" cellpadding="4" cellspacing="0">
+<tr><td>Symbol</td><td>${{ render_symbol(unit.symbol) }}$</td></tr>
+<tr><td>Variable</td><td><a href="/variable/{{ unit.variable_id }}">{{ unit.var_name }}</a></td></tr>
+<tr><td>System</td><td>{{ unit.unit_system or "any" }}</td></tr>
+<tr><td>Factor to SI</td><td>{{ unit.factor_to_si }}</td></tr>
+{% if unit.offset %}
+<tr><td>Offset</td><td>{{ unit.offset }}</td></tr>
+{% endif %}
+<tr><td>SI base unit</td><td>{{ "✓" if unit.si_unit else "" }}</td></tr>
+</table>
+
+<p><a href="/variable/{{ unit.variable_id }}">&larr; Back to variable</a></p>
+
+{% endblock %}

@@ -1,10 +1,64 @@
-# Physics Cheat Sheet — Database Specification
+# Physics Cheat Sheet
 
 ## Idea
 
 This project stores physics formulas and their variables in a structured SQL database. Each formula is broken down into terms, and each term is a product of coefficients and variables raised to exponents. A LaTeX compilation engine reads the structured data and renders display LaTeX.
 
 There are 6 tables: `formulas`, `formula_items`, `conditions`, `formula_relations`, `variables`, `units`.
+
+## CLI Tool
+
+`formula.py` — command-line interface for the database.
+
+| Command       | Description                                      |
+| ------------- | ------------------------------------------------ |
+| `init`        | Create and seed the database                     |
+| `list`        | List formulas (filter by `--branch`, `--difficulty`) |
+| `show <id>`   | Show formula details with rendered LaTeX         |
+| `search <q>`  | Full-text search                                 |
+| `variables`   | List all variables                               |
+| `variable <id>` | Show variable details with dimensions and SI unit |
+| `units`       | List units (filter by `--variable`)              |
+| `browse`      | Browse branch/topic tree                         |
+| `export`      | Export all tables in various formats             |
+| `import <file>` | Import tables from file or directory          |
+
+### Export/Import
+
+The tool supports multiple formats for data portability:
+
+| Format | Output                           | Input auto-detected |
+| ------ | -------------------------------- | ------------------- |
+| `csv`  | Per-table CSV files in a directory | CSV files (single file with `=== tablename ===` headers) or directory of per-table CSVs |
+| `xlsx` | Single XLSX workbook, one sheet per table | `.xlsx` files |
+| `ods`  | Single ODS spreadsheet, one sheet per table | `.ods` files |
+
+**Usage examples:**
+```
+formula export --format csv -o ./backup          # per-table CSV files
+formula export --format xlsx -o formulas.xlsx    # Excel workbook
+formula export --format ods -o formulas.ods      # OpenDocument spreadsheet
+formula import ./backup                          # directory of per-table CSVs
+formula import formulas.xlsx                     # Excel workbook
+formula import data.csv                          # single CSV with === headers
+```
+
+## Web Application
+
+`webapp.py` — Flask app with browse, search, export/import, and locale support.
+
+- Browse formulas by branch/topic tree
+- View formula details with rendered KaTeX LaTeX
+- View variable details with base dimensions and SI unit decomposition
+- Full-text search
+- **Locale toggle**: en-US / en-UK (via `Accept-Language`, `?lang=` query param, or session cookie)
+- **Dimension mode toggle**: switch between variable symbols (M, L, T…) and unit symbols (kg, m, s…) in dimension display
+- **Copy formula**: dropdown with LaTeX code, Unicode (via `unicodeit`), or clipboard image (via `html-to-image`)
+- **Natural language exponents**: "squared", "cubed", "to the Nth" in unit decomposition
+- **Download data** as ZIP of per-table CSVs, XLSX, or ODS (via navbar export button)
+- **Import data** by uploading CSV, XLSX, or ODS files (via navbar file input, auto-submits)
+
+## Database Specification
 
 ---
 
@@ -47,7 +101,7 @@ Breaks a formula into terms and their factors (products).
 | formula_id     | TEXT FK    | `REFERENCES formulas(id)`                                                                   |
 | term           | INTEGER    | groups factors that multiply together (same term = multiply, different term = add/subtract) |
 | is_primary     | BOOLEAN    | 1 = primary variable (left of =), 0 = variable on the other side                            |
-| sort_order     | INTEGER    | order within a term's product (left to right)                                               |
+| sort_order     | INTEGER    | order within a term's side of the product (sorted per `(term, is_primary)` group)           |
 | coeff_value    | REAL       | NULL = 1                                                                                    |
 | coeff_special  | TEXT       | `"pi"`, `"e"`                                                                               |
 | coeff_exponent | REAL       | default 1                                                                                   |
@@ -56,8 +110,11 @@ Breaks a formula into terms and their factors (products).
 | label          | TEXT       | subscript, e.g. `"1"`                                                                       |
 | latex_prefix   | TEXT       | LaTeX wrapper before, e.g. `\overline{`, `\hat{`, `\left\lvert`                             |
 | latex_suffix   | TEXT       | LaTeX wrapper after, e.g. `}`, `\right\rvert`                                               |
+| latex_override | TEXT       | overrides `variables.latex` for this item, e.g. `r` instead of `s`, `u` instead of `v`      |
 
-**Note:** `coeff_special`, `latex`, `latex_prefix`, `latex_suffix` are simple strings. The rendering engine does not parse or interpret them.
+**PK:** `(formula_id, term, is_primary, sort_order)`. Items on opposite sides of `=` (different `is_primary`) within the same `term` have independent sort orders starting from 0.
+
+**Note:** `coeff_special`, `latex`, `latex_prefix`, `latex_suffix`, `latex_override` are simple strings. The rendering engine does not parse or interpret them.
 
 ### How `term` and `is_primary` work
 
@@ -228,23 +285,31 @@ SELECT formula_id FROM formula_relations WHERE related_id = 'newton_second';
 
 One row per physical quantity. Used as a dictionary for all symbols that can appear in formulas.
 
-| Column      | Type        | i18n | Notes                                          |
-| ----------- | ----------- | ---- | ---------------------------------------------- |
-| id          | TEXT PK     |      | `force`                                        |
-| name        | TEXT (JSON) | ✓    | `{"en":"Force"}`                               |
-| latex       | TEXT        |      | `F`                                            |
-| science     | TEXT (JSON) | ✓    |                                                |
-| branch      | TEXT (JSON) | ✓    |                                                |
-| topic       | TEXT (JSON) | ✓    |                                                |
-| difficulty  | INTEGER     |      | 1–10                                           |
-| description | TEXT (JSON) | ✓    |                                                |
-| links       | TEXT (JSON) | ✓    |                                                |
-| si_unit     | TEXT        |      | `newton`                                       |
-| base_dims   | TEXT (JSON) |      | `{"M":1,"L":1,"T":-2,"I":0,"Θ":0,"N":0,"J":0}` |
-| created     | TEXT        |      |                                                |
-| modified    | TEXT        |      |                                                |
+| Column      | Type    | i18n | Notes                                          |
+| ----------- | ------- | ---- | ---------------------------------------------- |
+| id          | TEXT PK |      | `force`                                        |
+| name        | TEXT (JSON) | ✓ | `{"en":"Force"}`                               |
+| latex       | TEXT    |      | `F`                                            |
+| science     | TEXT (JSON) | ✓ |                                                |
+| branch      | TEXT (JSON) | ✓ |                                                |
+| topic       | TEXT (JSON) | ✓ |                                                |
+| difficulty  | INTEGER |      | 1–10                                           |
+| description | TEXT (JSON) | ✓ |                                                |
+| links       | TEXT (JSON) | ✓ |                                                |
+| si_unit     | TEXT (JSON) |      | `[{"unit":"meter","exponent":3}]`               |
+| dim_M       | INTEGER |      | Mass exponent                                  |
+| dim_L       | INTEGER |      | Length exponent                                |
+| dim_T       | INTEGER |      | Time exponent                                  |
+| dim_I       | INTEGER |      | Electric current exponent                      |
+| dim_Θ       | INTEGER |      | Temperature exponent                           |
+| dim_N       | INTEGER |      | Amount of substance exponent                   |
+| dim_J       | INTEGER |      | Luminous intensity exponent                    |
+| created     | TEXT    |      |                                                |
+| modified    | TEXT    |      |                                                |
 
-**Base dimension keys:** M (mass), L (length), T (time), I (electric current), Θ (temperature), N (amount of substance), J (luminous intensity).
+**`si_unit` JSON format:** array of `{"unit": "<unit_id>", "exponent": <number>}` objects. The `unit` references `units.id`.
+
+**Base dimension columns:** M (mass), L (length), T (time), I (electric current), Θ (temperature), N (amount of substance), J (luminous intensity). Each is an integer exponent (default 0).
 
 ---
 
@@ -252,28 +317,31 @@ One row per physical quantity. Used as a dictionary for all symbols that can app
 
 Alternative units for each variable with conversion factors to SI.
 
-| Column       | Type    | Notes                                                                |
-| ------------ | ------- | -------------------------------------------------------------------- |
-| id           | TEXT PK | `millimeter`, `degree_celsius`                                       |
-| variable_id  | TEXT FK | `REFERENCES variables(id)`                                           |
-| symbol       | TEXT    | LaTeX symbol: `mm`, `\text{\textdegree C}`                           |
-| factor_to_si | REAL    | multiply by this to get SI (1 for SI itself)                         |
-| offset       | REAL    | additive conversion (0 except for temperature)                       |
-| si_unit      | BOOLEAN | 1 = default display unit                                             |
-| unit_system  | TEXT    | `"SI"`, `"CGS"`, `"Imperial"`, NULL (NULL = available in any system) |
+| Column       | Type       | i18n | Notes                                                                |
+| ------------ | ---------- | ---- | -------------------------------------------------------------------- |
+| id           | TEXT PK    |      | `millimeter`, `degree_celsius`                                       |
+| variable_id  | TEXT FK    |      | `REFERENCES variables(id)`                                           |
+| symbol       | TEXT       |      | LaTeX/siunitx symbol: `\meter`, `\ohm`, `\degreeCelsius`             |
+| name         | TEXT (JSON)| ✓    | `{"en":"Ohm"}`                                                       |
+| factor_to_si | REAL       |      | multiply by this to get SI (1 for SI itself)                         |
+| offset       | REAL       |      | additive conversion (0 except for temperature)                       |
+| si_unit      | BOOLEAN    |      | 1 = default display unit                                             |
+| unit_system  | TEXT       |      | `"SI"`, `"CGS"`, `"Imperial"`, NULL (NULL = available in any system) |
+
+**Note:** Symbols support both siunitx commands (e.g. `\meter`, `\ohm`, `\newton`) and plain LaTeX (e.g. `\mathrm{m}`, `\mathrm{kg}`). The webapp converts them to `\mathrm{...}` LaTeX for KaTeX rendering via a lookup table.
 
 **Default behavior:** Every variable uses SI units by default. The `si_unit` flag marks which row in `units` is the SI default for that variable. When a user globally switches to CGS (or overrides an individual variable), the app applies the matching `unit_system` tag for base variables, then auto-computes derived variable units from their `base_dims`.
 
-| id             | variable_id | symbol               | factor_to_si | offset | si_unit | unit_system |
-| -------------- | ----------- | -------------------- | ------------ | ------ | ------- | ----------- |
-| meter          | length      | m                    | 1            | 0      | 1       | SI          |
-| centimeter     | length      | cm                   | 0.01         | 0      | 0       | CGS         |
-| kelvin         | temperature | K                    | 1            | 0      | 1       | SI          |
-| degree_celsius | temperature | \text{\textdegree C} | 1            | 273.15 | 0       | generic     |
-| kilogram       | mass        | kg                   | 1            | 0      | 1       | SI          |
-| gram           | mass        | g                    | 0.001        | 0      | 0       | CGS         |
-| newton         | force       | N                    | 1            | 0      | 1       | SI          |
-| dyne           | force       | dyn                  | 1e-5         | 0      | 0       | CGS         |
+| id             | variable_id | symbol           | name                | factor_to_si | offset | si_unit | unit_system |
+| -------------- | ----------- | ---------------- | ------------------- | ------------ | ------ | ------- | ----------- |
+| meter          | length      | `\meter`         | Meter               | 1            | 0      | 1       | SI          |
+| centimeter     | length      | `cm`             | Centimeter          | 0.01         | 0      | 0       | CGS         |
+| kelvin         | temperature | `K`              | Kelvin              | 1            | 0      | 1       | SI          |
+| degree_celsius | temperature | `\degreeCelsius` | Degree Celsius      | 1            | 273.15 | 0       | generic     |
+| kilogram       | mass        | `kg`             | Kilogram            | 1            | 0      | 1       | SI          |
+| gram           | mass        | `g`              | Gram                | 0.001        | 0      | 0       | CGS         |
+| newton         | force       | `\newton`        | Newton              | 1            | 0      | 1       | SI          |
+| dyne           | force       | `dyn`            | Dyne                | 1e-5         | 0      | 0       | CGS         |
 
 
 ---

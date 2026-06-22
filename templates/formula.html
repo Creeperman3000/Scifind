@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}{{ formula.name_en }}{% endblock %}
+{% block content %}
+
+<h2>{{ formula.name_en }}</h2>
+<p><b>{{ formula.branch_en }}</b> &rarr; <b>{{ formula.topic_en }}</b> &nbsp; difficulty {{ formula.difficulty }}/10</p>
+
+<div id="formula-display" style="font-size:1.4em;margin:1em 0;padding:1em;background:#f5f5f5;border-radius:4px;overflow-x:auto;">
+  <div id="formula-math" style="display:inline-block">$${{ latex | safe }}$$</div>
+</div>
+<span id="formula-tex" style="display:none">{{ latex }}</span>
+<div style="display:flex;align-items:center;gap:4px;margin-top:6px;">
+  <select id="copy-format">
+    <option value="latex">LaTeX</option>
+    <option value="unicode">Unicode</option>
+    <option value="image">Image</option>
+  </select>
+  <button onclick="copyFormula()">Copy</button>
+</div>
+
+<p><i>{{ formula.description_en }}</i></p>
+
+{% if conds %}
+<h3>Assumptions</h3>
+<ul>
+{% for c in conds %}
+  <li>
+    {% if c.default_on %}&#x2611;{% else %}&#x2610;{% endif %}
+    {{ c.name_en }}
+    &rarr; <a href="/formula/{{ c.replacement_formula_id }}">{{ c.replacement_name }}</a>
+  </li>
+{% endfor %}
+</ul>
+{% endif %}
+
+{% if variables %}
+<h3>Variables</h3>
+<ul>
+{% for v in variables %}
+  <li>${{ v.latex }}$ &mdash; <b><a href="/variable/{{ v.id }}">{{ v.name_en }}</a></b>
+  {% if v.si_html %} &mdash; {{ v.si_html | safe }}{% endif %}
+  </li>
+{% endfor %}
+</ul>
+{% endif %}
+
+{% if relations %}
+<h3>Related</h3>
+<ul>
+{% for r in relations %}
+  <li><i>{{ r.relation_type }}</i>: <a href="/formula/{{ r.related_id }}">{{ r.related_name }}</a></li>
+{% endfor %}
+</ul>
+{% endif %}
+
+<p><a href="/">&larr; Back to list</a></p>
+
+<script defer src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js"></script>
+<script>
+async function copyFormula() {
+  const fmt = document.getElementById('copy-format').value;
+  const latex = document.getElementById('formula-tex').textContent;
+  try {
+    if (fmt === 'latex') {
+      await navigator.clipboard.writeText(latex);
+    } else if (fmt === 'unicode') {
+      const mod = await import('https://cdn.jsdelivr.net/npm/unicodeit@latest/+esm');
+      const unicode = mod.replace(latex);
+      await navigator.clipboard.writeText(unicode);
+    } else if (fmt === 'image') {
+      const el = document.getElementById('formula-math');
+      const dataUrl = await htmlToImage.toPng(el, {
+        pixelRatio: 4,
+        backgroundColor: 'transparent',
+      });
+      if (!dataUrl || !dataUrl.includes(',')) throw new Error('Invalid image data');
+      const parts = dataUrl.split(',');
+      const mime = 'image/png';
+      const bstr = atob(parts[1]);
+      const u8arr = new Uint8Array(bstr.length);
+      for (let i = 0; i < bstr.length; i++) u8arr[i] = bstr.charCodeAt(i);
+      const blob = new Blob([u8arr], {type: mime});
+      await navigator.clipboard.write([new ClipboardItem({[mime]: blob})]);
+    }
+  } catch (e) {
+    alert('Copy failed: ' + e.message);
+  }
+}
+</script>
+{% endblock %}
