@@ -61,13 +61,6 @@ Export the entire database.
 python scifind_cli.py export --format csv|csvdir|xlsx|ods [--output <path>]
 ```
 
-### `import`
-Import data from file or directory.
-
-```bash
-python scifind_cli.py import <file_or_directory>
-```
-
 ## Options
 
 | Flag | Description |
@@ -80,4 +73,4 @@ python scifind_cli.py import <file_or_directory>
 | `--formula <id>` | Filter by formula ID |
 | `--quantity <id>` | Filter by quantity ID |
 
-Default database path: `~/.local/share/formula/formulas.db`, overridable via `FORMULA_DB` env var.
+Default database path: `~/.local/share/scifind/scifind.db`, overridable via `SCIFIND_DB` env var.

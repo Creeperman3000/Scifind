@@ -5,15 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script>(function(){try{var t=localStorage.getItem('sf-theme');if(t)document.documentElement.setAttribute('data-theme',t)}catch(e){}})();</script>
   <title>{% block title %}Scifind{% endblock %}</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.css">
   <script>window._KATEX_MACROS = {};</script>
-  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
-    onload="var opts={delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],macros:window._KATEX_MACROS};renderMathInElement(document.body,opts);document.documentElement.classList.add('katex-ready');if(typeof renderQtyChips==='function')renderQtyChips();"
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],macros:window._KATEX_MACROS});document.documentElement.classList.add('katex-ready');if(typeof renderQtyChips==='function')renderQtyChips();"
     onerror="document.documentElement.classList.add('katex-ready');"></script>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/jstree.min.css') }}">
   <script src="{{ url_for('static', filename='js/jquery.min.js') }}"></script>
   <script src="{{ url_for('static', filename='js/jstree.min.js') }}"></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -30,6 +31,10 @@
       --track-height: 6px;
       --font: system-ui, -apple-system, sans-serif;
       --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+      --shadow-sm: 0 2px 8px rgba(0,0,0,0.1);
+      --shadow-md: 0 4px 12px rgba(0,0,0,0.1);
+      --shadow-lg: 0 4px 12px rgba(0,0,0,0.15);
+      --shadow-xl: 0 4px 12px rgba(0,0,0,0.2);
     }
     @media (prefers-color-scheme: dark) {
       :root:not([data-theme="light"]) {
@@ -59,46 +64,53 @@
 
     /* Toast */
     .toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; }
-    .toast { padding: 12px 20px; border-radius: 8px; font-size: 0.85rem; color: #fff; box-shadow: 0 4px 12px rgba(0,0,0,0.2); animation: toast-in 0.3s ease; }
+    .toast { padding: 12px 20px; border-radius: 8px; font-size: 0.85rem; color: #fff; box-shadow: var(--shadow-xl); animation: toast-in 0.3s ease; }
     .toast.success { background: #16a34a; }
     .toast.error { background: #dc2626; }
     @keyframes toast-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
-    /* Top bar */
+    /* Top bar — flex layout, no absolute positioning for search */
     .topbar { display: flex; align-items: center; padding: 0 12px; border-bottom: 1px solid var(--border); background: var(--bg); height: var(--topbar-height); z-index: 100; flex-shrink: 0; gap: 8px; }
-    .topbar-left { display: flex; align-items: center; gap: 8px; flex-shrink: 1; min-width: 0; overflow: hidden; }
+    .topbar-left { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
     .topbar-right { display: flex; align-items: center; gap: 4px; flex-shrink: 0; margin-left: auto; }
     .topbar-btn { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border: none; background: none; cursor: pointer; border-radius: 6px; color: var(--text); flex-shrink: 0; }
+    .topbar-btn svg { display: block; }
     .topbar-btn:hover { background: var(--bg-secondary); }
-    .topbar-logo { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 1.1rem; color: var(--text); flex-shrink: 0; min-width: 24px; }
+    .topbar-logo { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 1.1rem; color: var(--text); flex-shrink: 0; }
     .topbar-logo svg { stroke: var(--accent); flex-shrink: 0; }
-    .topbar-logo .logo-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 80px; }
-    @media (max-width: 400px) { .topbar-logo .logo-text { display: none; } }
-    .topbar-search { position: absolute; left: 50%; transform: translateX(-50%); max-width: 500px; width: 100%; }
-    .topbar-search form { display: flex; width: 100%; }
-    .topbar-search input { width: 100%; padding: 7px 12px 7px 36px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); font-size: 0.9rem; color: var(--text); outline: none; }
+    .topbar-logo .logo-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* Search — flex grow between left and right */
+    .topbar-search { flex: 1 1 0; min-width: 0; display: flex; justify-content: center; }
+    .topbar-search form { width: 100%; max-width: 500px; }
+    .search-input-wrap { position: relative; display: flex; align-items: center; }
+    .topbar-search input { flex: 1; min-width: 0; padding: 7px 12px 7px 36px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); font-size: 0.9rem; color: var(--text); outline: none; box-sizing: border-box; }
     .topbar-search input:focus { border-color: var(--accent); background: var(--bg); }
-    .topbar-search .search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--text-secondary); pointer-events: none; }
-    .topbar-search .search-cancel { display: none; position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; color: var(--text-secondary); padding: 4px; }
+    .topbar-search .search-icon { position: absolute; left: 10px; top: 0; height: 100%; display: flex; align-items: center; color: var(--text-secondary); pointer-events: none; }
+    .topbar-search .search-cancel { position: absolute; right: 8px; top: 0; height: 100%; display: flex; align-items: center; background: none; border: none; cursor: pointer; color: var(--text-secondary); padding: 4px; }
+    .search-suggestions { position: absolute; top: 100%; left: 0; right: 0; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; margin-top: 4px; max-height: 300px; overflow-y: auto; z-index: 100; display: none; box-shadow: var(--shadow-lg); }
+    .search-suggestions::-webkit-scrollbar { width: 6px; }
+    .search-suggestions::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    .search-suggestions.open { display: block; }
+    .search-suggestion { padding: 8px 12px; cursor: pointer; font-size: 0.85rem; color: var(--text); display: flex; align-items: center; }
+    .search-suggestion:hover, .search-suggestion.highlighted { background: var(--bg-secondary); }
+    .search-suggestion .ss-kind { margin-left: auto; padding-left: 12px; font-size: 0.75rem; color: var(--text-secondary); }
+    /* Mobile search toggle */
     .topbar-search-icon { display: none; }
     @media (max-width: 480px) {
-      .topbar-search input { display: none; }
-      .topbar-search { position: static; transform: none; flex: 0; margin: 0; overflow: hidden; }
+      .topbar-search { display: none; }
       .topbar-search-icon { display: flex; }
     }
-    .topbar.expand-search .topbar-left { display: none; }
+    /* Expanded search mode on mobile */
+    .topbar.expand-search .topbar-left,
     .topbar.expand-search .topbar-right { display: none; }
-    .topbar.expand-search .topbar-search { position: static; transform: none; flex: 1; margin: 0 8px; overflow: visible; }
-    .topbar.expand-search .topbar-search input { display: block; }
-    .topbar.expand-search .topbar-search .search-cancel { display: block; }
+    .topbar.expand-search .topbar-search { display: flex; flex: 1; }
     .topbar.expand-search .topbar-search-icon { display: none; }
-    .topbar.expand-search .topbar-left > :not(.topbar-search-icon-mobile) { display: none; }
-    .topbar.expand-search .topbar-right > * { display: none; }
 
     /* Settings dropdown */
     .settings-wrap { position: relative; }
-    .settings-menu { display: none; position: absolute; top: 100%; right: 0; margin-top: 4px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); min-width: 280px; padding: 8px; z-index: 200; }
-    .settings-menu.open { display: block; }
+    .dropdown-menu { display: none; position: absolute; right: 0; background: var(--bg); border: 1px solid var(--border); box-shadow: var(--shadow-md); }
+    .dropdown-menu.open { display: block; }
+    .settings-menu { top: 100%; margin-top: 4px; border-radius: 8px; min-width: 280px; padding: 8px; z-index: 200; }
     .settings-item { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-radius: 4px; font-size: 0.85rem; gap: 16px; }
     .settings-item:hover { background: var(--bg-secondary); }
     .settings-item select { font-size: 0.85rem; padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); min-width: 100px; }
@@ -107,12 +119,13 @@
     .settings-divider { height: 1px; background: var(--border); margin: 4px 0; }
 
     /* Filter button rows */
-    .filter-buttons { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 2px; }
-    .filter-btn { font-size: 0.72rem; padding: 3px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); cursor: pointer; line-height: 1.4; }
-    .filter-btn:hover { background: var(--bg-secondary); border-color: var(--accent); }
-    .filter-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
-    .filter-btn-link { font-size: 0.72rem; padding: 3px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); text-decoration: none; line-height: 1.4; display: inline-block; cursor: pointer; }
-    .filter-btn-link:hover { background: var(--bg-secondary); border-color: var(--accent); text-decoration: none; }
+    .filter-buttons { display: flex; gap: 0; }
+    .filter-btn { padding: 2px; border: none; background: none; color: var(--text); cursor: pointer; line-height: 1; border-radius: 4px; }
+    .filter-btn:hover { background: var(--bg-secondary); }
+    .filter-btn.active { color: var(--accent); }
+    .filter-btn.disabled { opacity: 0.35; pointer-events: none; }
+
+    .filter-btn svg { display: block; }
 
     /* Section heading with reset button */
     .section-label-row { display: flex; align-items: center; justify-content: space-between; margin: 12px 0 6px; }
@@ -140,30 +153,36 @@
     #sidebar-right .jstree-node.jstree-undetermined-parent > .jstree-children > .jstree-node > .jstree-anchor > .jstree-checkbox { opacity: 1 !important; }
     /* Collapsed caret: filled right-pointing triangle, always visible */
     #sidebar-right .jstree-default .jstree-closed > .jstree-ocl { background: none !important; }
-    #sidebar-right .jstree-default .jstree-closed > .jstree-ocl::after { content: ''; position: absolute; left: 6px; top: 4px; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 7px solid var(--text); }
+    #sidebar-right .jstree-default .jstree-closed > .jstree-ocl::after { content: ''; position: absolute; left: 6px; top: 8px; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 7px solid var(--text); }
     /* Leaf nodes that were incorrectly closed via toggle_node should not show caret */
     #sidebar-right .jstree-default .jstree-leaf.jstree-closed > .jstree-ocl { background: none !important; }
     #sidebar-right .jstree-default .jstree-leaf.jstree-closed > .jstree-ocl::after { content: none !important; }
     /* Expanded caret hidden by default, shown on node hover, filled down-pointing triangle */
     #sidebar-right .jstree-default .jstree-open > .jstree-ocl { background: none !important; opacity: 0; }
-    #sidebar-right .jstree-default .jstree-open > .jstree-ocl::after { content: ''; position: absolute; left: 4px; top: 6px; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 7px solid var(--text); }
+    #sidebar-right .jstree-default .jstree-open > .jstree-ocl::after { content: ''; position: absolute; left: 4px; top: 10px; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 7px solid var(--text); }
     #sidebar-right .jstree-default .jstree-open:hover > .jstree-ocl { opacity: 1; }
     /* Remove hover highlight on nodes */
     #sidebar-right .jstree-default .jstree-hovered { background: transparent !important; box-shadow: none !important; }
+    /* Root-level nodes (no parents): bold */
+    #sidebar-right .jstree-container-ul > .jstree-node > .jstree-anchor { font-weight: 600; }
+    /* Leaf nodes (no children): secondary text color */
+    #sidebar-right .jstree-leaf > .jstree-anchor { color: var(--text-secondary); }
 
     /* Body layout (flex) */
     .body-wrap { display: flex; height: calc(100vh - var(--topbar-height)); overflow: hidden; }
 
     /* Sidebars */
     html.suppress-transitions .sidebar { transition: none !important; }
-    .sidebar { overflow-y: auto; border-right: 1px solid var(--border); background: var(--bg); transition: width 0.3s ease, padding 0.3s ease, border-width 0.3s ease; width: var(--sidebar-width); overflow-x: hidden; flex-shrink: 0; position: relative; }
+    .sidebar { border-right: 1px solid var(--border); background: var(--bg); transition: width 0.3s ease, padding 0.3s ease, border-width 0.3s ease; width: var(--sidebar-width); flex-shrink: 0; position: relative; display: flex; flex-direction: column; }
     .sidebar.right { border-right: none; border-left: 1px solid var(--border); }
     .sidebar.collapsed { width: 0 !important; padding: 0; border-width: 0; overflow: hidden; }
-    .sidebar-inner { width: var(--sidebar-width); padding: 12px; }
-    .sidebar.right .sidebar-inner { padding-top: 12px; }
+    .sidebar-scroll { overflow-y: auto; overflow-x: hidden; flex: 1; }
+    .sidebar-inner { width: var(--sidebar-width); padding: 12px; padding-bottom: 35vh; }
+    .sidebar-scroll.no-overflow .sidebar-inner { padding-bottom: 12px; }
+    .main.no-overflow::after { display: none; }
 
     /* Sidebar resize handle */
-    .sidebar-resize { position: absolute; top: 0; bottom: 0; width: 5px; cursor: col-resize; z-index: 10; }
+    .sidebar-resize { position: absolute; top: 0; bottom: 0; width: 5px; cursor: col-resize; z-index: 1; }
     .sidebar-resize.left-edge { right: -3px; }
     .sidebar-resize.right-edge { left: -3px; }
     .sidebar-resize:hover, .sidebar-resize:active { background: var(--accent); opacity: 0.3; }
@@ -191,8 +210,7 @@
     .qty-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px 2px 8px; background: var(--accent); color: #fff; border-radius: 12px; font-size: 0.75rem; cursor: default; }
     .qty-chip-x { cursor: pointer; font-weight: 700; opacity: 0.85; padding: 0 2px; }
     .qty-chip-x:hover { opacity: 1; }
-    .qty-filter-disabled { opacity: 0.35; pointer-events: none; }
-    .qty-results { position: absolute; left: 0; right: 0; top: 100%; max-height: 200px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); display: none; z-index: 100; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+    .qty-results { position: absolute; left: 0; right: 0; top: 100%; max-height: 200px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); display: none; z-index: 100; box-shadow: var(--shadow-lg); }
     .qty-results.open { display: block; }
     .qty-result { padding: 4px 8px; font-size: 0.82rem; cursor: pointer; display: flex; justify-content: space-between; gap: 6px; }
     .qty-result:hover, .qty-result:focus { background: var(--bg-secondary); outline: none; }
@@ -222,23 +240,25 @@
     }
     #main-content { position: relative; }
 
-    .main { flex: 1; overflow-y: auto; padding: 20px 24px; min-width: 0; display: flex; justify-content: center; }
+    .main { flex: 1; overflow-y: auto; padding: 20px 24px; min-width: 0; display: flex; flex-direction: column; align-items: center; }
     .main h2 { font-size: 1.3rem; margin-bottom: 16px; }
     .main table { border-collapse: collapse; font-size: 0.9rem; width: 100%; }
     .main table th, .main table td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
     .main table th { background: var(--bg-secondary); font-weight: 600; }
     .main ul { padding-left: 20px; }
     .main-inner { max-width: 800px; width: 100%; }
+    .main::after { content: ''; display: block; height: 35vh; flex-shrink: 0; }
     @media (max-width: 848px) { .main-inner { max-width: 100%; } }
 
     /* Formula grid */
     .formula-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
     .formula-card { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; transition: box-shadow 0.2s; display: flex; flex-direction: column; }
-    .formula-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+    .formula-card:hover { box-shadow: var(--shadow-sm); }
     .formula-card a { display: flex; flex-direction: column; padding: 16px; text-decoration: none; color: inherit; height: 100%; }
     .formula-card a:hover { text-decoration: none; }
     .formula-card .formula-eqn { font-size: 1.1rem; text-align: center; padding-bottom: 12px; border-bottom: 1px solid var(--border); margin-bottom: 10px; color: var(--text); }
     .formula-card .formula-name { font-size: 0.85rem; color: var(--accent); text-align: center; margin-top: auto; }
+    .formula-card .formula-relation-label { font-size: 0.75rem; color: var(--text-secondary); text-align: center; margin-top: 4px; }
 
     /* Detail page */
     .detail-heading { font-size: 1.3rem; margin-bottom: 4px; }
@@ -246,14 +266,12 @@
     .detail-breadcrumbs a { color: var(--text-secondary); }
     .detail-breadcrumbs a:hover { color: var(--accent); }
     .detail-meta { font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 16px; }
-    .detail-meta > div { margin-bottom: 2px; }
     .detail-meta > span { display: block; margin-bottom: 2px; }
     .formula-box { display: block; position: relative; margin: 12px 0; padding: 20px 40px; background: var(--bg-secondary); border-radius: 8px; font-size: 1.4em; text-align: center; }
     .formula-copy-wrap { position: absolute; top: 8px; right: 8px; z-index: 2; }
     .formula-copy-btn { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border: none; background: var(--bg-tertiary); border-radius: 4px; cursor: pointer; color: var(--text-secondary); }
     .formula-copy-btn:hover { background: var(--border); color: var(--text); }
-    .formula-copy-menu { display: none; position: absolute; top: calc(100% + 4px); right: 0; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 50; min-width: 140px; padding: 4px; }
-    .formula-copy-menu.open { display: block; }
+    .formula-copy-menu { top: calc(100% + 4px); border-radius: 6px; min-width: 140px; padding: 4px; z-index: 50; }
     .formula-copy-menu button { display: block; width: 100%; text-align: left; padding: 6px 12px; border: none; background: none; cursor: pointer; font-size: 0.85rem; color: var(--text); border-radius: 3px; }
     .formula-copy-menu button:hover { background: var(--bg-secondary); }
 
@@ -277,9 +295,9 @@
     .detail-desc { font-style: italic; color: var(--text-secondary); margin-bottom: 16px; font-size: 0.9rem; }
 
     /* Scrollbar */
-    .sidebar::-webkit-scrollbar, .main::-webkit-scrollbar, .sidebar-inner::-webkit-scrollbar,
+    .sidebar-scroll::-webkit-scrollbar, .main::-webkit-scrollbar,
     .qty-results::-webkit-scrollbar { width: 6px; }
-    .sidebar::-webkit-scrollbar-thumb, .main::-webkit-scrollbar-thumb, .sidebar-inner::-webkit-scrollbar-thumb,
+    .sidebar-scroll::-webkit-scrollbar-thumb, .main::-webkit-scrollbar-thumb,
     .qty-results::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
     /* Narrow screen overlay */
@@ -305,14 +323,8 @@
   <!-- Top Bar -->
   <div class="topbar">
     <div class="topbar-left">
-      <button class="topbar-btn" onclick="toggleSidebar('left')" title="Toggle sidebar" aria-label="Toggle left sidebar">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="3" y="3" width="18" height="18" rx="4" />
-          <line x1="9" y1="3" x2="9" y2="21" />
-          <line x1="5.5" y1="7.5" x2="7.5" y2="7.5" />
-          <line x1="5.5" y1="12" x2="7.5" y2="12" />
-          <line x1="5.5" y1="16.5" x2="7.5" y2="16.5" />
-        </svg>
+      <button class="topbar-btn" data-action="toggle-sidebar-left" title="Toggle sidebar" aria-label="Toggle left sidebar">
+        <span id="left-sidebar-icon"><i data-lucide="panel-left-close" width="18" height="18"></i></span>
       </button>
       <a href="/" class="topbar-logo">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v12M6 12h12"/></svg>
@@ -321,29 +333,32 @@
     </div>
     <div class="topbar-search">
       <form action="/search" method="get">
-        <span class="search-icon">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        </span>
-        <input type="text" name="q" placeholder="Find formulas, quantities, units" value="{{ request.args.get('q', '') }}">
-        <button type="button" class="search-cancel" onclick="exitSearch()" aria-label="Cancel search">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-        </button>
+        <div class="search-input-wrap">
+          <span class="search-icon">
+            <i data-lucide="search" width="16" height="16"></i>
+          </span>
+          <input type="text" name="q" placeholder="Find formulas, quantities, units" value="{{ request.args.get('q', '') }}" autocomplete="off">
+          <button type="button" class="search-cancel" data-action="exit-search" aria-label="Cancel search">
+            <i data-lucide="x" width="16" height="16"></i>
+          </button>
+          <div class="search-suggestions" id="search-suggestions"></div>
+        </div>
       </form>
     </div>
     <div class="topbar-right">
       <div class="topbar-search-icon">
-        <button class="topbar-btn" onclick="enterSearch()" title="Search" aria-label="Search">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <button class="topbar-btn" data-action="enter-search" title="Search" aria-label="Search">
+          <i data-lucide="search" width="16" height="16"></i>
         </button>
       </div>
       <div class="settings-wrap">
-        <button class="topbar-btn" onclick="toggleSettings(event)" title="Settings" aria-label="Settings">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <button class="topbar-btn" data-action="toggle-settings" title="Settings" aria-label="Settings">
+          <i data-lucide="settings" width="18" height="18"></i>
         </button>
-        <div class="settings-menu" id="settings-menu">
+        <div class="dropdown-menu settings-menu" id="settings-menu">
           <div class="settings-item">
             <span>Theme</span>
-            <select onchange="switchTheme(this.value)">
+            <select id="setting-theme" data-action="switch-theme">
               <option value="system">System</option>
               <option value="light">Light</option>
               <option value="dark">Dark</option>
@@ -351,7 +366,7 @@
           </div>
           <div class="settings-item">
             <span>Language</span>
-            <select onchange="switchLang(this.value)">
+            <select id="setting-lang" data-action="switch-lang">
               <option value="en-us" {{ 'selected' if g.locale == 'en-us' }}>US English</option>
               <option value="en-uk" {{ 'selected' if g.locale == 'en-uk' }}>UK English</option>
             </select>
@@ -359,7 +374,7 @@
           <div class="settings-divider"></div>
           <div class="settings-item">
             <span>Dimensions</span>
-            <select onchange="switchDimMode(this.value)">
+            <select id="setting-dim" data-action="switch-dim-mode">
               <option value="dim" {{ 'selected' if g.dim_mode == 'dim' }}>Dimensions</option>
               <option value="var" {{ 'selected' if g.dim_mode == 'var' }}>Quantities</option>
               <option value="unit" {{ 'selected' if g.dim_mode == 'unit' }}>Units</option>
@@ -369,38 +384,24 @@
           <div class="settings-item">
             <span>Export</span>
             <form method="get" action="/export" style="display:flex;gap:8px;">
-              <select name="format" style="font-size:0.85rem;padding:4px 8px;border:1px solid var(--border);border-radius:4px;">
-                <option value="csv">CSV</option>
-                <option value="xlsx">XLSX</option>
-                <option value="ods">ODS</option>
+              <select name="format" data-action="set-export-format">
+                <option value="csv" {{ 'selected' if request.cookies.get('sf_export_format') == 'csv' }}>CSV</option>
+                <option value="xlsx" {{ 'selected' if request.cookies.get('sf_export_format') == 'xlsx' }}>XLSX</option>
+                <option value="ods" {{ 'selected' if request.cookies.get('sf_export_format') == 'ods' }}>ODS</option>
               </select>
               <button type="submit">Download</button>
             </form>
           </div>
-          <div class="settings-item">
-            <span>Import</span>
-            <form method="post" action="/import" enctype="multipart/form-data" id="import-form" style="display:none"></form>
-            <label style="font-size:0.85rem;cursor:pointer;padding:4px 12px;border:1px solid var(--border);border-radius:4px;">
-              Upload
-              <input type="file" form="import-form" name="file" accept=".csv,.zip,.xlsx,.ods" onchange="document.getElementById('import-form').submit()" style="display:none">
-            </label>
-          </div>
         </div>
       </div>
-      <button class="topbar-btn" onclick="toggleSidebar('right')" title="Toggle tree" aria-label="Toggle right sidebar">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="3" y="3" width="18" height="18" rx="4" />
-          <line x1="15" y1="3" x2="15" y2="21" />
-          <line x1="16.5" y1="7.5" x2="18.5" y2="7.5" />
-          <line x1="16.5" y1="12" x2="18.5" y2="12" />
-          <line x1="16.5" y1="16.5" x2="18.5" y2="16.5" />
-        </svg>
+      <button class="topbar-btn" data-action="toggle-sidebar-right" title="Toggle tree" aria-label="Toggle right sidebar">
+        <span id="right-sidebar-icon"><i data-lucide="panel-right-close" width="18" height="18"></i></span>
       </button>
     </div>
   </div>
 
   <!-- Backdrop for narrow screen overlay -->
-  <div class="sidebar-backdrop" id="sidebar-backdrop" onclick="closeAllOverlays()"></div>
+  <div class="sidebar-backdrop" id="sidebar-backdrop" data-action="close-overlays"></div>
 
   <!-- Flash messages from server -->
   {% with messages = get_flashed_messages(with_categories=true) %}
@@ -420,39 +421,44 @@
     <!-- Left sidebar -->
     <div class="sidebar left" id="sidebar-left">
       <div class="sidebar-resize left-edge" id="sidebar-resize-left"></div>
+      <div class="sidebar-scroll">
       <div class="sidebar-inner" id="sidebar-left-inner">
         <div class="view-tabs">
           <a class="view-tab {{ 'active' if current_view == 'formulas' }}" href="/formulas{{ '?' + request.query_string.decode() if request.query_string.decode() else '' }}">&#x2211; Formulas</a>
           <a class="view-tab {{ 'active' if current_view == 'quantities' }}" href="/quantities{{ '?' + request.query_string.decode() if request.query_string.decode() else '' }}">&#x2113; Quantities</a>
         </div>
 
-        <div class="dim-filter-loadable" id="dim-filter-area">
-        <div class="section-label">Dimension</div>
-        <div class="filter-buttons">
-          <a class="filter-btn-link" href="/quantities?is_dim=1">Base quantities</a>
-          <button class="filter-btn" id="dim-fill-zeros" type="button" title="Set empty dimension fields to 0">Fill empty</button>
-          <button class="filter-btn" id="dim-reset" type="button" title="Clear all dimension filters">Reset</button>
+        <div id="dim-filter-area">
+        <div class="section-label-row">
+          <div class="section-label">Dimension</div>
+          <div class="filter-buttons">
+            <button class="filter-btn{{ ' active' if dim_mode == 'or' }}" id="dim-mode-toggle" type="button" title="Dimension filter mode: {{ 'AND' if dim_mode != 'or' else 'OR' }}" style="display:none"><i data-lucide="{{ 'squares-unite' if dim_mode == 'or' else 'squares-intersect' }}" width="16" height="16"></i></button>
+            <button class="filter-btn" id="dim-base-qty" type="button" title="Base quantities"><i data-lucide="ruler" width="16" height="16"></i></button>
+            <button class="filter-btn" id="dim-fill-zeros" type="button" title="Set empty dimension fields to 0"><i data-lucide="paint-bucket" width="16" height="16"></i></button>
+            <button class="filter-btn" id="dim-reset" type="button" title="Clear all dimension filters"><i data-lucide="rotate-ccw" width="16" height="16"></i></button>
+          </div>
         </div>
-        {% for dsym in ['M','L','T','I','Θ','N','J'] %}
+        {% for dsym in dimension_symbol_list %}
         {% set df = dim_filter.get(dsym, {'op': 'eq', 'val': None}) %}
         {% set ds = dim_symbols.get(dsym, dsym) %}
         <div class="filter-dim-row" data-dim="{{ dsym }}">
           <span class="dim-symbol">${{ ds }}$</span>
-          <select class="dim-op" onchange="dimFilterChange()">
+          <select class="dim-op" data-action="dim-filter-change">
             <option value="eq"{{ ' selected' if df.op == 'eq' }}> =</option>
-            <option value="gte"{{ ' selected' if df.op == 'gte' }}> ≥</option>
-            <option value="lte"{{ ' selected' if df.op == 'lte' }}> ≤</option>
+            <option value="geq"{{ ' selected' if df.op == 'geq' }}> ≥</option>
+            <option value="leq"{{ ' selected' if df.op == 'leq' }}> ≤</option>
           </select>
-          <input type="number" class="dim-val" value="{{ df.val if df.val is not none else '' }}" step="1" onchange="dimFilterChange()" oninput="dimFilterChange()" placeholder="0">
+          <input type="number" class="dim-val" value="{{ df.val if df.val is not none else '' }}" step="1" data-action="dim-filter-change" placeholder="0">
         </div>
         {% endfor %}
         </div>
 
-        <div class="rest-loadable">
+        <div>
         <div class="section-label-row">
           <div class="section-label">Quantity</div>
           <div class="filter-buttons">
-            <button class="filter-btn" id="qty-reset" type="button" title="Clear quantity filter">Reset</button>
+            <button class="filter-btn{{ ' active' if (qty_mode == 'and') != (current_view == 'formulas') }}" id="qty-mode-toggle" type="button" title="Quantity filter mode: {{ 'AND' if qty_mode == 'and' else 'OR' }}" style="display:none"><i data-lucide="{{ 'squares-intersect' if qty_mode == 'and' else 'squares-unite' }}" width="16" height="16"></i></button>
+            <button class="filter-btn" id="qty-reset" type="button" title="Clear quantity filter"><i data-lucide="rotate-ccw" width="16" height="16"></i></button>
           </div>
         </div>
         <div class="filter-qty-search-wrap">
@@ -467,14 +473,14 @@
           <div class="section-label-row">
             <div class="diff-label">Difficulty</div>
             <div class="filter-buttons">
-              <button class="filter-btn" id="diff-reset" type="button" title="Reset difficulty range">Reset</button>
+              <button class="filter-btn" id="diff-reset" type="button" title="Reset difficulty range"><i data-lucide="rotate-ccw" width="16" height="16"></i></button>
             </div>
           </div>
           <div class="diff-sliders">
             <div class="diff-track"></div>
             <div class="diff-fill" id="diff-fill"></div>
-            <input type="range" id="diff-min" min="0" max="10" value="{{ diff_min }}" step="1" oninput="syncDiff()">
-            <input type="range" id="diff-max" min="0" max="10" value="{{ diff_max }}" step="1" oninput="syncDiff()">
+            <input type="range" id="diff-min" min="0" max="10" value="{{ diff_min }}" step="1" data-action="sync-diff">
+            <input type="range" id="diff-max" min="0" max="10" value="{{ diff_max }}" step="1" data-action="sync-diff">
           </div>
           <div class="diff-vals">
             <span id="diff-min-val">{{ diff_min }}</span>
@@ -483,10 +489,11 @@
         </div>
         </div>
       </div>
+      </div>
     </div>
 
     <!-- Main content -->
-    <div class="main lazy-content" id="main-content">
+    <div class="main" id="main-content">
       <div class="main-inner">
         {% block content %}{% endblock %}
       </div>
@@ -495,15 +502,17 @@
     <!-- Right sidebar -->
     <div class="sidebar right" id="sidebar-right">
       <div class="sidebar-resize right-edge" id="sidebar-resize-right"></div>
+      <div class="sidebar-scroll">
       <div class="sidebar-inner" id="sidebar-right-inner">
         <div class="section-label-row">
           <div class="section-label">Filter</div>
           <div class="filter-buttons">
-            <button class="filter-btn" id="tree-select-all" type="button" title="Select all topics">Select all</button>
-            <button class="filter-btn" id="tree-deselect-all" type="button" title="Deselect all topics">Deselect</button>
+            <button class="filter-btn" id="tree-deselect-all" type="button" title="Deselect all topics"><i data-lucide="eraser" width="16" height="16"></i></button>
+            <button class="filter-btn" id="tree-select-all" type="button" title="Reset topic selection"><i data-lucide="rotate-ccw" width="16" height="16"></i></button>
           </div>
         </div>
         <div id="science-tree"></div>
+      </div>
       </div>
     </div>
   </div>
@@ -512,18 +521,40 @@
     // Toast notification
     function showToast(message, type) {
       var container = document.getElementById('toast-container');
-      if (!container) {
-        container = document.createElement('div');
-        container.className = 'toast-container';
-        container.id = 'toast-container';
-        document.body.appendChild(container);
-      }
       var t = document.createElement('div');
       t.className = 'toast ' + (type || 'success');
       t.textContent = message;
       container.appendChild(t);
       setTimeout(function() { t.style.opacity = '0'; t.style.transition = 'opacity 0.3s'; setTimeout(function() { t.remove(); }, 300); }, 4000);
     }
+
+    function updateOverflowPadding() {
+      document.querySelectorAll('.sidebar-scroll').forEach(function(el) {
+        var inner = el.querySelector('.sidebar-inner');
+        if (!inner) return;
+        var cs = getComputedStyle(inner);
+        var extraPad = parseFloat(cs.paddingBottom) || 0;
+        var contentH = inner.scrollHeight - extraPad;
+        el.classList.toggle('no-overflow', contentH <= el.clientHeight);
+      });
+      var main = document.querySelector('.main');
+      if (main) {
+        var vh = window.innerHeight * 0.35;
+        var contentH = main.scrollHeight - vh;
+        main.classList.toggle('no-overflow', contentH <= main.clientHeight);
+      }
+    }
+
+    function renderMathInContent() {
+      if (typeof renderMathInElement === 'function') {
+        try { renderMathInElement(document.querySelector('#main-content'), {
+          delimiters: [{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],
+          macros: window._KATEX_MACROS || {}
+        }); } catch(e) { console.warn('renderMathInElement error', e); }
+      }
+    }
+
+    window._dimensionSymbols = {{ dimension_symbol_list|tojson|safe }};
 
     // jsTree-backed topic filter
     (function() {
@@ -551,7 +582,9 @@
         plugins: ['checkbox'],
       });
       window._jstree = $tree.jstree(true);
-      $tree.on('ready.jstree', function() { restoreTreeFromUrl(); });
+      $tree.on('ready.jstree', function() { restoreTreeFromUrl();           syncFilterStates();
+          syncViewTabLinks();
+        });
     })();
 
     document.getElementById('tree-select-all').addEventListener('click', function() {
@@ -562,6 +595,7 @@
     });
     $('#science-tree').on('changed.jstree check_node.jstree uncheck_node.jstree', function() {
       syncUndeterminedVisibility(); applyFilters();
+      setTimeout(syncFilterStates, 0);
     });
 
     (function() {
@@ -589,7 +623,7 @@
       });
     }
 
-    function dimFilterChange() { applyFilters(); }
+    function dimFilterChange() { applyFilters(); setTimeout(syncFilterStates, 0); }
 
     document.getElementById('dim-reset').addEventListener('click', function() {
       document.querySelectorAll('.filter-dim-row').forEach(function(row) {
@@ -599,13 +633,214 @@
       applyFilters();
     });
     document.getElementById('dim-fill-zeros').addEventListener('click', function() {
-      document.querySelectorAll('.filter-dim-row').forEach(function(row) {
-        var input = row.querySelector('.dim-val');
-        if (input.value === '' || input.value === '-' || input.value === '+' || input.value === '.') {
-          input.value = '0';
-        }
+      var allFilled = true, hasZero = false;
+      document.querySelectorAll('.filter-dim-row .dim-val').forEach(function(input) {
+        var v = input.value.trim();
+        if (v === '') allFilled = false;
+        else if (v === '0') hasZero = true;
       });
+      if (allFilled && hasZero) {
+        document.querySelectorAll('.filter-dim-row .dim-val').forEach(function(input) {
+          if (input.value.trim() === '0') input.value = '';
+        });
+      } else {
+        document.querySelectorAll('.filter-dim-row').forEach(function(row) {
+          var input = row.querySelector('.dim-val');
+          if (input.value === '' || input.value === '-' || input.value === '+' || input.value === '.') {
+            input.value = '0';
+          }
+        });
+      }
       applyFilters();
+    });
+
+    document.getElementById('dim-mode-toggle').addEventListener('click', function() {
+      var url = new URL(window.location);
+      var switched = (url.searchParams.get('mode_switched') || '').split(',').filter(Boolean);
+      var idx = switched.indexOf('dim');
+      if (idx !== -1) switched.splice(idx, 1);
+      else switched.push('dim');
+      if (switched.length) url.searchParams.set('mode_switched', switched.join(','));
+      else url.searchParams.delete('mode_switched');
+      fetchContent(url.pathname + url.search, true);
+    });
+
+    document.getElementById('dim-base-qty').addEventListener('click', function() {
+      var url = new URL(window.location);
+      if (url.searchParams.get('is_dim') === '1') {
+        url.searchParams.delete('is_dim');
+      } else {
+        url.searchParams.set('is_dim', '1');
+      }
+      fetchContent(url.pathname + url.search, true);
+    });
+
+    function getSwitched(url) {
+      return (url.searchParams.get('mode_switched') || '').split(',').filter(Boolean);
+    }
+
+    function syncFilterStates() {
+      var url = new URL(window.location);
+
+      // Clean up mode_switched — remove entries whose filter has <2 items
+      cleanModeSwitched(url);
+
+      // Dim mode toggle (AND/OR) — visible when ≥2 dim fields have values
+      var modeBtn = document.getElementById('dim-mode-toggle');
+      if (modeBtn) {
+        var filledCount = 0;
+        document.querySelectorAll('.filter-dim-row .dim-val').forEach(function(input) {
+          if (input.value.trim() !== '') filledCount++;
+        });
+        if (filledCount >= 2) {
+          modeBtn.style.display = '';
+          var switched = getSwitched(url);
+          var isOr = switched.indexOf('dim') !== -1;
+          modeBtn.classList.toggle('active', isOr);
+          modeBtn.title = isOr ? 'Dimension filter mode: OR' : 'Dimension filter mode: AND';
+          modeBtn.innerHTML = '<i data-lucide="' + (isOr ? 'squares-unite' : 'squares-intersect') + '" width="16" height="16"></i>';
+          if (typeof lucide !== 'undefined') lucide.createIcons();
+        } else {
+          modeBtn.style.display = 'none';
+        }
+      }
+
+      // Base quantities toggle
+      var baseQtyBtn = document.getElementById('dim-base-qty');
+      if (baseQtyBtn) {
+        baseQtyBtn.classList.toggle('active', url.searchParams.get('is_dim') === '1');
+        baseQtyBtn.classList.toggle('disabled', isFormulasView());
+      }
+
+      // Fill zeros toggle
+      var fillBtn = document.getElementById('dim-fill-zeros');
+      if (fillBtn) {
+        var allFilled = true, hasZero = false;
+        document.querySelectorAll('.filter-dim-row .dim-val').forEach(function(input) {
+          var v = input.value.trim();
+          if (v === '') allFilled = false;
+          else if (v === '0') hasZero = true;
+        });
+        fillBtn.classList.toggle('active', allFilled && hasZero);
+        fillBtn.classList.toggle('disabled', allFilled && !hasZero);
+      }
+
+      // Dim reset toggle — disabled when no dimension fields have values
+      var dimReset = document.getElementById('dim-reset');
+      if (dimReset) {
+        var dimHasVal = false;
+        document.querySelectorAll('.filter-dim-row .dim-val').forEach(function(input) {
+          if (input.value.trim() !== '') dimHasVal = true;
+        });
+        dimReset.classList.toggle('disabled', !dimHasVal);
+      }
+
+      // Deselect all toggle
+      var deselectBtn = document.getElementById('tree-deselect-all');
+      if (deselectBtn && window._jstree) {
+        var checked = window._jstree.get_checked(true);
+        deselectBtn.classList.toggle('disabled', checked.length === 0);
+      }
+
+      // Tree select all toggle — disabled when all nodes are already checked
+      var treeSelectAll = document.getElementById('tree-select-all');
+      if (treeSelectAll && window._jstree) {
+        var allChecked = window._jstree.get_checked(true);
+        var allNodes = window._jstree.get_node('#').children_d;
+        treeSelectAll.classList.toggle('disabled', allNodes.length === allChecked.length);
+      }
+
+      // Qty mode toggle (AND/OR) — visible when ≥2 quantities selected
+      var qtyModeBtn = document.getElementById('qty-mode-toggle');
+      if (qtyModeBtn) {
+        var qtyCount = (window._qtySelected || []).length;
+        if (qtyCount >= 2) {
+          qtyModeBtn.style.display = '';
+          var switched = getSwitched(url);
+          var key = isFormulasView() ? 'fml' : 'qty';
+          var isSwitched = switched.indexOf(key) !== -1;
+          qtyModeBtn.classList.toggle('active', isSwitched);
+          qtyModeBtn.classList.remove('inactive');
+          var isAnd = isFormulasView() ? !isSwitched : isSwitched;
+          qtyModeBtn.title = isAnd ? 'Quantity filter mode: AND' : 'Quantity filter mode: OR';
+          qtyModeBtn.innerHTML = '<i data-lucide="' + (isAnd ? 'squares-intersect' : 'squares-unite') + '" width="16" height="16"></i>';
+          if (typeof lucide !== 'undefined') lucide.createIcons();
+        } else {
+          qtyModeBtn.style.display = 'none';
+        }
+      }
+
+      // Qty reset toggle — disabled when no quantities selected
+      var qtyReset = document.getElementById('qty-reset');
+      if (qtyReset) {
+        qtyReset.classList.toggle('disabled', !window._qtySelected || window._qtySelected.length === 0);
+      }
+
+      // Diff reset toggle — disabled when range is at default (0-10)
+      var diffReset = document.getElementById('diff-reset');
+      if (diffReset) {
+        var dMin = document.getElementById('diff-min');
+        var dMax = document.getElementById('diff-max');
+        var isDefault = dMin && dMax && parseInt(dMin.value) === 0 && parseInt(dMax.value) === 10;
+        diffReset.classList.toggle('disabled', isDefault);
+      }
+    }
+
+    function cleanModeSwitched(url) {
+      var raw = url.searchParams.get('mode_switched');
+      if (!raw) return;
+      var parts = raw.split(',').filter(Boolean);
+      var changed = false;
+
+      // Dim: count dimensions with any value from URL params
+      var dimCount = 0;
+      window._dimensionSymbols.forEach(function(d) {
+        var hasVal = ['eq','geq','leq'].some(function(op) {
+          return url.searchParams.get(d + '_' + op) !== null;
+        });
+        if (hasVal) dimCount++;
+      });
+      if (dimCount < 2) { var idx = parts.indexOf('dim'); if (idx !== -1) { parts.splice(idx, 1); changed = true; } }
+
+      // Qty: count from URL qty param
+      var qtyParam = url.searchParams.get('qty');
+      var qtyCount = qtyParam ? qtyParam.split(',').length : 0;
+      if (qtyCount < 2) {
+        ['fml','qty'].forEach(function(k) { var idx; while ((idx = parts.indexOf(k)) !== -1) { parts.splice(idx, 1); changed = true; } });
+      }
+
+      if (changed) {
+        if (parts.length) url.searchParams.set('mode_switched', parts.join(','));
+        else url.searchParams.delete('mode_switched');
+        history.replaceState(null, '', url.toString());
+      }
+    }
+
+    function syncViewTabLinks() {
+      document.querySelectorAll('.view-tab').forEach(function(t) {
+        var href = t.getAttribute('href');
+        if (!href) return;
+        var base = href.split('?')[0];
+        var qs = window.location.search;
+        t.setAttribute('href', base + qs);
+      });
+    }
+
+    function isFormulasView() {
+      var p = window.location.pathname;
+      return p.indexOf('/quantities') === -1 && p.indexOf('/quantity/') === -1 && p.indexOf('/unit/') === -1;
+    }
+
+    document.getElementById('qty-mode-toggle').addEventListener('click', function() {
+      var url = new URL(window.location);
+      var switched = (url.searchParams.get('mode_switched') || '').split(',').filter(Boolean);
+      var key = isFormulasView() ? 'fml' : 'qty';
+      var idx = switched.indexOf(key);
+      if (idx !== -1) switched.splice(idx, 1);
+      else switched.push(key);
+      if (switched.length) url.searchParams.set('mode_switched', switched.join(','));
+      else url.searchParams.delete('mode_switched');
+      fetchContent(url.pathname + url.search, true);
     });
 
     document.getElementById('qty-reset').addEventListener('click', function() {
@@ -648,10 +883,11 @@
           var label = q ? (q.symbol || q.name || q.id) : qid;
           var display = window._renderLatex(label);
           html += '<span class="qty-chip" data-qty="' + qid + '">';
-          html += display + '<span class="qty-chip-x" onclick="removeQtyChip(\'' + qid + '\')">&times;</span>';
+          html += display + '<span class="qty-chip-x" data-action="remove-qty-chip" data-qty="' + qid + '"><i data-lucide="x" width="12" height="12"></i></span>';
           html += '</span>';
         });
         chipsEl.innerHTML = html;
+        if (typeof lucide !== 'undefined') lucide.createIcons();
       };
 
       window.renderQtyResults = function(query) {
@@ -679,7 +915,7 @@
           var nameRaw = item.name || item.id;
           var symDisplay = symRaw ? window._renderLatex(symRaw) : nameRaw;
           var sub = (symRaw && nameRaw) ? nameRaw : '';
-          html += '<div class="qty-result' + (isSel ? ' selected' : '') + '" data-qty="' + item.id + '" tabindex="0" onclick="addQtyChip(\'' + item.id + '\')">';
+          html += '<div class="qty-result' + (isSel ? ' selected' : '') + '" data-action="add-qty-chip" data-qty="' + item.id + '" tabindex="0">';
           html += '<span class="qty-result-sym">' + symDisplay + '</span>';
           if (sub) html += '<span class="qty-result-name">' + sub + '</span>';
           html += '</div>';
@@ -692,8 +928,8 @@
         window._qtySelected.push(qid);
         window.renderQtyChips();
         var input = document.getElementById('qty-search');
-        var query = input ? input.value : '';
-        window.renderQtyResults(query);
+        if (input) input.value = '';
+        window.renderQtyResults('');
         dimFilterChange();
       };
 
@@ -713,27 +949,22 @@
         if (inp) inp._userInteracted = false;
       }
       window.addEventListener('pageshow', resetQtySearch);
-      document.addEventListener('DOMContentLoaded', function() {
-        // Reset on DOM load too (handles initial state and htmx/fetch navigation)
-        resetQtySearch();
-        var input = document.getElementById('qty-search');
-        var resultsEl = document.getElementById('qty-results');
-        if (!input) return;
-        input.addEventListener('input', function() {
-          window.renderQtyResults(input.value);
+      resetQtySearch();
+      var qtyInput = document.getElementById('qty-search');
+      if (qtyInput) {
+        qtyInput.addEventListener('input', function() {
+          window.renderQtyResults(qtyInput.value);
         });
-        input.addEventListener('focus', function() {
-          // Only show dropdown on focus if input has content or user previously interacted
-          if (input.value.trim() || input._userInteracted) {
-            window.renderQtyResults(input.value);
+        qtyInput.addEventListener('focus', function() {
+          if (qtyInput.value.trim() || qtyInput._userInteracted) {
+            window.renderQtyResults(qtyInput.value);
           }
         });
-        input.addEventListener('click', function() {
-          input._userInteracted = true;
-          window.renderQtyResults(input.value);
+        qtyInput.addEventListener('click', function() {
+          qtyInput._userInteracted = true;
+          window.renderQtyResults(qtyInput.value);
         });
-        input.addEventListener('blur', function() {
-          // Delay hiding so clicks on results register before blur
+        qtyInput.addEventListener('blur', function() {
           setTimeout(function() {
             var active = document.activeElement;
             if (active && active.classList && active.classList.contains('qty-result')) return;
@@ -741,35 +972,35 @@
             if (el) el.classList.remove('open');
           }, 200);
         });
-        document.addEventListener('keydown', function(e) {
+      }
+      document.addEventListener('keydown', function(e) {
+        var el = document.getElementById('qty-results');
+        if (!el || !el.classList.contains('open')) return;
+        var items = el.querySelectorAll('.qty-result');
+        if (items.length === 0) return;
+        if (!qtyInput || (!qtyInput.contains(document.activeElement) && !el.contains(document.activeElement))) return;
+        var idx = Array.prototype.indexOf.call(items, document.activeElement);
+        if (idx < 0 && document.activeElement === qtyInput) idx = -1;
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          if (idx < items.length - 1) items[idx + 1].focus();
+          else items[0].focus();
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          if (idx > 0) items[idx - 1].focus();
+          else if (idx === 0) { if (qtyInput) qtyInput.focus(); }
+          else items[items.length - 1].focus();
+        } else if (e.key === 'Enter' && idx >= 0) {
+          e.preventDefault();
+          items[idx].click();
+        }
+      });
+      document.addEventListener('click', function(e) {
+        var wrap = document.querySelector('.filter-qty-search-wrap');
+        if (wrap && !wrap.contains(e.target)) {
           var el = document.getElementById('qty-results');
-          if (!el || !el.classList.contains('open')) return;
-          var items = el.querySelectorAll('.qty-result');
-          if (items.length === 0) return;
-          if (!input.contains(document.activeElement) && !el.contains(document.activeElement)) return;
-          var idx = Array.prototype.indexOf.call(items, document.activeElement);
-          if (idx < 0 && document.activeElement === input) idx = -1;
-          if (e.key === 'ArrowDown') {
-            e.preventDefault();
-            if (idx < items.length - 1) items[idx + 1].focus();
-            else items[0].focus();
-          } else if (e.key === 'ArrowUp') {
-            e.preventDefault();
-            if (idx > 0) items[idx - 1].focus();
-            else if (idx === 0) input.focus();
-            else items[items.length - 1].focus();
-          } else if (e.key === 'Enter' && idx >= 0) {
-            e.preventDefault();
-            items[idx].click();
-          }
-        });
-        document.addEventListener('click', function(e) {
-          var wrap = document.querySelector('.filter-qty-search-wrap');
-          if (wrap && !wrap.contains(e.target)) {
-            var el = document.getElementById('qty-results');
-            if (el) el.classList.remove('open');
-          }
-        });
+          if (el) el.classList.remove('open');
+        }
       });
     })();
 
@@ -790,8 +1021,6 @@
       }
 
       var url = new URL(window.location);
-      url.searchParams.delete('science');
-      url.searchParams.delete('branch');
       url.searchParams.delete('subbranch');
       url.searchParams.delete('topic');
       url.searchParams.delete('id');
@@ -813,26 +1042,17 @@
       if (max < 10) url.searchParams.set('diff_max', max);
       else url.searchParams.delete('diff_max');
 
-      // Dimension filter
-      var dims = ['M','L','T','I','\u0398','N','J'];
-      dims.forEach(function(d) {
+      // Dimension filter — encoded as {symbol}_{op}={value}  e.g. M_eq=1&L_gte=3
+      window._dimensionSymbols.forEach(function(d) {
         var rows = document.querySelectorAll('.filter-dim-row[data-dim="' + d + '"]');
         if (rows.length === 0) return;
         var row = rows[0];
+        ['_o','_v','_eq','_geq','_leq'].forEach(function(s) { url.searchParams.delete(d + s); });
         var op = row.querySelector('.dim-op').value;
         var val = row.querySelector('.dim-val').value;
         if (val !== '' && val !== '-' && val !== '+' && val !== '.') {
           var parsed = parseInt(val);
-          if (!isNaN(parsed)) {
-            url.searchParams.set(d + '_o', op);
-            url.searchParams.set(d + '_v', parsed);
-          } else {
-            url.searchParams.delete(d + '_o');
-            url.searchParams.delete(d + '_v');
-          }
-        } else {
-          url.searchParams.delete(d + '_o');
-          url.searchParams.delete(d + '_v');
+          if (!isNaN(parsed)) url.searchParams.set(d + '_' + op, parsed);
         }
       });
 
@@ -852,8 +1072,8 @@
 
     function fetchContent(url, pushState) {
       if (_pendingFetch) _pendingFetch.abort();
-      var controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-      var opts = controller ? { signal: controller.signal } : {};
+      var controller = new AbortController();
+      var opts = { signal: controller.signal };
       _pendingFetch = controller;
       fetch(url, opts)
         .then(function(r) { return r.text(); })
@@ -867,19 +1087,9 @@
           if (pushState) {
             history.pushState({url: url}, '', url);
           }
-          function renderMath() {
-            if (typeof renderMathInElement === 'function') {
-              try { renderMathInElement(document.querySelector('#main-content'), {
-                delimiters: [{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],
-                macros: window._KATEX_MACROS || {}
-              }); } catch(e) { console.warn('renderMathInElement error', e); }
-            }
-          }
-          if (window.requestAnimationFrame) {
-            requestAnimationFrame(renderMath);
-          } else {
-            renderMath();
-          }
+          renderMathInContent();
+          restoreAllFromUrl();
+          updateOverflowPadding();
         })
         .catch(function(err) { if (err.name !== 'AbortError') console.warn('fetchContent error', err); })
         .then(function() { if (_pendingFetch === controller) _pendingFetch = null; });
@@ -898,6 +1108,21 @@
       } else {
         el.classList.toggle('collapsed');
       }
+      syncSidebarIcon(side);
+    }
+
+    function syncSidebarIcon(side) {
+      const el = document.getElementById('sidebar-' + side);
+      const iconWrap = document.getElementById(side + '-sidebar-icon');
+      if (!el || !iconWrap) return;
+      const isNarrow = window.innerWidth <= 768;
+      const collapsed = isNarrow ? !el.classList.contains('open') : el.classList.contains('collapsed');
+      const icons = {
+        left: collapsed ? 'panel-left-open' : 'panel-left-close',
+        right: collapsed ? 'panel-right-open' : 'panel-right-close'
+      };
+      iconWrap.innerHTML = '<i data-lucide="' + icons[side] + '" width="18" height="18"></i>';
+      if (typeof lucide !== 'undefined') lucide.createIcons();
     }
 
     // Search expand
@@ -907,12 +1132,15 @@
     }
     function exitSearch() {
       document.querySelector('.topbar').classList.remove('expand-search');
+      document.querySelector('.topbar-search input').value = '';
       document.querySelector('.topbar-search input').blur();
     }
 
     function closeAllOverlays() {
       document.querySelectorAll('.sidebar.open').forEach(s => s.classList.remove('open'));
       document.getElementById('sidebar-backdrop').classList.remove('open');
+      syncSidebarIcon('left');
+      syncSidebarIcon('right');
     }
 
     // Settings menu
@@ -921,11 +1149,57 @@
       document.getElementById('settings-menu').classList.toggle('open');
     }
     document.addEventListener('click', function(e) {
-      const wrap = document.querySelector('.settings-wrap');
-      if (!wrap.contains(e.target)) {
+      var settingsWrap = document.querySelector('.settings-wrap');
+      if (settingsWrap && !settingsWrap.contains(e.target)) {
         document.getElementById('settings-menu').classList.remove('open');
       }
+      var copyMenu = document.getElementById('formula-copy-menu');
+      if (copyMenu && !e.target.closest('.formula-box *') && e.target !== copyMenu && !copyMenu.contains(e.target)) {
+        copyMenu.classList.remove('open');
+      }
     });
+
+    // Event delegation for data-action attributes
+    document.addEventListener('click', function(e) {
+      var el = e.target.closest('[data-action]');
+      if (!el) return;
+      switch (el.getAttribute('data-action')) {
+        case 'toggle-sidebar-left': toggleSidebar('left'); break;
+        case 'toggle-sidebar-right': toggleSidebar('right'); break;
+        case 'exit-search': exitSearch(); break;
+        case 'enter-search': enterSearch(); break;
+        case 'toggle-settings': toggleSettings(e); break;
+        case 'toggle-copy-menu': toggleCopyMenu(e); break;
+        case 'copy-formula-latex': copyFormula('latex'); break;
+        case 'copy-formula-unicode': copyFormula('unicode'); break;
+        case 'copy-formula-image': copyFormula('image'); break;
+        case 'remove-qty-chip': removeQtyChip(el.getAttribute('data-qty')); break;
+        case 'add-qty-chip': addQtyChip(el.getAttribute('data-qty')); break;
+        case 'close-overlays': closeAllOverlays(); break;
+      }
+    });
+    document.addEventListener('change', function(e) {
+      var el = e.target.closest('[data-action]');
+      if (!el) return;
+      switch (el.getAttribute('data-action')) {
+        case 'switch-theme': switchTheme(el.value); break;
+        case 'switch-lang': switchLang(el.value); break;
+        case 'switch-dim-mode': switchDimMode(el.value); break;
+        case 'dim-filter-change': dimFilterChange(); break;
+        case 'set-export-format': document.cookie = 'sf_export_format=' + el.value + '; path=/; max-age=31536000'; break;
+      }
+    });
+    document.addEventListener('input', function(e) {
+      var el = e.target.closest('[data-action]');
+      if (!el) return;
+      switch (el.getAttribute('data-action')) {
+        case 'dim-filter-change': dimFilterChange(); break;
+        case 'sync-diff': syncDiff(); break;
+      }
+    });
+    document.getElementById('setting-theme').addEventListener('change', function() { switchTheme(this.value); });
+    document.getElementById('setting-lang').addEventListener('change', function() { switchLang(this.value); });
+    document.getElementById('setting-dim').addEventListener('change', function() { switchDimMode(this.value); });
 
     // Theme switch
     function switchTheme(theme) {
@@ -962,7 +1236,7 @@
       if (t) {
         switchTheme(t);
         // Update the select
-        document.querySelector('.settings-item select[onchange*="switchTheme"]').value = t;
+        document.getElementById('setting-theme').value = t;
       } else {
         // Auto-detect system
         if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
@@ -980,16 +1254,14 @@
 
     // Language switch
     function switchLang(locale) {
-      const url = new URL(window.location);
-      url.searchParams.set('locale', locale);
-      window.location = url.toString();
+      document.cookie = 'sf_locale=' + locale + '; path=/; max-age=31536000';
+      window.location.reload();
     }
 
     // Dimension mode switch
     function switchDimMode(mode) {
-      const url = new URL(window.location);
-      url.searchParams.set('dim_mode', mode);
-      window.location = url.toString();
+      document.cookie = 'sf_dim_mode=' + mode + '; path=/; max-age=31536000';
+      window.location.reload();
     }
 
     // Difficulty dual-range
@@ -1063,16 +1335,29 @@
           document.querySelectorAll('.sidebar').forEach(function(s) {
             s.style.transition = '';
           });
+          updateOverflowPadding();
         }
       });
     })();
 
-    // Auto-collapse right sidebar on narrow screens
+    // Narrow screen overlay mode + auto-collapse
     (function() {
+      var mq = window.matchMedia('(max-width: 768px)');
+      function handleNarrow(e) {
+        var left = document.getElementById('sidebar-left');
+        var right = document.getElementById('sidebar-right');
+        if (e.matches) {
+          left.classList.remove('collapsed');
+          right.classList.remove('collapsed');
+          left.classList.remove('open');
+          right.classList.remove('open');
+        }
+      }
+      mq.addEventListener('change', handleNarrow);
       var rightCollapsed = false;
       var leftCollapsed = false;
       function checkWidth() {
-        if (window.innerWidth <= 768) return; // handled by overlay mode
+        if (window.innerWidth <= 768) return;
         var left = document.getElementById('sidebar-left');
         var right = document.getElementById('sidebar-right');
         var leftW = left.getBoundingClientRect().width;
@@ -1080,28 +1365,28 @@
         var mainW = document.getElementById('main-content').getBoundingClientRect().width;
         var total = leftW + mainW + rightW;
         var viewportW = window.innerWidth;
-
         if (total > viewportW) {
-          // Need to collapse - right first, then left
           if (!right.classList.contains('collapsed')) {
             right.classList.add('collapsed');
             rightCollapsed = true;
+            syncSidebarIcon('right');
           } else if (!left.classList.contains('collapsed')) {
             left.classList.add('collapsed');
             leftCollapsed = true;
+            syncSidebarIcon('left');
           }
         } else {
-          // Room to expand - restore left first, then right
           if (leftCollapsed && left.classList.contains('collapsed')) {
             left.classList.remove('collapsed');
             leftCollapsed = false;
+            syncSidebarIcon('left');
           } else if (rightCollapsed && right.classList.contains('collapsed')) {
             right.classList.remove('collapsed');
             rightCollapsed = false;
+            syncSidebarIcon('right');
           }
         }
       }
-      // Override toggleSidebar to reset auto-collapse flags
       var origToggle = toggleSidebar;
       toggleSidebar = function(side) {
         if (side === 'right') { rightCollapsed = false; }
@@ -1112,6 +1397,9 @@
       checkWidth();
     })();
 
+    lucide.createIcons();
+    syncSidebarIcon('left');
+    syncSidebarIcon('right');
     document.documentElement.classList.remove('suppress-transitions');
 
     // Sync non-tree filter widgets (dim/qty/diff) and jsTree with the URL
@@ -1142,14 +1430,18 @@
     function restoreFiltersFromUrl() {
       var url = new URL(window.location);
 
-      // Dimension filter
-      ['M','L','T','I','\u0398','N','J'].forEach(function(d) {
+      // Dimension filter — encoded as {symbol}_{op}={value}  e.g. M_eq=1&L_gte=3
+      window._dimensionSymbols.forEach(function(d) {
         var rows = document.querySelectorAll('.filter-dim-row[data-dim="' + d + '"]');
         if (rows.length === 0) return;
         var row = rows[0];
-        row.querySelector('.dim-op').value = url.searchParams.get(d + '_o') || 'eq';
-        var val = url.searchParams.get(d + '_v');
-        row.querySelector('.dim-val').value = (val !== null ? val : '');
+        var foundOp = 'eq', foundVal = null;
+        ['eq','geq','leq'].forEach(function(op) {
+          var v = url.searchParams.get(d + '_' + op);
+          if (v !== null) { foundOp = op; foundVal = v; }
+        });
+        row.querySelector('.dim-op').value = foundOp;
+        row.querySelector('.dim-val').value = (foundVal !== null ? foundVal : '');
       });
 
       // Quantity filter (chips only — dropdown stays hidden)
@@ -1170,11 +1462,15 @@
       if (!isNaN(diffMax)) dMaxEl.value = diffMax;
       syncDiff();
     }
-    restoreFiltersFromUrl();
-    window.addEventListener('popstate', function() {
+    function restoreAllFromUrl() {
       restoreFiltersFromUrl();
-      restoreTreeFromUrl();
-    });
+      if (typeof restoreTreeFromUrl === 'function') restoreTreeFromUrl();
+      syncFilterStates();
+    }
+    restoreFiltersFromUrl();
+    syncFilterStates();
+    updateOverflowPadding();
+    window.addEventListener('resize', updateOverflowPadding);
 
     // Copy formula
     function copyFormula(fmt) {
@@ -1215,49 +1511,115 @@
       var menu = document.getElementById('formula-copy-menu');
       if (menu) menu.classList.toggle('open');
     }
-    document.addEventListener('click', function(e) {
-      var menu = document.getElementById('formula-copy-menu');
-      if (menu && !e.target.closest('.formula-box *') && e.target !== menu && !menu.contains(e.target)) {
-        menu.classList.remove('open');
-      }
-    });
-
-    // Narrow screen auto-collapse
-    (function() {
-      const mq = window.matchMedia('(max-width: 768px)');
-      function handleNarrow(e) {
-        const left = document.getElementById('sidebar-left');
-        const right = document.getElementById('sidebar-right');
-        if (e.matches) {
-          left.classList.remove('collapsed');
-          right.classList.remove('collapsed');
-          left.classList.remove('open');
-          right.classList.remove('open');
-        }
-      }
-      mq.addEventListener('change', handleNarrow);
-    })();
-
     // SPA navigation — left sidebar is persistent; only main content updates
     (function() {
+      // Intercept search form submission — use SPA nav, not full reload
+      var searchForm = document.querySelector('.topbar-search form');
+      var searchInput = searchForm ? searchForm.querySelector('input[name="q"]') : null;
+      var suggestionsEl = document.getElementById('search-suggestions');
+      var suggestDebounce = null;
+      var suggestHighlight = -1;
+
+      function fetchSuggestions(q) {
+        if (!q) { suggestionsEl.classList.remove('open'); suggestionsEl.innerHTML = ''; return; }
+        fetch('/api/search-suggestions?q=' + encodeURIComponent(q))
+          .then(function(r) { return r.json(); })
+          .then(function(data) {
+            suggestionsEl.innerHTML = '';
+            suggestHighlight = -1;
+            if (!data.suggestions || data.suggestions.length === 0) {
+              suggestionsEl.classList.remove('open');
+              return;
+            }
+            data.suggestions.forEach(function(s, i) {
+              var div = document.createElement('div');
+              div.className = 'search-suggestion';
+              div.tabIndex = -1;
+              div.innerHTML = '<span>' + s.heading + '</span><span class="ss-kind">' + s.kind + '</span>';
+              div.addEventListener('click', function() {
+                suggestionsEl.classList.remove('open');
+                searchInput.value = s.heading;
+                navigateTo('/' + s.kind + '/' + s.id);
+              });
+              suggestionsEl.appendChild(div);
+            });
+            suggestionsEl.classList.add('open');
+          })
+          .catch(function() { suggestionsEl.classList.remove('open'); });
+      }
+
+      if (searchInput && suggestionsEl) {
+        searchInput.addEventListener('input', function() {
+          clearTimeout(suggestDebounce);
+          suggestDebounce = setTimeout(function() {
+            fetchSuggestions(searchInput.value.trim());
+          }, 150);
+        });
+        searchInput.addEventListener('keydown', function(e) {
+          var items = suggestionsEl.querySelectorAll('.search-suggestion');
+          if (!suggestionsEl.classList.contains('open') || items.length === 0) return;
+          if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            suggestHighlight = Math.min(suggestHighlight + 1, items.length - 1);
+            items.forEach(function(el, i) { el.classList.toggle('highlighted', i === suggestHighlight); });
+            items[suggestHighlight].scrollIntoView({ block: 'nearest' });
+          } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            suggestHighlight = Math.max(suggestHighlight - 1, -1);
+            items.forEach(function(el, i) { el.classList.toggle('highlighted', i === suggestHighlight); });
+            if (suggestHighlight >= 0) items[suggestHighlight].scrollIntoView({ block: 'nearest' });
+          } else if (e.key === 'Enter' && suggestHighlight >= 0) {
+            e.preventDefault();
+            items[suggestHighlight].click();
+      }
+        });
+        searchInput.addEventListener('blur', function() {
+          setTimeout(function() { suggestionsEl.classList.remove('open'); }, 200);
+        });
+        searchInput.addEventListener('focus', function() {
+          if (searchInput.value.trim()) fetchSuggestions(searchInput.value.trim());
+        });
+      }
+
+      if (searchForm) {
+        searchForm.addEventListener('submit', function(e) {
+          e.preventDefault();
+          suggestionsEl.classList.remove('open');
+          var q = searchInput ? encodeURIComponent(searchInput.value.trim()) : '';
+          var url = q ? '/search?q=' + q : '/search';
+          navigateTo(url);
+        });
+      }
+
       function navigateTo(url, isPop) {
         if (!isPop && window.location.pathname + window.location.search === url) return;
-        // Close quantity dropdown on navigation
-        var qr = document.getElementById('qty-results');
-        if (qr) qr.classList.remove('open');
+        // Clear search inputs when leaving a page with a ?q= or quantity search
+        var si = document.querySelector('.topbar-search input[name="q"]');
+        if (si) si.value = '';
+        var qs = document.getElementById('qty-search');
+        if (qs) qs.value = '';
         fetch(url).then(function(r) { if (!r.ok) { window.location.href = url; return null; } return r.text(); }).then(function(html) {
           if (!html) return;
           var doc = new DOMParser().parseFromString(html, 'text/html');
           var newContent = doc.getElementById('main-content');
+          var newSidebar = doc.getElementById('sidebar');
           if (!newContent) { window.location.href = url; return; }
           document.getElementById('main-content').innerHTML = newContent.innerHTML;
+          if (newSidebar) document.getElementById('sidebar').innerHTML = newSidebar.innerHTML;
           if (!isPop && !(window.history.state && window.history.state.url === url)) history.pushState({url: url}, '', url);
           var isFormulas = url.indexOf('/quantities') === -1 && url.indexOf('/quantity/') === -1 && url.indexOf('/unit/') === -1;
-          document.querySelectorAll('.view-tab').forEach(function(t) { t.classList.toggle('active', (isFormulas ? t.getAttribute('href').indexOf('formulas') !== -1 : t.getAttribute('href').indexOf('quantities') !== -1)); });
-          function renderMath() {
-            if (typeof renderMathInElement === 'function') try { renderMathInElement(document.getElementById('main-content'), {delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],macros:window._KATEX_MACROS}); } catch(e) { console.warn('renderMathInElement error', e); }
-          }
-          if (window.requestAnimationFrame) { requestAnimationFrame(renderMath); } else { renderMath(); }
+          var isSearch = url.indexOf('/search') !== -1;
+          document.querySelectorAll('.view-tab').forEach(function(t) {
+            if (isSearch) {
+              t.classList.remove('active');
+            } else {
+              t.classList.toggle('active', isFormulas ? t.getAttribute('href').indexOf('formulas') !== -1 : t.getAttribute('href').indexOf('quantities') !== -1);
+            }
+          });
+          renderMathInContent();
+          if (typeof lucide !== 'undefined') lucide.createIcons();
+          restoreAllFromUrl();
+          updateOverflowPadding();
         }).catch(function() { window.location.href = url; });
       }
       document.body.addEventListener('click', function(e) {
@@ -1265,12 +1627,13 @@
         if (!link) return;
         var href = link.getAttribute('href');
         if (!href || href.startsWith('http') || href.startsWith('//') || href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('javascript:') || link.hasAttribute('download') || link.getAttribute('target') === '_blank') return;
-        if (href === '/') { window.location.href = '/'; return; }
+        if (href === '/') { e.preventDefault(); navigateTo('/formulas'); return; }
         e.preventDefault();
-        if (href.indexOf('?') === -1) {
-          var params = window.location.search;
-          if (params) href += params;
-        }
+        var base = href.split('?')[0];
+        var params = new URLSearchParams(window.location.search);
+        params.delete('q');
+        params = params.toString();
+        href = base + (params ? '?' + params : '');
         navigateTo(href);
       });
       window.addEventListener('popstate', function() { navigateTo(window.location.href, true); });

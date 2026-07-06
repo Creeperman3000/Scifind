@@ -13,9 +13,8 @@ Flask web app at `webapp.py`. Run with `python webapp.py` and open `http://local
 | `/quantity/<id>` | Quantity detail with dimensions and units |
 | `/unit/<id>` | Unit detail |
 | `/search?q=<query>` | Full-text search |
-| `/base-units` | Redirect to `/quantities?is_dim=1` |
+| `/base-units` | Redirect to `/quantities?is_dim=1` (backward-compat; filter uses `formula_item` dimension rows) |
 | `/export?format=<fmt>` | Download database export (csv, xlsx, ods) |
-| `/import` | Upload data file (POST) |
 
 ## Features
 
@@ -24,7 +23,7 @@ Flask web app at `webapp.py`. Run with `python webapp.py` and open `http://local
 - **Difficulty** — Range slider. Params: `diff_min`, `diff_max`
 - **Dimension** — Dimension filter dropdowns for each SI base dimension
 - **Quantity** — Filter formulas by which quantities they contain
-- **Base quantities** — Button to filter SI base quantities (`is_dim=1`)
+- **Base quantities** — Button to filter SI base quantities (filter uses `formula_item` dimension rows)
 
 ### Locale Toggle
 en-US / en-UK via settings menu. Priority: `?locale=` query param > session cookie > `Accept-Language` header > `en-us`.
@@ -36,7 +35,7 @@ Toggle between variable mode (default) and unit mode for formula dimension displ
 From the formula detail page: copy as LaTeX, Unicode (via CDN `unicodeit`), or image (via CDN `html-to-image` to PNG).
 
 ### Data Management
-Export formulas/quantities/units as CSV (zipped), XLSX, or ODS. Import via file upload.
+Export formulas/quantities/units as CSV (zipped), XLSX, or ODS.
 
 ## Templates
 

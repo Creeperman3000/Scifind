@@ -4,21 +4,12 @@
 
 <h2 class="detail-heading">{% if q.symbol %}${{ q.symbol }}$ {% endif %}{{ q.name_en }}</h2>
 
-{% if q.science_id %}
+{% if q.breadcrumbs %}
 <div class="breadcrumb-bar">
-  <a href="/quantities?ids={{ q.science_id }}">{{ q.science }}</a>
-  {% if q.branch_id %}
-  &gt;
-  <a href="/quantities?ids={{ q.branch_id }}">{{ q.branch }}</a>
-  {% endif %}
-  {% if q.subbranch_id %}
-  &gt;
-  <a href="/quantities?ids={{ q.subbranch_id }}">{{ q.subbranch }}</a>
-  {% endif %}
-  {% if q.topic_id %}
-  &gt;
-  <a href="/quantities?ids={{ q.topic_id }}">{{ q.topic }}</a>
-  {% endif %}
+{% for crumb in q.breadcrumbs %}
+  {% if not loop.first %} &gt; {% endif %}
+  <a href="/quantities?ids={{ crumb.id }}">{{ crumb.name }}</a>
+{% endfor %}
 </div>
 {% endif %}
 
@@ -35,39 +26,6 @@
 <div class="detail-desc">{{ q.description_en }}</div>
 {% endif %}
 
-{% if primary_formulas %}
-<div class="detail-section">
-  <h3>Appears in</h3>
-  <ul>
-  {% for f in primary_formulas %}
-    <li><a href="/formula/{{ f.id }}">{{ f.name_en }}</a></li>
-  {% endfor %}
-  </ul>
-</div>
-{% endif %}
-
-{% if nonprimary_formulas %}
-<div class="detail-section">
-  <h3>{% if primary_formulas %}Also appears in{% else %}Appears in{% endif %}</h3>
-  <ul>
-  {% for f in nonprimary_formulas %}
-    <li><a href="/formula/{{ f.id }}">{{ f.name_en }}</a></li>
-  {% endfor %}
-  </ul>
-</div>
-{% endif %}
-
-{% if related_formulas %}
-<div class="detail-section">
-  <h3>Related</h3>
-  <ul>
-  {% for r in related_formulas %}
-    <li>{{ r.relation_type }}: <a href="/formula/{{ r.id }}">{{ r.name_en }}</a></li>
-  {% endfor %}
-  </ul>
-</div>
-{% endif %}
-
 {% if units %}
 <div class="detail-section">
   <h3>Units</h3>
@@ -76,8 +34,8 @@
       <tr>
         <th>Unit</th>
         <th>System</th>
-        {% if show_factor %}<th>Factor</th>{% endif %}
-        {% if show_offset %}<th>Offset</th>{% endif %}
+        {% if show_factor %}<th>Factor to ${{ default_unit_symbol_latex }}$</th>{% endif %}
+        {% if show_offset %}<th>Offset from ${{ default_unit_symbol_latex }}$</th>{% endif %}
       </tr>
     </thead>
     <tbody>
@@ -85,12 +43,65 @@
       <tr>
         <td>${{ u.symbol_latex }}$ {{ u.name_html }}</td>
         <td>{{ u.unit_system or "any" }}</td>
-        {% if show_factor %}<td>{% if u.factor == 1 %}&ndash;{% else %}&times;{{ u.factor }}{% endif %}</td>{% endif %}
-        {% if show_offset %}<td>{% if u.offset == 0 %}&ndash;{% else %}+{{ u.offset }}{% endif %}</td>{% endif %}
+        {% if show_factor %}
+        <td>{% if u.factor == 1 %}&ndash;{% elif u.latex_factor %}${{ u.latex_factor }}${% else %}${{ u.factor }}${% endif %}</td>
+        {% endif %}
+        {% if show_offset %}
+        <td>{% if u.offset == 0 %}&ndash;{% else %}${{ u.offset }}${% endif %}</td>
+        {% endif %}
       </tr>
     {% endfor %}
     </tbody>
   </table>
+</div>
+{% endif %}
+
+{% if primary_formulas %}
+<div class="detail-section">
+  <h3>Primary formulas</h3>
+  <div class="formula-grid">
+  {% for f in primary_formulas %}
+    <div class="formula-card">
+      <a href="/formula/{{ f.id }}">
+        <div class="formula-eqn">$${{ f.latex }}$$</div>
+        <div class="formula-name">{{ f.name_en }}</div>
+      </a>
+    </div>
+  {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% if nonprimary_formulas %}
+<div class="detail-section">
+  <h3>Also appears in</h3>
+  <div class="formula-grid">
+  {% for f in nonprimary_formulas %}
+    <div class="formula-card">
+      <a href="/formula/{{ f.id }}">
+        <div class="formula-eqn">$${{ f.latex }}$$</div>
+        <div class="formula-name">{{ f.name_en }}</div>
+      </a>
+    </div>
+  {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% if related_formulas %}
+<div class="detail-section">
+  <h3>Related formulas</h3>
+  <div class="formula-grid">
+  {% for r in related_formulas %}
+    <div class="formula-card">
+      <a href="/formula/{{ r.id }}">
+        <div class="formula-eqn">$${{ r.latex }}$$</div>
+        <div class="formula-name">{{ r.name_en }}</div>
+        <div class="formula-relation-label">{{ r.relation_type }}</div>
+      </a>
+    </div>
+  {% endfor %}
+  </div>
 </div>
 {% endif %}
 

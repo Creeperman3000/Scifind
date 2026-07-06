@@ -80,9 +80,9 @@ Physical quantities.
 | `difficulty` | INTEGER | 1–10 |
 | `description` | TEXT | JSON i18n |
 | `links` | TEXT | JSON array |
-| `is_dim` | INTEGER | 1 if this is a base dimension quantity (renamed from `base_si`) |
+| *(removed)* | | Base dimensions are now identified via `formula_item` rows with `formula_id='dimensions'` |
 | `default_unit` | TEXT | JSON array: `[{"unit":"<id>","exponent":<n>},...]` |
-| `dim_M` … `dim_J` | REAL | 7 SI base dimensions |
+| `dim_*` | REAL | One column per base dimension (from formula_item) |
 | `created` | TEXT | Auto timestamp |
 | `modified` | TEXT | Auto timestamp |
 

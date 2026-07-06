@@ -5,29 +5,10 @@
 {% if query %}
 <h2>Search results for "{{ query }}"</h2>
 
-<div style="margin-bottom:16px">
-  <form action="/search" method="get" style="display:flex;gap:8px;max-width:400px">
-    <input type="text" name="q" value="{{ query }}" placeholder="Refine search"
-           style="flex:1;padding:7px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg-secondary);font-size:0.9rem;color:var(--text);outline:none">
-    <button type="submit" style="padding:7px 16px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);cursor:pointer">Search</button>
-  </form>
-</div>
-
 {% if results %}
 <ul>
 {% for r in results %}
-  <li>
-    {% if r.kind == 'formula' %}
-    <a href="/formula/{{ r.id }}"><b>{{ locale_text(r.name) }}</b></a>
-    <small>formula &mdash; {{ (r.branch_id or '').replace('_', ' ').title() }} &rarr; {{ (r.topic_id or '').replace('_', ' ').title() }}</small>
-    {% elif r.kind == 'quantity' %}
-    <a href="/quantity/{{ r.id }}"><b>{{ locale_text(r.name) }}</b></a>
-    <small>quantity &mdash; ${{ r.extra }}$</small>
-    {% elif r.kind == 'unit' %}
-    <a href="/unit/{{ r.id }}"><b>{{ locale_text(r.name) }}</b></a>
-    <small>unit &mdash; ${{ r.extra }}$</small>
-    {% endif %}
-  </li>
+  <li><a href="/{{ r[0] }}/{{ r[1] }}">{{ r[2] }}</a> <small>({{ r[0] }})</small></li>
 {% endfor %}
 </ul>
 {% else %}
@@ -35,7 +16,7 @@
 {% endif %}
 {% else %}
 <h2>Search</h2>
-<p>Enter a search query above.</p>
+<p>Type a query in the search bar above.</p>
 {% endif %}
 
 {% endblock %}

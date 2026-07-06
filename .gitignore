@@ -1,7 +1,5 @@
 __pycache__/
 *.pyc
-*.db
-!formulas.db
-*.db-wal
-*.db-shm
+*.db*
 instance/
+.env

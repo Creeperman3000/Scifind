@@ -6,14 +6,13 @@
 
 {% if unit.quantity_id %}
 <div class="breadcrumb-bar">
-  <a href="/quantities?ids={{ unit.science_id }}">{{ unit.science }}</a>{% if unit.branch_id %}
+  {% if unit.breadcrumbs %}
+  {% for crumb in unit.breadcrumbs %}
+    {% if not loop.first %} &gt; {% endif %}
+    <a href="/quantities?ids={{ crumb.id }}">{{ crumb.name }}</a>
+  {% endfor %}
   &gt;
-  <a href="/quantities?ids={{ unit.branch_id }}">{{ unit.branch }}</a>{% endif %}{% if unit.subbranch_id %}
-  &gt;
-  <a href="/quantities?ids={{ unit.subbranch_id }}">{{ unit.subbranch }}</a>{% endif %}{% if unit.topic_id %}
-  &gt;
-  <a href="/quantities?ids={{ unit.topic_id }}">{{ unit.topic }}</a>{% endif %}
-  &gt;
+  {% endif %}
   <a href="/quantity/{{ unit.quantity_id }}">{{ unit.quantity_name }}</a>
 </div>
 {% endif %}
@@ -29,8 +28,8 @@
 {% else %}
   <div><b>Quantity:</b> <a href="/quantity/{{ unit.quantity_id }}">{{ unit.quantity_name }}</a></div>
   <div><b>System:</b> {{ unit.unit_system or "any" }}</div>
-  <div><b>Factor to ${{ render_symbol(si_unit_symbol) }}$:</b> {{ unit.factor }}</div>
-  {% if unit.offset %}<div><b>Offset from ${{ render_symbol(si_unit_symbol) }}$:</b> {{ unit.offset }}</div>{% endif %}
+  <div><b>Factor to ${{ render_symbol(si_unit_symbol) }}$:</b> {% if unit.latex_factor %}${{ unit.latex_factor }}${% else %}${{ unit.factor }}${% endif %}</div>
+  {% if unit.offset %}<div><b>Offset from ${{ render_symbol(si_unit_symbol) }}$:</b> ${{ unit.offset }}$</div>{% endif %}
 {% endif %}
 </div>
 

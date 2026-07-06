@@ -9,7 +9,7 @@ pip install -r requirements.txt
 python scifind_cli.py init
 ```
 
-The database is created at `~/.local/share/formula/formulas.db` (override with `--db` or `FORMULA_DB`).
+The database is created at `~/.local/share/scifind/scifind.db` (override with `--db` or `SCIFIND_DB`).
 
 ## Running
 
@@ -63,11 +63,10 @@ Edit `seed.sql`, `seed_units.sql`, and/or `seed_formulas.sql`. Re-initialize wit
 python scifind_cli.py init  # drops and recreates DB
 ```
 
-## Export/Import
+## Export
 
 ```bash
 python scifind_cli.py export --format csv --output formulas.csv
-python scifind_cli.py import formulas.csv
 ```
 
 Supported formats: `csv`, `csvdir`, `xlsx`, `ods`.

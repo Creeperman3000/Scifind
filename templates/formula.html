@@ -5,38 +5,28 @@
 <h2 class="detail-heading">{{ formula.name_en }}</h2>
 
 <div class="breadcrumb-bar">
-  <a href="/formulas?ids={{ formula.science_id }}">{{ formula.science }}</a>
-  &gt;
-  <a href="/formulas?ids={{ formula.branch_id }}">{{ formula.branch }}</a>
-  {% if formula.subbranch_id %}
-  &gt;
-  <a href="/formulas?ids={{ formula.subbranch_id }}">{{ formula.subbranch }}</a>
-  {% endif %}
-  &gt;
-  <a href="/formulas?ids={{ formula.topic_id }}">{{ formula.topic }}</a>
+{% for crumb in formula.breadcrumbs %}
+  {% if not loop.first %} &gt; {% endif %}
+  <a href="/formulas?ids={{ crumb.id }}">{{ crumb.name }}</a>
+{% endfor %}
 </div>
 
 <div class="detail-meta">
-  <span>Difficulty {{ formula.difficulty }}/10</span>
-  {% if dim_latex %}
   <span>Dimensions: ${{ dim_latex }}$</span>
-  {% endif %}
+  <span>Difficulty {{ formula.difficulty }}/10</span>
 </div>
 
 <div class="formula-box">
   <div id="formula-math">$${{ latex }}$$</div>
   <span id="formula-tex" style="display:none">{{ latex }}</span>
   <div class="formula-copy-wrap">
-    <button class="formula-copy-btn" onclick="toggleCopyMenu(event)">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-      </svg>
+    <button class="formula-copy-btn" data-action="toggle-copy-menu">
+      <i data-lucide="copy" width="16" height="16"></i>
     </button>
-    <div class="formula-copy-menu" id="formula-copy-menu">
-      <button onclick="copyFormula('latex')">LaTeX</button>
-      <button onclick="copyFormula('unicode')">Unicode</button>
-      <button onclick="copyFormula('image')">Image</button>
+    <div class="dropdown-menu formula-copy-menu" id="formula-copy-menu">
+      <button data-action="copy-formula-latex">LaTeX</button>
+      <button data-action="copy-formula-unicode">Unicode</button>
+      <button data-action="copy-formula-image">Image</button>
     </div>
   </div>
 </div>
@@ -45,9 +35,9 @@
 <div class="detail-desc">{{ formula.description_en }}</div>
 {% endif %}
 
-{% if quantities %}
+{% if detail_items %}
 <div class="detail-section">
-  <h3>Variables</h3>
+  <h3>Quantities</h3>
   <table class="var-table">
     <thead>
       <tr>
@@ -56,10 +46,10 @@
       </tr>
     </thead>
     <tbody>
-    {% for q in quantities %}
+    {% for item in detail_items %}
       <tr>
-        <td>{% if q.symbol %}${{ q.symbol }}$ {% endif %}<a href="/quantity/{{ q.id }}">{{ q.display_name }}</a></td>
-        <td>{% if q.default_unit_symbol_latex %}${{ q.default_unit_symbol_latex }}${% endif %} {{ q.default_unit_html }}</td>
+        <td>${{ item.symbol_latex }}$ {% if item.name_html %}{{ item.name_html }} {% endif %}{% if item.paren_html %}{{ item.paren_html }}{% endif %}</td>
+        <td>{% if item.default_unit_symbol_latex %}${{ item.default_unit_symbol_latex }}${% endif %} {{ item.default_unit_html }}</td>
       </tr>
     {% endfor %}
     </tbody>
@@ -67,25 +57,20 @@
 </div>
 {% endif %}
 
-{% if conds %}
-<div class="detail-section">
-  <h3>Assumptions</h3>
-  <ul>
-  {% for c in conds %}
-    <li>{% if c.default_on %}☑{% else %}☐{% endif %} {{ c.name_en }} &rarr; <a href="/formula/{{ c.replacement_formula_id }}">{{ c.replacement_name }}</a></li>
-  {% endfor %}
-  </ul>
-</div>
-{% endif %}
-
 {% if relations %}
 <div class="detail-section">
   <h3>Related</h3>
-  <ul>
+  <div class="formula-grid">
   {% for r in relations %}
-    <li>{{ r.relation_type }}: <a href="/formula/{{ r.related_id }}">{{ r.related_name }}</a></li>
+    <div class="formula-card">
+      <a href="/formula/{{ r.related_id }}">
+        <div class="formula-eqn">$${{ r.latex }}$$</div>
+        <div class="formula-name">{{ r.related_name }}</div>
+        <div class="formula-relation-label">{{ r.relation_type }}</div>
+      </a>
+    </div>
   {% endfor %}
-  </ul>
+  </div>
 </div>
 {% endif %}
 

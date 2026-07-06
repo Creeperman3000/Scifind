@@ -11,7 +11,7 @@ pip install -r requirements.txt
 python webapp.py          # start web app at http://localhost:5000
 ```
 
-A populated `formulas.db` is included in the repo. The webapp auto-creates
+A populated `scifind.db` is included in the repo. The webapp auto-creates
 and seeds the database on first run if it is missing or empty. For the CLI:
 
 ```bash
@@ -24,17 +24,26 @@ python scifind_cli.py list          # browse formulas
 | Path | Purpose |
 | ---- | ------- |
 | `scifind_cli.py` | CLI entry point |
-| `scifind_lib.py` | Database, rendering, i18n, import/export |
+| `scifind_lib.py` | Database, rendering, i18n, export |
 | `webapp.py` | Flask web application |
-| `formulas.db` | Pre-built database (auto-regenerated on first run if missing) |
+| `scifind.db` | Pre-built database (auto-regenerated on first run if missing) |
 | `schema.sql` | Database schema (6 tables, 3 FTS5 indexes) |
 | `seed.sql` | Core seed data (formulas, quantities, units) |
 | `seed_units.sql` | Additional SI and non-SI units |
 | `seed_formulas.sql` | Extended formulas across sciences |
-| `sciences.json` | Science/branch/topic tree with translations |
+| `tree.json` | Science/branch/topic tree with translations |
 | `templates/` | Jinja2 templates |
 | `wiki/` | Documentation |
 | `requirements.txt` | Python dependencies |
+
+## requirements
+
+```
+flask>=3.0
+markupsafe>=2.1
+openpyxl>=3.1
+odfpy>=1.4
+```
 
 ## Docs
 
