@@ -46,6 +46,22 @@ def DIMENSION_COLUMNS(conn):
 # Locale helpers
 # ---------------------------------------------------------------------------
 
+_LOCALE_DIR = Path(__file__).resolve().parent / "locales"
+_locale_configs = {}
+
+
+def _load_locale_config(locale):
+    """Load locale metadata (unit words, ordinal format, etc.) from file."""
+    if locale not in _locale_configs:
+        path = _LOCALE_DIR / f"{locale}.json"
+        try:
+            with open(path, encoding="utf-8") as f:
+                _locale_configs[locale] = json.load(f).get("meta", {})
+        except (OSError, ValueError):
+            _locale_configs[locale] = {}
+    return _locale_configs[locale]
+
+
 def localise(value, locale, default="en-us"):
     """Resolve a value that may be a JSON i18n string, a dict, or plain text.
 
@@ -325,32 +341,19 @@ def render_unit_group(parts, url_func, name_func=None, locale="en-us"):
 # Locale words and ordinals
 # ---------------------------------------------------------------------------
 
-LOCALE_WORDS = {
-    "en-us": {
-        "squared": "squared", "cubed": "cubed", "inverse": "inverse",
-        "to_the": "to the", "per": "per", "reciprocal": "Reciprocal",
-    },
-    "en-uk": {
-        "squared": "squared", "cubed": "cubed", "inverse": "inverse",
-        "to_the": "to the", "per": "per", "reciprocal": "Reciprocal",
-    },
-}
-
-ORDINAL_TEEN_SUFFIXES = {11: "th", 12: "th", 13: "th"}
-ORDINAL_DIGIT_SUFFIXES = {0: "th", 1: "st", 2: "nd", 3: "rd",
-                          4: "th", 5: "th", 6: "th", 7: "th", 8: "th", 9: "th"}
-
-
 def locale_words(locale):
-    return LOCALE_WORDS.get(locale, LOCALE_WORDS["en-us"])
+    config = _load_locale_config(locale)
+    return config.get("unitWords", _load_locale_config("en-us").get("unitWords", {}))
 
 
-def _ordinal(n):
+def _ordinal(n, locale="en-us"):
+    config = _load_locale_config(locale)
+    suffix = config.get("ordinalSuffix", "th")
+    if suffix == ".":
+        return f"{n}."
     last_two = n % 100
-    if last_two in ORDINAL_TEEN_SUFFIXES:
-        suffix = ORDINAL_TEEN_SUFFIXES[last_two]
-    else:
-        suffix = ORDINAL_DIGIT_SUFFIXES[n % 10]
+    if last_two in (11, 12, 13):
+        return f"{n}{suffix}"
     return f"{n}{suffix}"
 
 
@@ -358,15 +361,15 @@ def exponent_word(exp, locale="en-us"):
     """Return the natural-language word for a unit exponent."""
     words = locale_words(locale)
     if exp == 2:
-        return words["squared"]
+        return words.get("squared", "squared")
     if exp == 3:
-        return words["cubed"]
+        return words.get("cubed", "cubed")
     if exp == 1:
         return ""
     if exp == -1:
-        return words["inverse"]
+        return words.get("inverse", "inverse")
     if exp > 3:
-        return f"{words['to_the']} {_ordinal(exp)}"
+        return f"{words.get('toThe', 'to the')} {_ordinal(exp, locale)}"
     return ""
 
 
@@ -639,6 +642,7 @@ def fetch_formula_related(conn, formula_id):
     return conn.execute(
         """
         SELECT fr.relation_type, fr.related_id,
+               f2.name AS name,
                json_extract(f2.name, '$.en-us') AS related_name
         FROM formula_relation fr
         JOIN formula f2 ON f2.id = fr.related_id
@@ -749,7 +753,8 @@ def fetch_quantity(conn, quantity_id):
 def fetch_quantity_units(conn, quantity_id):
     return conn.execute(
         """
-        SELECT u.*, json_extract(u.name, '$.en-us') AS name_en
+        SELECT u.*,
+               json_extract(u.name, '$.en-us') AS name_en
         FROM unit u WHERE u.quantity_id = ?
         ORDER BY u.default_unit DESC, u.unit_system
         """,
@@ -760,7 +765,8 @@ def fetch_quantity_units(conn, quantity_id):
 def fetch_quantity_formulas(conn, quantity_id):
     return conn.execute(
         """
-        SELECT DISTINCT f.id, json_extract(f.name, '$.en-us') AS name_en,
+        SELECT DISTINCT f.id, f.name,
+               json_extract(f.name, '$.en-us') AS name_en,
                f.topic AS topic_id, f.difficulty
         FROM formula_item fi
         JOIN formula f ON f.id = fi.formula_id
@@ -779,7 +785,8 @@ def fetch_quantity_formulas_by_side(conn, quantity_id):
     """
     primary = conn.execute(
         """
-        SELECT DISTINCT f.id, json_extract(f.name, '$.en-us') AS name_en,
+        SELECT DISTINCT f.id, f.name,
+               json_extract(f.name, '$.en-us') AS name_en,
                f.topic AS topic_id, f.difficulty
         FROM formula_item fi
         JOIN formula f ON f.id = fi.formula_id
@@ -790,7 +797,8 @@ def fetch_quantity_formulas_by_side(conn, quantity_id):
     ).fetchall()
     non_primary = conn.execute(
         """
-        SELECT DISTINCT f.id, json_extract(f.name, '$.en-us') AS name_en,
+        SELECT DISTINCT f.id, f.name,
+               json_extract(f.name, '$.en-us') AS name_en,
                f.topic AS topic_id, f.difficulty
         FROM formula_item fi
         JOIN formula f ON f.id = fi.formula_id
@@ -845,7 +853,8 @@ def fetch_quantity_related_formulas(conn, quantity_id):
     """Get formulas related via formula_relation that use this quantity."""
     return conn.execute(
         """
-        SELECT DISTINCT f.id, json_extract(f.name, '$.en-us') AS name_en,
+        SELECT DISTINCT f.id, f.name,
+               json_extract(f.name, '$.en-us') AS name_en,
                fr.relation_type
         FROM formula_relation fr
         JOIN formula f ON f.id = fr.related_id

@@ -3,37 +3,43 @@
     {
       "id": "physics",
       "translations": {
-        "en-us": "Physics"
+        "en-us": "Physics",
+        "cs-cz": "Fyzika"
       },
       "children": [
         {
           "id": "classical_mechanics",
           "translations": {
-            "en-us": "Classical mechanics"
+            "en-us": "Classical mechanics",
+            "cs-cz": "Klasická mechanika"
           },
           "children": [
             {
               "id": "kinematics",
               "translations": {
-                "en-us": "Kinematics"
+                "en-us": "Kinematics",
+                "cs-cz": "Kinematika"
               },
               "children": [
                 {
                   "id": "constant_acceleration",
                   "translations": {
-                    "en-us": "Constant acceleration"
+                    "en-us": "Constant acceleration",
+                    "cs-cz": "Rovnoměrně zrychlený pohyb"
                   }
                 },
                 {
                   "id": "projectile_motion",
                   "translations": {
-                    "en-us": "Projectile motion"
+                    "en-us": "Projectile motion",
+                    "cs-cz": "Vrh"
                   }
                 },
                 {
                   "id": "circular_motion",
                   "translations": {
-                    "en-us": "Circular motion"
+                    "en-us": "Circular motion",
+                    "cs-cz": "Rovnoměrný pohyb po kružnici"
                   }
                 }
               ]
@@ -41,31 +47,36 @@
             {
               "id": "dynamics",
               "translations": {
-                "en-us": "Dynamics"
+                "en-us": "Dynamics",
+                "cs-cz": "Dynamika"
               },
               "children": [
                 {
                   "id": "newtons_laws",
                   "translations": {
-                    "en-us": "Newton's laws"
+                    "en-us": "Newton's laws",
+                    "cs-cz": "Newtonovy zákony"
                   }
                 },
                 {
                   "id": "forces",
                   "translations": {
-                    "en-us": "Forces"
+                    "en-us": "Forces",
+                    "cs-cz": "Síly"
                   }
                 },
                 {
                   "id": "friction",
                   "translations": {
-                    "en-us": "Friction"
+                    "en-us": "Friction",
+                    "cs-cz": "Tření"
                   }
                 },
                 {
                   "id": "springs",
                   "translations": {
-                    "en-us": "Springs"
+                    "en-us": "Springs",
+                    "cs-cz": "Pružiny"
                   }
                 }
               ]
@@ -73,37 +84,43 @@
             {
               "id": "work_and_energy",
               "translations": {
-                "en-us": "Work and energy"
+                "en-us": "Work and energy",
+                "cs-cz": "Práce a energie"
               },
               "children": [
                 {
                   "id": "work",
                   "translations": {
-                    "en-us": "Work"
+                    "en-us": "Work",
+                    "cs-cz": "Práce"
                   }
                 },
                 {
                   "id": "power",
                   "translations": {
-                    "en-us": "Power"
+                    "en-us": "Power",
+                    "cs-cz": "Výkon"
                   }
                 },
                 {
                   "id": "kinetic_energy",
                   "translations": {
-                    "en-us": "Kinetic energy"
+                    "en-us": "Kinetic energy",
+                    "cs-cz": "Kinetická energie"
                   }
                 },
                 {
                   "id": "potential_energy",
                   "translations": {
-                    "en-us": "Potential energy"
+                    "en-us": "Potential energy",
+                    "cs-cz": "Potenciální energie"
                   }
                 },
                 {
                   "id": "conservation_of_energy",
                   "translations": {
-                    "en-us": "Conservation of energy"
+                    "en-us": "Conservation of energy",
+                    "cs-cz": "Zákon zachování energie"
                   }
                 }
               ]
@@ -111,25 +128,29 @@
             {
               "id": "momentum",
               "translations": {
-                "en-us": "Momentum"
+                "en-us": "Momentum",
+                "cs-cz": "Hybnost"
               },
               "children": [
                 {
                   "id": "linear_momentum",
                   "translations": {
-                    "en-us": "Linear momentum"
+                    "en-us": "Linear momentum",
+                    "cs-cz": "Lineární hybnost"
                   }
                 },
                 {
                   "id": "impulse",
                   "translations": {
-                    "en-us": "Impulse"
+                    "en-us": "Impulse",
+                    "cs-cz": "Impuls"
                   }
                 },
                 {
                   "id": "collisions",
                   "translations": {
-                    "en-us": "Collisions"
+                    "en-us": "Collisions",
+                    "cs-cz": "Srážky"
                   }
                 }
               ]
@@ -137,31 +158,36 @@
             {
               "id": "rotational_mechanics",
               "translations": {
-                "en-us": "Rotational mechanics"
+                "en-us": "Rotational mechanics",
+                "cs-cz": "Mechanika rotace"
               },
               "children": [
                 {
                   "id": "torque",
                   "translations": {
-                    "en-us": "Torque"
+                    "en-us": "Torque",
+                    "cs-cz": "Moment síly"
                   }
                 },
                 {
                   "id": "angular_momentum",
                   "translations": {
-                    "en-us": "Angular momentum"
+                    "en-us": "Angular momentum",
+                    "cs-cz": "Moment hybnosti"
                   }
                 },
                 {
                   "id": "moment_of_inertia",
                   "translations": {
-                    "en-us": "Moment of inertia"
+                    "en-us": "Moment of inertia",
+                    "cs-cz": "Moment setrvačnosti"
                   }
                 },
                 {
                   "id": "rotational_energy",
                   "translations": {
-                    "en-us": "Rotational energy"
+                    "en-us": "Rotational energy",
+                    "cs-cz": "Rotační energie"
                   }
                 }
               ]
@@ -169,25 +195,29 @@
             {
               "id": "gravitation",
               "translations": {
-                "en-us": "Gravitation"
+                "en-us": "Gravitation",
+                "cs-cz": "Gravitační pole"
               },
               "children": [
                 {
                   "id": "newtonian_gravity",
                   "translations": {
-                    "en-us": "Newtonian gravity"
+                    "en-us": "Newtonian gravity",
+                    "cs-cz": "Newtonova gravitace"
                   }
                 },
                 {
                   "id": "orbital_motion",
                   "translations": {
-                    "en-us": "Orbital motion"
+                    "en-us": "Orbital motion",
+                    "cs-cz": "Pohyb v gravitačním poli"
                   }
                 },
                 {
                   "id": "escape_velocity",
                   "translations": {
-                    "en-us": "Escape velocity"
+                    "en-us": "Escape velocity",
+                    "cs-cz": "Úniková rychlost"
                   }
                 }
               ]
@@ -195,25 +225,29 @@
             {
               "id": "oscillations_and_waves",
               "translations": {
-                "en-us": "Oscillations and waves"
+                "en-us": "Oscillations and waves",
+                "cs-cz": "Kmitání a vlnění"
               },
               "children": [
                 {
                   "id": "harmonic_motion",
                   "translations": {
-                    "en-us": "Harmonic motion"
+                    "en-us": "Harmonic motion",
+                    "cs-cz": "Harmonické kmitání"
                   }
                 },
                 {
                   "id": "mechanical_waves",
                   "translations": {
-                    "en-us": "Mechanical waves"
+                    "en-us": "Mechanical waves",
+                    "cs-cz": "Mechanické vlnění"
                   }
                 },
                 {
                   "id": "wave_interference",
                   "translations": {
-                    "en-us": "Wave interference"
+                    "en-us": "Wave interference",
+                    "cs-cz": "Interference vlnění"
                   }
                 }
               ]
@@ -223,31 +257,36 @@
         {
           "id": "fluid_mechanics",
           "translations": {
-            "en-us": "Fluid mechanics"
+            "en-us": "Fluid mechanics",
+            "cs-cz": "Mechanika tekutin"
           },
           "children": [
             {
               "id": "fluid_statics",
               "translations": {
-                "en-us": "Fluid statics"
+                "en-us": "Fluid statics",
+                "cs-cz": "Hydrostatika"
               },
               "children": [
                 {
                   "id": "pressure",
                   "translations": {
-                    "en-us": "Pressure"
+                    "en-us": "Pressure",
+                    "cs-cz": "Tlak"
                   }
                 },
                 {
                   "id": "buoyancy",
                   "translations": {
-                    "en-us": "Buoyancy"
+                    "en-us": "Buoyancy",
+                    "cs-cz": "Vztlaková síla"
                   }
                 },
                 {
                   "id": "pascals_law",
                   "translations": {
-                    "en-us": "Pascal's law"
+                    "en-us": "Pascal's law",
+                    "cs-cz": "Pascalův zákon"
                   }
                 }
               ]
@@ -255,25 +294,29 @@
             {
               "id": "fluid_dynamics",
               "translations": {
-                "en-us": "Fluid dynamics"
+                "en-us": "Fluid dynamics",
+                "cs-cz": "Hydrodynamika"
               },
               "children": [
                 {
                   "id": "bernoulli_equation",
                   "translations": {
-                    "en-us": "Bernoulli equation"
+                    "en-us": "Bernoulli equation",
+                    "cs-cz": "Bernoulliho rovnice"
                   }
                 },
                 {
                   "id": "continuity_equation",
                   "translations": {
-                    "en-us": "Continuity equation"
+                    "en-us": "Continuity equation",
+                    "cs-cz": "Rovnice kontinuity"
                   }
                 },
                 {
                   "id": "reynolds_number",
                   "translations": {
-                    "en-us": "Reynolds number"
+                    "en-us": "Reynolds number",
+                    "cs-cz": "Reynoldsovo číslo"
                   }
                 }
               ]
@@ -281,7 +324,8 @@
             {
               "id": "surface_tension",
               "translations": {
-                "en-us": "Surface tension"
+                "en-us": "Surface tension",
+                "cs-cz": "Povrchové napětí"
               }
             }
           ]
@@ -289,55 +333,64 @@
         {
           "id": "thermodynamics",
           "translations": {
-            "en-us": "Thermodynamics"
+            "en-us": "Thermodynamics",
+            "cs-cz": "Termodynamika"
           },
           "children": [
             {
               "id": "temperature",
               "translations": {
-                "en-us": "Temperature"
+                "en-us": "Temperature",
+                "cs-cz": "Teplota"
               }
             },
             {
               "id": "heat",
               "translations": {
-                "en-us": "Heat"
+                "en-us": "Heat",
+                "cs-cz": "Teplo"
               }
             },
             {
               "id": "ideal_gases",
               "translations": {
-                "en-us": "Ideal gases"
+                "en-us": "Ideal gases",
+                "cs-cz": "Ideální plyn"
               }
             },
             {
               "id": "first_law",
               "translations": {
-                "en-us": "First law"
+                "en-us": "First law",
+                "cs-cz": "První termodynamický zákon"
               }
             },
             {
               "id": "second_law",
               "translations": {
-                "en-us": "Second law"
+                "en-us": "Second law",
+                "cs-cz": "Druhý termodynamický zákon"
               }
             },
             {
               "id": "entropy",
               "translations": {
-                "en-us": "Entropy"
+                "en-us": "Entropy",
+                "cs-cz": "Entropie"
               }
             },
             {
               "id": "heat_transfer",
               "translations": {
-                "en-us": "Heat transfer"
+                "en-us": "Heat transfer",
+                "cs-cz": "Přenos tepla"
               }
             },
             {
               "id": "heat_engines",
               "translations": {
-                "en-us": "Heat engines"
+                "en-us": "Heat engines",
+                "cs-cz": "Tepelné stroje"
               }
             }
           ]
@@ -345,61 +398,71 @@
         {
           "id": "electromagnetism",
           "translations": {
-            "en-us": "Electromagnetism"
+            "en-us": "Electromagnetism",
+            "cs-cz": "Elektromagnetismus"
           },
           "children": [
             {
               "id": "electrostatics",
               "translations": {
-                "en-us": "Electrostatics"
+                "en-us": "Electrostatics",
+                "cs-cz": "Elektrostatika"
               }
             },
             {
               "id": "electric_fields",
               "translations": {
-                "en-us": "Electric fields"
+                "en-us": "Electric fields",
+                "cs-cz": "Elektrické pole"
               }
             },
             {
               "id": "electric_potential",
               "translations": {
-                "en-us": "Electric potential"
+                "en-us": "Electric potential",
+                "cs-cz": "Elektrický potenciál"
               }
             },
             {
               "id": "capacitance",
               "translations": {
-                "en-us": "Capacitance"
+                "en-us": "Capacitance",
+                "cs-cz": "Kapacita"
               }
             },
             {
               "id": "current_electricity",
               "translations": {
-                "en-us": "Current electricity"
+                "en-us": "Current electricity",
+                "cs-cz": "Elektrický proud"
               }
             },
             {
               "id": "circuits",
               "translations": {
-                "en-us": "Circuits"
+                "en-us": "Circuits",
+                "cs-cz": "Elektrické obvody"
               }
             },
             {
               "id": "magnetism",
               "translations": {
-                "en-us": "Magnetism"
+                "en-us": "Magnetism",
+                "cs-cz": "Magnetismus"
               }
             },
             {
               "id": "electromagnetic_induction",
               "translations": {
-                "en-us": "Electromagnetic induction"
+                "en-us": "Electromagnetic induction",
+                "cs-cz": "Elektromagnetická indukce"
               }
             },
             {
               "id": "electromagnetic_waves",
               "translations": {
-                "en-us": "Electromagnetic waves"
+                "en-us": "Electromagnetic waves",
+                "cs-cz": "Elektromagnetické vlnění"
               }
             }
           ]
@@ -407,37 +470,43 @@
         {
           "id": "optics",
           "translations": {
-            "en-us": "Optics"
+            "en-us": "Optics",
+            "cs-cz": "Optika"
           },
           "children": [
             {
               "id": "geometrical_optics",
               "translations": {
-                "en-us": "Geometrical optics"
+                "en-us": "Geometrical optics",
+                "cs-cz": "Geometrická optika"
               },
               "children": [
                 {
                   "id": "reflection",
                   "translations": {
-                    "en-us": "Reflection"
+                    "en-us": "Reflection",
+                    "cs-cz": "Odraz"
                   }
                 },
                 {
                   "id": "refraction",
                   "translations": {
-                    "en-us": "Refraction"
+                    "en-us": "Refraction",
+                    "cs-cz": "Lom"
                   }
                 },
                 {
                   "id": "mirrors",
                   "translations": {
-                    "en-us": "Mirrors"
+                    "en-us": "Mirrors",
+                    "cs-cz": "Zrcadla"
                   }
                 },
                 {
                   "id": "lenses",
                   "translations": {
-                    "en-us": "Lenses"
+                    "en-us": "Lenses",
+                    "cs-cz": "Čočky"
                   }
                 }
               ]
@@ -445,25 +514,29 @@
             {
               "id": "physical_optics",
               "translations": {
-                "en-us": "Physical optics"
+                "en-us": "Physical optics",
+                "cs-cz": "Fyzikální optika"
               },
               "children": [
                 {
                   "id": "interference",
                   "translations": {
-                    "en-us": "Interference"
+                    "en-us": "Interference",
+                    "cs-cz": "Interference"
                   }
                 },
                 {
                   "id": "diffraction",
                   "translations": {
-                    "en-us": "Diffraction"
+                    "en-us": "Diffraction",
+                    "cs-cz": "Difrakce"
                   }
                 },
                 {
                   "id": "polarization",
                   "translations": {
-                    "en-us": "Polarization"
+                    "en-us": "Polarization",
+                    "cs-cz": "Polarizace"
                   }
                 }
               ]
@@ -473,37 +546,43 @@
         {
           "id": "modern_physics",
           "translations": {
-            "en-us": "Modern physics"
+            "en-us": "Modern physics",
+            "cs-cz": "Moderní fyzika"
           },
           "children": [
             {
               "id": "relativity",
               "translations": {
-                "en-us": "Relativity"
+                "en-us": "Relativity",
+                "cs-cz": "Relativita"
               }
             },
             {
               "id": "quantum_mechanics",
               "translations": {
-                "en-us": "Quantum mechanics"
+                "en-us": "Quantum mechanics",
+                "cs-cz": "Kvantová mechanika"
               }
             },
             {
               "id": "atomic_physics",
               "translations": {
-                "en-us": "Atomic physics"
+                "en-us": "Atomic physics",
+                "cs-cz": "Atomová fyzika"
               }
             },
             {
               "id": "nuclear_physics",
               "translations": {
-                "en-us": "Nuclear physics"
+                "en-us": "Nuclear physics",
+                "cs-cz": "Jaderná fyzika"
               }
             },
             {
               "id": "particle_physics",
               "translations": {
-                "en-us": "Particle physics"
+                "en-us": "Particle physics",
+                "cs-cz": "Fyzika částic"
               }
             }
           ]
@@ -513,43 +592,50 @@
     {
       "id": "mathematics",
       "translations": {
-        "en-us": "Mathematics"
+        "en-us": "Mathematics",
+        "cs-cz": "Matematika"
       },
       "children": [
         {
           "id": "arithmetic",
           "translations": {
-            "en-us": "Arithmetic"
+            "en-us": "Arithmetic",
+            "cs-cz": "Aritmetika"
           }
         },
         {
           "id": "algebra",
           "translations": {
-            "en-us": "Algebra"
+            "en-us": "Algebra",
+            "cs-cz": "Algebra"
           },
           "children": [
             {
               "id": "equations",
               "translations": {
-                "en-us": "Equations"
+                "en-us": "Equations",
+                "cs-cz": "Rovnice"
               }
             },
             {
               "id": "polynomials",
               "translations": {
-                "en-us": "Polynomials"
+                "en-us": "Polynomials",
+                "cs-cz": "Polynomy"
               }
             },
             {
               "id": "logarithms",
               "translations": {
-                "en-us": "Logarithms"
+                "en-us": "Logarithms",
+                "cs-cz": "Logaritmy"
               }
             },
             {
               "id": "exponents",
               "translations": {
-                "en-us": "Exponents"
+                "en-us": "Exponents",
+                "cs-cz": "Mocniny"
               }
             }
           ]
@@ -557,37 +643,43 @@
         {
           "id": "geometry",
           "translations": {
-            "en-us": "Geometry"
+            "en-us": "Geometry",
+            "cs-cz": "Geometrie"
           },
           "children": [
             {
               "id": "plane_geometry",
               "translations": {
-                "en-us": "Plane geometry"
+                "en-us": "Plane geometry",
+                "cs-cz": "Planimetrie"
               }
             },
             {
               "id": "circles",
               "translations": {
-                "en-us": "Circles"
+                "en-us": "Circles",
+                "cs-cz": "Kružnice"
               }
             },
             {
               "id": "triangles",
               "translations": {
-                "en-us": "Triangles"
+                "en-us": "Triangles",
+                "cs-cz": "Trojúhelníky"
               }
             },
             {
               "id": "polygons",
               "translations": {
-                "en-us": "Polygons"
+                "en-us": "Polygons",
+                "cs-cz": "Mnohoúhelníky"
               }
             },
             {
               "id": "coordinate_geometry",
               "translations": {
-                "en-us": "Coordinate geometry"
+                "en-us": "Coordinate geometry",
+                "cs-cz": "Analytická geometrie"
               }
             }
           ]
@@ -595,25 +687,29 @@
         {
           "id": "trigonometry",
           "translations": {
-            "en-us": "Trigonometry"
+            "en-us": "Trigonometry",
+            "cs-cz": "Trigonometrie"
           },
           "children": [
             {
               "id": "trigonometric_identities",
               "translations": {
-                "en-us": "Trigonometric identities"
+                "en-us": "Trigonometric identities",
+                "cs-cz": "Goniometrické vzorce"
               }
             },
             {
               "id": "right_triangles",
               "translations": {
-                "en-us": "Right triangles"
+                "en-us": "Right triangles",
+                "cs-cz": "Pravodhlé trojúhelníky"
               }
             },
             {
               "id": "laws_of_sines_and_cosines",
               "translations": {
-                "en-us": "Laws of sines and cosines"
+                "en-us": "Laws of sines and cosines",
+                "cs-cz": "Sinová a kosinová věta"
               }
             }
           ]
@@ -621,31 +717,36 @@
         {
           "id": "calculus",
           "translations": {
-            "en-us": "Calculus"
+            "en-us": "Calculus",
+            "cs-cz": "Matematická analýza"
           },
           "children": [
             {
               "id": "limits",
               "translations": {
-                "en-us": "Limits"
+                "en-us": "Limits",
+                "cs-cz": "Limity"
               }
             },
             {
               "id": "derivatives",
               "translations": {
-                "en-us": "Derivatives"
+                "en-us": "Derivatives",
+                "cs-cz": "Derivace"
               }
             },
             {
               "id": "integrals",
               "translations": {
-                "en-us": "Integrals"
+                "en-us": "Integrals",
+                "cs-cz": "Integrály"
               }
             },
             {
               "id": "differential_equations",
               "translations": {
-                "en-us": "Differential equations"
+                "en-us": "Differential equations",
+                "cs-cz": "Diferenciální rovnice"
               }
             }
           ]
@@ -653,19 +754,22 @@
         {
           "id": "linear_algebra",
           "translations": {
-            "en-us": "Linear algebra"
+            "en-us": "Linear algebra",
+            "cs-cz": "Lineární algebra"
           }
         },
         {
           "id": "probability",
           "translations": {
-            "en-us": "Probability"
+            "en-us": "Probability",
+            "cs-cz": "Pravděpodobnost"
           }
         },
         {
           "id": "statistics",
           "translations": {
-            "en-us": "Statistics"
+            "en-us": "Statistics",
+            "cs-cz": "Statistika"
           }
         }
       ]
@@ -673,37 +777,43 @@
     {
       "id": "chemistry",
       "translations": {
-        "en-us": "Chemistry"
+        "en-us": "Chemistry",
+        "cs-cz": "Chemie"
       },
       "children": [
         {
           "id": "general_chemistry",
           "translations": {
-            "en-us": "General chemistry"
+            "en-us": "General chemistry",
+            "cs-cz": "Obecná chemie"
           },
           "children": [
             {
               "id": "atomic_structure",
               "translations": {
-                "en-us": "Atomic structure"
+                "en-us": "Atomic structure",
+                "cs-cz": "Atomová struktura"
               }
             },
             {
               "id": "periodic_table",
               "translations": {
-                "en-us": "Periodic table"
+                "en-us": "Periodic table",
+                "cs-cz": "Periodická tabulka"
               }
             },
             {
               "id": "chemical_bonding",
               "translations": {
-                "en-us": "Chemical bonding"
+                "en-us": "Chemical bonding",
+                "cs-cz": "Chemická vazba"
               }
             },
             {
               "id": "chemical_reactions",
               "translations": {
-                "en-us": "Chemical reactions"
+                "en-us": "Chemical reactions",
+                "cs-cz": "Chemické reakce"
               }
             }
           ]
@@ -711,37 +821,43 @@
         {
           "id": "stoichiometry",
           "translations": {
-            "en-us": "Stoichiometry"
+            "en-us": "Stoichiometry",
+            "cs-cz": "Stechiometrie"
           },
           "children": [
             {
               "id": "mole_concept",
               "translations": {
-                "en-us": "Mole concept"
+                "en-us": "Mole concept",
+                "cs-cz": "Molární koncept"
               }
             },
             {
               "id": "molar_mass",
               "translations": {
-                "en-us": "Molar mass"
+                "en-us": "Molar mass",
+                "cs-cz": "Molární hmotnost"
               }
             },
             {
               "id": "limiting_reactants",
               "translations": {
-                "en-us": "Limiting reactants"
+                "en-us": "Limiting reactants",
+                "cs-cz": "Limitující reaktant"
               }
             },
             {
               "id": "percent_yield",
               "translations": {
-                "en-us": "Percent yield"
+                "en-us": "Percent yield",
+                "cs-cz": "Výtěžek"
               }
             },
             {
               "id": "solution_stoichiometry",
               "translations": {
-                "en-us": "Solution stoichiometry"
+                "en-us": "Solution stoichiometry",
+                "cs-cz": "Stechiometrie roztoků"
               }
             }
           ]
@@ -749,43 +865,50 @@
         {
           "id": "physical_chemistry",
           "translations": {
-            "en-us": "Physical chemistry"
+            "en-us": "Physical chemistry",
+            "cs-cz": "Fyzikální chemie"
           },
           "children": [
             {
               "id": "thermochemistry",
               "translations": {
-                "en-us": "Thermochemistry"
+                "en-us": "Thermochemistry",
+                "cs-cz": "Termochemie"
               }
             },
             {
               "id": "chemical_kinetics",
               "translations": {
-                "en-us": "Chemical kinetics"
+                "en-us": "Chemical kinetics",
+                "cs-cz": "Chemická kinetika"
               }
             },
             {
               "id": "chemical_equilibrium",
               "translations": {
-                "en-us": "Chemical equilibrium"
+                "en-us": "Chemical equilibrium",
+                "cs-cz": "Chemická rovnováha"
               }
             },
             {
               "id": "acids_and_bases",
               "translations": {
-                "en-us": "Acids and bases"
+                "en-us": "Acids and bases",
+                "cs-cz": "Kyseliny a zásady"
               }
             },
             {
               "id": "electrochemistry",
               "translations": {
-                "en-us": "Electrochemistry"
+                "en-us": "Electrochemistry",
+                "cs-cz": "Elektrochemie"
               }
             },
             {
               "id": "solutions",
               "translations": {
-                "en-us": "Solutions"
+                "en-us": "Solutions",
+                "cs-cz": "Roztoky"
               }
             }
           ]
@@ -793,25 +916,29 @@
         {
           "id": "organic_chemistry",
           "translations": {
-            "en-us": "Organic chemistry"
+            "en-us": "Organic chemistry",
+            "cs-cz": "Organická chemie"
           }
         },
         {
           "id": "inorganic_chemistry",
           "translations": {
-            "en-us": "Inorganic chemistry"
+            "en-us": "Inorganic chemistry",
+            "cs-cz": "Anorganická chemie"
           }
         },
         {
           "id": "analytical_chemistry",
           "translations": {
-            "en-us": "Analytical chemistry"
+            "en-us": "Analytical chemistry",
+            "cs-cz": "Analytická chemie"
           }
         },
         {
           "id": "biochemistry",
           "translations": {
-            "en-us": "Biochemistry"
+            "en-us": "Biochemistry",
+            "cs-cz": "Biochemie"
           }
         }
       ]

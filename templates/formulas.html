@@ -10,7 +10,7 @@
   <div class="formula-card">
     <a href="/formula/{{ f.id }}">
       <div class="formula-eqn">$${{ f.latex }}$$</div>
-      <div class="formula-name">{{ f.name_en }}</div>
+      <div class="formula-name">{{ _(f.name) }}</div>
     </a>
   </div>
 {% endfor %}

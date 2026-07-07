@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}{{ q.name_en }}{% endblock %}
+{% block title %}{{ _(q.name) }}{% endblock %}
 {% block content %}
 
-<h2 class="detail-heading">{% if q.symbol %}${{ q.symbol }}$ {% endif %}{{ q.name_en }}</h2>
+<h2 class="detail-heading">{% if q.symbol %}${{ q.symbol }}$ {% endif %}{{ _(q.name) }}</h2>
 
 {% if q.breadcrumbs %}
 <div class="breadcrumb-bar">
@@ -22,8 +22,8 @@
   {% endif %}
 </div>
 
-{% if q.description_en %}
-<div class="detail-desc">{{ q.description_en }}</div>
+{% if q.description and q.description != '' %}
+<div class="detail-desc">{{ _(q.description) }}</div>
 {% endif %}
 
 {% if units %}
@@ -64,7 +64,7 @@
     <div class="formula-card">
       <a href="/formula/{{ f.id }}">
         <div class="formula-eqn">$${{ f.latex }}$$</div>
-        <div class="formula-name">{{ f.name_en }}</div>
+        <div class="formula-name">{{ _(f.name) }}</div>
       </a>
     </div>
   {% endfor %}
@@ -80,7 +80,7 @@
     <div class="formula-card">
       <a href="/formula/{{ f.id }}">
         <div class="formula-eqn">$${{ f.latex }}$$</div>
-        <div class="formula-name">{{ f.name_en }}</div>
+        <div class="formula-name">{{ _(f.name) }}</div>
       </a>
     </div>
   {% endfor %}
@@ -96,7 +96,7 @@
     <div class="formula-card">
       <a href="/formula/{{ r.id }}">
         <div class="formula-eqn">$${{ r.latex }}$$</div>
-        <div class="formula-name">{{ r.name_en }}</div>
+        <div class="formula-name">{{ _(r.name) }}</div>
         <div class="formula-relation-label">{{ r.relation_type }}</div>
       </a>
     </div>

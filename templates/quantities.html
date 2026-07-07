@@ -12,7 +12,7 @@
 <tbody>
 {% for q in quantities %}
 <tr>
-  <td>{% if q.symbol %}${{ q.symbol }}$ {% endif %}<a href="/quantity/{{ q.id }}">{{ q.name_en }}</a></td>
+  <td>{% if q.symbol %}${{ q.symbol }}$ {% endif %}<a href="/quantity/{{ q.id }}">{{ _(q.name) }}</a></td>
   <td>{% if q.default_unit_symbol_latex %}${{ q.default_unit_symbol_latex }}$ {% endif %}{{ q.default_unit_html }}</td>
 </tr>
 {% endfor %}

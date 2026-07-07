@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}{{ unit.name_en or unit.id }}{% endblock %}
+{% block title %}{{ _(unit.name) or unit.id }}{% endblock %}
 {% block content %}
 
-<h2 class="detail-heading">{% if unit.symbol %}${{ render_symbol(unit.symbol) }}$ {% endif %}{{ unit.name_en or unit.id }}</h2>
+<h2 class="detail-heading">{% if unit.symbol %}${{ render_symbol(unit.symbol) }}$ {% endif %}{{ _(unit.name) or unit.id }}</h2>
 
 {% if unit.quantity_id %}
 <div class="breadcrumb-bar">

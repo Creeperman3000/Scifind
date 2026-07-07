@@ -19,6 +19,7 @@ from flask import Flask, render_template, request, g, Response, redirect, sessio
 from markupsafe import Markup
 
 _PROJECT_DIR = Path(__file__).resolve().parent
+_LOCALE_DIR = _PROJECT_DIR / "locales"
 if str(_PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(_PROJECT_DIR))
 
@@ -406,16 +407,67 @@ def _heading_from_compressed(view_label, compressed, name_map, locale, fs,
 # Locale
 # ---------------------------------------------------------------------------
 
+_locale_file_cache = {}
+_available_locales = None
+_lang_to_locale = None
+
+
+def _scan_locales():
+    """Discover available locale files and build Accept-Language mapping."""
+    global _available_locales, _lang_to_locale
+    if _available_locales is not None:
+        return
+    _available_locales = {}
+    _lang_to_locale = {}
+    if not _LOCALE_DIR.is_dir():
+        _available_locales["en-us"] = {"meta": {"name": "US English", "acceptLanguage": "en-US"}}
+        _lang_to_locale["en-US"] = "en-us"
+        _lang_to_locale["en"] = "en-us"
+        return
+    for path in sorted(_LOCALE_DIR.glob("*.json")):
+        locale = path.stem
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            continue
+        meta = data.get("meta", {})
+        _available_locales[locale] = data
+        lang = meta.get("acceptLanguage", locale)
+        _lang_to_locale[lang] = locale
+    if "en-us" not in _available_locales:
+        _available_locales["en-us"] = {
+            "meta": {"name": "US English", "acceptLanguage": "en-US"},
+            "ui": {},
+        }
+
+
+def _resolve_locale_from_header(header):
+    """Match Accept-Language header to best available locale."""
+    if not header:
+        return "en-us"
+    for part in header.split(","):
+        code = part.split(";")[0].strip()[:5]
+        if code in _lang_to_locale:
+            return _lang_to_locale[code]
+        base = code[:2]
+        if base in _lang_to_locale:
+            return _lang_to_locale[base]
+    return "en-us"
+
+
 @app.before_request
 def detect_locale():
+    _scan_locales()
     locale = request.args.get("locale") or request.cookies.get("sf_locale")
-    if locale in ("en-us", "en-uk"):
+    if locale and locale in _available_locales:
         session["locale"] = locale
-    if session.get("locale") in ("en-us", "en-uk"):
+    if session.get("locale") in _available_locales:
         g.locale = session["locale"]
     else:
-        lang = request.headers.get("Accept-Language", "")[:5]
-        g.locale = "en-uk" if lang.startswith("en-GB") else "en-us"
+        g.locale = _resolve_locale_from_header(
+            request.headers.get("Accept-Language", "")
+        )
 
     dim_mode = request.args.get("dim_mode") or request.cookies.get("sf_dim_mode")
     if dim_mode in ("dim", "var", "unit"):
@@ -499,9 +551,27 @@ def ensure_db_open():
 # ---------------------------------------------------------------------------
 
 @app.template_global()
-def locale_text(data):
+def _(data):
+    """Resolve a localized string.
+
+    If *data* looks like JSON (starts with ``{``), it is treated as a DB
+    i18n object (``{"en-us": "...", "cs-cz": "..."}``) and resolved against
+    the current locale.  Otherwise it is treated as a UI-string key looked
+    up in the current locale file.  Falls back to en-us, then to the raw
+    value.
+    """
     loc = g.locale if hasattr(g, "locale") else "en-us"
-    return localise(data, loc)
+    s = (data or "").strip()
+    if s.startswith("{"):
+        result = localise(s, loc)
+        if result:
+            return result
+    _scan_locales()
+    ui = _available_locales.get(loc, {}).get("ui", {})
+    if data in ui:
+        return ui[data]
+    fallback = _available_locales.get("en-us", {}).get("ui", {})
+    return fallback.get(data, data)
 
 
 @app.template_global()
@@ -605,6 +675,12 @@ def inject_globals():
     dim_mode = g.get("dim_mode", "dim")
     dim_symbols = dimension_caches.get(dim_mode, dimension_caches.get("dim", {}))
 
+    _scan_locales()
+    locale_list = [
+        {"code": code, "name": data.get("meta", {}).get("name", code)}
+        for code, data in _available_locales.items()
+    ]
+
     return dict(
         tree=tree,
         tree_json=tree_json,
@@ -617,6 +693,7 @@ def inject_globals():
         all_quantities_for_filter=all_quantities_for_filter,
         dim_symbols=dim_symbols,
         dimension_symbol_list=DIMENSION_SYMBOLS(db) if db else [],
+        available_locales=locale_list,
     )
 
 

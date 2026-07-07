@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}{{ formula.name_en }}{% endblock %}
+{% block title %}{{ _(formula.name) }}{% endblock %}
 {% block content %}
 
-<h2 class="detail-heading">{{ formula.name_en }}</h2>
+<h2 class="detail-heading">{{ _(formula.name) }}</h2>
 
 <div class="breadcrumb-bar">
 {% for crumb in formula.breadcrumbs %}
@@ -31,8 +31,8 @@
   </div>
 </div>
 
-{% if formula.description_en %}
-<div class="detail-desc">{{ formula.description_en }}</div>
+{% if formula.description and formula.description != '' %}
+<div class="detail-desc">{{ _(formula.description) }}</div>
 {% endif %}
 
 {% if detail_items %}
@@ -65,7 +65,7 @@
     <div class="formula-card">
       <a href="/formula/{{ r.related_id }}">
         <div class="formula-eqn">$${{ r.latex }}$$</div>
-        <div class="formula-name">{{ r.related_name }}</div>
+        <div class="formula-name">{{ _(r.name) }}</div>
         <div class="formula-relation-label">{{ r.relation_type }}</div>
       </a>
     </div>

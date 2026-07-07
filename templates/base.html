@@ -337,7 +337,7 @@
           <span class="search-icon">
             <i data-lucide="search" width="16" height="16"></i>
           </span>
-          <input type="text" name="q" placeholder="Find formulas, quantities, units" value="{{ request.args.get('q', '') }}" autocomplete="off">
+          <input type="text" name="q" placeholder="{{ _('search.placeholder') }}" value="{{ request.args.get('q', '') }}" autocomplete="off">
           <button type="button" class="search-cancel" data-action="exit-search" aria-label="Cancel search">
             <i data-lucide="x" width="16" height="16"></i>
           </button>
@@ -357,39 +357,40 @@
         </button>
         <div class="dropdown-menu settings-menu" id="settings-menu">
           <div class="settings-item">
-            <span>Theme</span>
+            <span>{{ _('settings.theme') }}</span>
             <select id="setting-theme" data-action="switch-theme">
-              <option value="system">System</option>
-              <option value="light">Light</option>
-              <option value="dark">Dark</option>
+              <option value="system">{{ _('theme.system') }}</option>
+              <option value="light">{{ _('theme.light') }}</option>
+              <option value="dark">{{ _('theme.dark') }}</option>
             </select>
           </div>
           <div class="settings-item">
-            <span>Language</span>
+            <span>{{ _('settings.language') }}</span>
             <select id="setting-lang" data-action="switch-lang">
-              <option value="en-us" {{ 'selected' if g.locale == 'en-us' }}>US English</option>
-              <option value="en-uk" {{ 'selected' if g.locale == 'en-uk' }}>UK English</option>
+              {% for loc in available_locales %}
+              <option value="{{ loc.code }}" {{ 'selected' if g.locale == loc.code }}>{{ loc.name }}</option>
+              {% endfor %}
             </select>
           </div>
           <div class="settings-divider"></div>
           <div class="settings-item">
-            <span>Dimensions</span>
+            <span>{{ _('settings.dimensions') }}</span>
             <select id="setting-dim" data-action="switch-dim-mode">
-              <option value="dim" {{ 'selected' if g.dim_mode == 'dim' }}>Dimensions</option>
-              <option value="var" {{ 'selected' if g.dim_mode == 'var' }}>Quantities</option>
-              <option value="unit" {{ 'selected' if g.dim_mode == 'unit' }}>Units</option>
+              <option value="dim" {{ 'selected' if g.dim_mode == 'dim' }}>{{ _('dim.mode.dimensions') }}</option>
+              <option value="var" {{ 'selected' if g.dim_mode == 'var' }}>{{ _('dim.mode.quantities') }}</option>
+              <option value="unit" {{ 'selected' if g.dim_mode == 'unit' }}>{{ _('dim.mode.units') }}</option>
             </select>
           </div>
           <div class="settings-divider"></div>
           <div class="settings-item">
-            <span>Export</span>
+            <span>{{ _('settings.export') }}</span>
             <form method="get" action="/export" style="display:flex;gap:8px;">
               <select name="format" data-action="set-export-format">
                 <option value="csv" {{ 'selected' if request.cookies.get('sf_export_format') == 'csv' }}>CSV</option>
                 <option value="xlsx" {{ 'selected' if request.cookies.get('sf_export_format') == 'xlsx' }}>XLSX</option>
                 <option value="ods" {{ 'selected' if request.cookies.get('sf_export_format') == 'ods' }}>ODS</option>
               </select>
-              <button type="submit">Download</button>
+              <button type="submit">{{ _('export.download') }}</button>
             </form>
           </div>
         </div>
@@ -424,13 +425,13 @@
       <div class="sidebar-scroll">
       <div class="sidebar-inner" id="sidebar-left-inner">
         <div class="view-tabs">
-          <a class="view-tab {{ 'active' if current_view == 'formulas' }}" href="/formulas{{ '?' + request.query_string.decode() if request.query_string.decode() else '' }}">&#x2211; Formulas</a>
-          <a class="view-tab {{ 'active' if current_view == 'quantities' }}" href="/quantities{{ '?' + request.query_string.decode() if request.query_string.decode() else '' }}">&#x2113; Quantities</a>
+          <a class="view-tab {{ 'active' if current_view == 'formulas' }}" href="/formulas{{ '?' + request.query_string.decode() if request.query_string.decode() else '' }}">&#x2211; {{ _('view.formulas') }}</a>
+          <a class="view-tab {{ 'active' if current_view == 'quantities' }}" href="/quantities{{ '?' + request.query_string.decode() if request.query_string.decode() else '' }}">&#x2113; {{ _('view.quantities') }}</a>
         </div>
 
         <div id="dim-filter-area">
         <div class="section-label-row">
-          <div class="section-label">Dimension</div>
+          <div class="section-label">{{ _('filter.dimension') }}</div>
           <div class="filter-buttons">
             <button class="filter-btn{{ ' active' if dim_mode == 'or' }}" id="dim-mode-toggle" type="button" title="Dimension filter mode: {{ 'AND' if dim_mode != 'or' else 'OR' }}" style="display:none"><i data-lucide="{{ 'squares-unite' if dim_mode == 'or' else 'squares-intersect' }}" width="16" height="16"></i></button>
             <button class="filter-btn" id="dim-base-qty" type="button" title="Base quantities"><i data-lucide="ruler" width="16" height="16"></i></button>
@@ -455,7 +456,7 @@
 
         <div>
         <div class="section-label-row">
-          <div class="section-label">Quantity</div>
+          <div class="section-label">{{ _('filter.quantity') }}</div>
           <div class="filter-buttons">
             <button class="filter-btn{{ ' active' if (qty_mode == 'and') != (current_view == 'formulas') }}" id="qty-mode-toggle" type="button" title="Quantity filter mode: {{ 'AND' if qty_mode == 'and' else 'OR' }}" style="display:none"><i data-lucide="{{ 'squares-intersect' if qty_mode == 'and' else 'squares-unite' }}" width="16" height="16"></i></button>
             <button class="filter-btn" id="qty-reset" type="button" title="Clear quantity filter"><i data-lucide="rotate-ccw" width="16" height="16"></i></button>
@@ -463,7 +464,7 @@
         </div>
         <div class="filter-qty-search-wrap">
           <div class="qty-search-wrap">
-            <input type="text" class="qty-search" id="qty-search" placeholder="Search quantity..." autocomplete="off">
+            <input type="text" class="qty-search" id="qty-search" placeholder="{{ _('filter.search_quantity') }}" autocomplete="off">
             <div class="qty-results" id="qty-results"></div>
           </div>
           <div class="qty-chips" id="qty-chips"></div>
@@ -471,7 +472,7 @@
 
         <div class="diff-wrap">
           <div class="section-label-row">
-            <div class="diff-label">Difficulty</div>
+            <div class="diff-label">{{ _('filter.difficulty') }}</div>
             <div class="filter-buttons">
               <button class="filter-btn" id="diff-reset" type="button" title="Reset difficulty range"><i data-lucide="rotate-ccw" width="16" height="16"></i></button>
             </div>
@@ -505,7 +506,7 @@
       <div class="sidebar-scroll">
       <div class="sidebar-inner" id="sidebar-right-inner">
         <div class="section-label-row">
-          <div class="section-label">Filter</div>
+          <div class="section-label">{{ _('filter.topic') }}</div>
           <div class="filter-buttons">
             <button class="filter-btn" id="tree-deselect-all" type="button" title="Deselect all topics"><i data-lucide="eraser" width="16" height="16"></i></button>
             <button class="filter-btn" id="tree-select-all" type="button" title="Reset topic selection"><i data-lucide="rotate-ccw" width="16" height="16"></i></button>
