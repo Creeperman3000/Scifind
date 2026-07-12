@@ -57,6 +57,7 @@ from scifind_lib import (
     export_to_ods,
     _unit_name_map,
     _unit_symbol_map,
+    _unit_quantity_map,
     render_symbol,
     _dimension_matches,
     DIMENSION_SYMBOLS,
@@ -335,51 +336,106 @@ def _strip_textcmd(text):
     return _LATEX_TEXTCMD_RE.sub(r"\1", text)
 
 
-def _join_names(names):
+def _join_names(names, locale="en-us", conj_key="heading.and"):
     if not names:
         return ""
     if len(names) == 1:
         return names[0]
+    conj = _ui_lookup(locale, conj_key)
+    if conj == conj_key:
+        conj = "and"
     if len(names) == 2:
-        return f"{names[0]} and {names[1]}"
-    return f"{', '.join(names[:-1])} and {names[-1]}"
+        return f"{names[0]} {conj} {names[1]}"
+    return f"{', '.join(names[:-1])} {conj} {names[-1]}"
 
 
 def _heading_from_compressed(view_label, compressed, name_map, locale, fs,
                              dim_mode="dim", dimension_caches=None,
                              active_quantity_names=None, conn=None):
-    """Render the page heading from a compressed selection set."""
+    """Render the page heading.
+
+    Format: {view_label} from {topics} with {quantity_label} {quantities}
+            where difficulty is {difficulty} and {dimensions}
+    """
+    from scifind_lib import locale_sibilants
+
+    def _loc_ui(key):
+        return _ui_lookup(locale, key)
+
+    def _sibilant_prep(word, prep):
+        sibs = locale_sibilants(locale)
+        chars = sibs.get("chars", [])
+        suffix = sibs.get("preposition", {}).get("suffix", "")
+        if chars and suffix and word and word[0].lower() in chars:
+            return prep + suffix
+        return prep
+
     parts = [view_label]
-    tree = _sciences_tree()
-    order = {}
-    counter = [0]
 
-    def index(node):
-        order[node["id"]] = counter[0]
-        counter[0] += 1
-        for child in (node.get("children") or []):
-            index(child)
+    # --- topics ---
+    if compressed:
+        tree = _sciences_tree()
+        order = {}
+        counter = [0]
+        def _idx(node):
+            order[node["id"]] = counter[0]; counter[0] += 1
+            for c in (node.get("children") or []):
+                _idx(c)
+        for r in tree:
+            _idx(r)
 
-    for root in tree:
-        index(root)
+        gen_map = {}
+        def _gen(node):
+            if isinstance(node, dict):
+                if "id" in node and "translations" in node:
+                    g = node["translations"].get("cs-cz-gen")
+                    if g:
+                        gen_map[node["id"]] = g
+                for v in node.values():
+                    if isinstance(v, (dict, list)):
+                        _gen(v)
+            elif isinstance(node, list):
+                for item in node:
+                    _gen(item)
+        for r in tree:
+            _gen(r)
 
-    seen = set()
-    names = []
-    for nid in sorted(compressed, key=lambda x: order.get(x, 9 ** 9)):
-        n = name_map.get(nid, nid)
-        if n not in seen:
-            names.append(n)
-            seen.add(n)
-    if names:
-        parts.append(f"from {_join_names(names)}")
+        seen = set()
+        topic_names = []
+        for nid in sorted(compressed, key=lambda x: order.get(x, 9**9)):
+            n = gen_map.get(nid) if locale == "cs-cz" else None
+            if not n:
+                n = name_map.get(nid, nid)
+            if n not in seen:
+                topic_names.append(n); seen.add(n)
+        if topic_names:
+            joined = _join_names(topic_names, locale)
+            prep = _sibilant_prep(joined, _loc_ui("heading.from"))
+            parts.append(f"{prep} {joined}")
 
+    # --- quantities ---
+    if active_quantity_names:
+        count = len(active_quantity_names)
+        q_label = _loc_ui("heading.quantity") if count == 1 else _loc_ui("heading.quantities")
+        q_conj = "heading.or" if fs.quantity_mode == "or" else "heading.and"
+        joined = _join_names(active_quantity_names, locale, q_conj)
+        prep = _sibilant_prep(joined, _loc_ui("heading.with"))
+        parts.append(f"{prep} {q_label} {joined}")
+
+    # --- difficulty ---
+    diff_str = ""
+    if fs.diff_min > MIN_DIFFICULTY or fs.diff_max < MAX_DIFFICULTY:
+        if fs.diff_min == fs.diff_max:
+            diff_str = f"{_loc_ui('heading.where_difficulty_is')} {fs.diff_min}"
+        else:
+            diff_str = f"{_loc_ui('heading.where_difficulty_is')} {fs.diff_min}\u2013{fs.diff_max}"
+
+    # --- dimensions ---
     caches = dimension_caches or {}
     x_map = caches.get("var" if dim_mode == "unit" else dim_mode, {})
     y_map = caches.get("unit", {})
-
     op_syms = {"eq": "=", "geq": "\u2265", "leq": "\u2264"}
-
-    extra = []
+    dim_parts = []
     for symbol in DIMENSION_SYMBOLS(conn):
         d = fs.dimension_filter.get(symbol, {})
         value = d.get("val")
@@ -389,18 +445,23 @@ def _heading_from_compressed(view_label, compressed, name_map, locale, fs,
         x_sym = _strip_textcmd(x_map.get(symbol, symbol))
         y_sym = _strip_textcmd(y_map.get(symbol, symbol))
         dv = str(value).translate(SUPERSCRIPT_DIGITS)
-        extra.append(f"{x_sym} {op_syms[op]} {y_sym}{dv}")
-    if active_quantity_names:
-        extra.append(_join_names(active_quantity_names))
-    if fs.diff_min > MIN_DIFFICULTY or fs.diff_max < MAX_DIFFICULTY:
-        if fs.diff_min == fs.diff_max:
-            extra.append(f"difficulty {fs.diff_min}")
-        else:
-            extra.append(f"difficulty {fs.diff_min}\u2013{fs.diff_max}")
-    if extra:
-        parts.append("with " + _join_names(extra))
+        dim_parts.append(f"{x_sym} {op_syms[op]} {y_sym}{dv}")
+    dim_str = ""
+    if dim_parts:
+        d_conj = "heading.or" if fs.dim_mode == "or" else "heading.and"
+        joined = _join_names(dim_parts, locale, d_conj)
+        dim_str = f"{_loc_ui('heading.where_dimensions_are')} {joined}"
+
+    # --- combine difficulty + dimensions ---
+    if diff_str and dim_str:
+        parts.append(f"{diff_str} {_loc_ui('heading.and')} {dim_str}")
+    elif diff_str:
+        parts.append(diff_str)
+    elif dim_str:
+        parts.append(dim_str)
+
     text = " ".join(parts)
-    return text[0].upper() + text[1:] if text else f"All {view_label}"
+    return text[0].upper() + text[1:] if text else f"{_loc_ui('heading.all')} {view_label}"
 
 
 # ---------------------------------------------------------------------------
@@ -550,6 +611,24 @@ def ensure_db_open():
 # Template globals
 # ---------------------------------------------------------------------------
 
+def _ui_lookup(locale, key):
+    """Look up a dotted UI key ('category.child') in the nested locale ui dict."""
+    _scan_locales()
+    ui = _available_locales.get(locale, {}).get("ui", {})
+    parts = key.split(".", 1)
+    if len(parts) == 2:
+        cat, child = parts
+        val = ui.get(cat, {}).get(child)
+        if val is not None:
+            return val
+    fallback = _available_locales.get("en-us", {}).get("ui", {})
+    if len(parts) == 2:
+        val = fallback.get(parts[0], {}).get(parts[1])
+        if val is not None:
+            return val
+    return key
+
+
 @app.template_global()
 def _(data):
     """Resolve a localized string.
@@ -566,12 +645,7 @@ def _(data):
         result = localise(s, loc)
         if result:
             return result
-    _scan_locales()
-    ui = _available_locales.get(loc, {}).get("ui", {})
-    if data in ui:
-        return ui[data]
-    fallback = _available_locales.get("en-us", {}).get("ui", {})
-    return fallback.get(data, data)
+    return _ui_lookup(loc, data)
 
 
 @app.template_global()
@@ -623,6 +697,7 @@ def _render_unit_html(default_unit, locale):
         unit_url=lambda uid: f"/unit/{uid}",
         unit_name=unit_name,
         locale=locale,
+        unit_quantity_map=_unit_quantity_map(get_db()),
     )
 
 
@@ -680,6 +755,7 @@ def inject_globals():
         {"code": code, "name": data.get("meta", {}).get("name", code)}
         for code, data in _available_locales.items()
     ]
+    locale_ui = _available_locales.get(locale, {}).get("ui", {})
 
     return dict(
         tree=tree,
@@ -694,6 +770,7 @@ def inject_globals():
         dim_symbols=dim_symbols,
         dimension_symbol_list=DIMENSION_SYMBOLS(db) if db else [],
         available_locales=locale_list,
+        locale_ui=locale_ui,
     )
 
 
@@ -723,7 +800,12 @@ def _build_formula_detail_items(db, formula_id, locale):
         d = dict(item)
         qid = d.get("quantity_id")
         if qid and qid not in qname_map:
-            qname_map[qid] = d.get("quantity_name") or qid.replace("_", " ").title()
+            # Fetch the quantity name in the current locale
+            qty_row = db.execute("SELECT name FROM quantity WHERE id = ?", (qid,)).fetchone()
+            if qty_row:
+                qname_map[qid] = localise(qty_row["name"], locale) or qid.replace("_", " ").title()
+            else:
+                qname_map[qid] = qid.replace("_", " ").title()
 
     for item in rows:
         item = dict(item)
@@ -747,7 +829,7 @@ def _build_formula_detail_items(db, formula_id, locale):
 
         has_match = bool(
             qno_raw and any(
-                m.lower().replace(' ', '_') == qid
+                m.split('|')[0].lower().replace(' ', '_') == qid
                 for m in re.findall(r'\[([^\]]+)\]', qno_raw)
             )
         ) if qno_raw else False
@@ -930,7 +1012,13 @@ def unit_detail(unit_id):
     if not unit:
         return "Unit not found", 404
     unit = dict(unit)
-    _attach_breadcrumbs(unit, g.locale)
+    locale = g.locale
+    unit["quantity_name_localized"] = localise(unit.get("name"), locale) if unit.get("name") else unit.get("quantity_id", "")
+    # Use the quantity's own name, not the unit's name
+    qty = db.execute("SELECT name FROM quantity WHERE id = ?", (unit["quantity_id"],)).fetchone()
+    if qty:
+        unit["quantity_name_localized"] = localise(qty["name"], locale)
+    _attach_breadcrumbs(unit, locale)
     si_unit_symbol = fetch_si_unit_symbol(db, unit["quantity_id"])
     return render_template("unit.html", unit=unit, si_unit_symbol=si_unit_symbol)
 
@@ -965,7 +1053,7 @@ def all_quantities():
         return render_template(
             "quantities.html",
             quantities=[],
-            heading="No quantities found matching the selected filters.",
+            heading=_("list.quantities_no_results"),
         )
 
     raw_quantities = fetch_all_quantities(db)
@@ -995,12 +1083,18 @@ def all_quantities():
 
     name_map = _tree_name_map(tree, locale)
     dim_caches = _get_dimension_caches()
+    quantity_names = []
+    if fs.quantity_ids:
+        for q in raw_quantities:
+            if q["id"] in fs.quantity_ids:
+                quantity_names.append(localise(q["name"], locale))
     heading = _heading_from_compressed(
-        "Quantities", compressed, name_map, locale, fs,
-        dim_mode=g.get("dim_mode", "dim"), dimension_caches=dim_caches, conn=db,
+        _("nav.quantities"), compressed, name_map, locale, fs,
+        dim_mode=g.get("dim_mode", "dim"), dimension_caches=dim_caches,
+        active_quantity_names=quantity_names, conn=db,
     )
     if fs.base_quantity_only:
-        heading = "Base quantities"
+        heading = _("list.base_quantities")
     return render_template("quantities.html", quantities=filtered, heading=heading)
 
 
@@ -1018,7 +1112,7 @@ def all_formulas():
         return render_template(
             "formulas.html",
             formulas=[],
-            heading="No formulas found matching the selected filters.",
+            heading=_("list.formulas_no_results"),
         )
 
     formulas = [dict(f) for f in fetch_all_formulas(db)]
@@ -1061,7 +1155,7 @@ def all_formulas():
     name_map = _tree_name_map(tree, locale)
     dim_caches = _get_dimension_caches()
     heading = _heading_from_compressed(
-        "Formulas", compressed, name_map, locale, fs,
+        _("nav.formulas"), compressed, name_map, locale, fs,
         dim_mode=g.get("dim_mode", "dim"), dimension_caches=dim_caches,
         active_quantity_names=quantity_names, conn=db,
     )

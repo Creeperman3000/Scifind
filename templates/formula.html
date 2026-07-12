@@ -12,8 +12,8 @@
 </div>
 
 <div class="detail-meta">
-  <span>Dimensions: ${{ dim_latex }}$</span>
-  <span>Difficulty {{ formula.difficulty }}/10</span>
+  <span>{{ _('detail.dimensions') }}: ${{ dim_latex }}$</span>
+  <span>{{ _('detail.difficulty') }} {{ formula.difficulty }}/10</span>
 </div>
 
 <div class="formula-box">
@@ -24,9 +24,9 @@
       <i data-lucide="copy" width="16" height="16"></i>
     </button>
     <div class="dropdown-menu formula-copy-menu" id="formula-copy-menu">
-      <button data-action="copy-formula-latex">LaTeX</button>
-      <button data-action="copy-formula-unicode">Unicode</button>
-      <button data-action="copy-formula-image">Image</button>
+      <button data-action="copy-formula-latex">{{ _('copy.latex') }}</button>
+      <button data-action="copy-formula-unicode">{{ _('copy.unicode') }}</button>
+      <button data-action="copy-formula-image">{{ _('copy.image') }}</button>
     </div>
   </div>
 </div>
@@ -37,12 +37,12 @@
 
 {% if detail_items %}
 <div class="detail-section">
-  <h3>Quantities</h3>
+  <h3>{{ _('detail.quantities') }}</h3>
   <table class="var-table">
     <thead>
       <tr>
-        <th>Quantity</th>
-        <th>Default Unit</th>
+        <th>{{ _('detail.quantities') }}</th>
+        <th>{{ _('detail.default_unit') }}</th>
       </tr>
     </thead>
     <tbody>
@@ -59,14 +59,14 @@
 
 {% if relations %}
 <div class="detail-section">
-  <h3>Related</h3>
+  <h3>{{ _('detail.related') }}</h3>
   <div class="formula-grid">
   {% for r in relations %}
     <div class="formula-card">
       <a href="/formula/{{ r.related_id }}">
         <div class="formula-eqn">$${{ r.latex }}$$</div>
         <div class="formula-name">{{ _(r.name) }}</div>
-        <div class="formula-relation-label">{{ r.relation_type }}</div>
+        <div class="formula-relation-label">{{ _('relation.' ~ r.relation_type) }}</div>
       </a>
     </div>
   {% endfor %}

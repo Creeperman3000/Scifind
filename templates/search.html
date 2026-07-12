@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Search results{% endblock %}
+{% block title %}{{ _('search.title') }}{% endblock %}
 {% block content %}
 
 {% if query %}
-<h2>Search results for "{{ query }}"</h2>
+<h2>{{ _('search.results_for') }} "{{ query }}"</h2>
 
 {% if results %}
 <ul>
@@ -12,11 +12,11 @@
 {% endfor %}
 </ul>
 {% else %}
-<p>No results.</p>
+<p>{{ _('search.no_results') }}</p>
 {% endif %}
 {% else %}
-<h2>Search</h2>
-<p>Type a query in the search bar above.</p>
+<h2>{{ _('search.title') }}</h2>
+<p>{{ _('search.type_query') }}</p>
 {% endif %}
 
 {% endblock %}

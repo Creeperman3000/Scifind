@@ -7,7 +7,7 @@
 {% if quantities %}
 <table>
 <thead>
-<tr><th>Quantity</th><th>Unit</th></tr>
+<tr><th>{{ _('list.quantity') }}</th><th>{{ _('list.unit') }}</th></tr>
 </thead>
 <tbody>
 {% for q in quantities %}
@@ -19,7 +19,7 @@
 </tbody>
 </table>
 {% else %}
-<p>No quantities found matching the selected filters.</p>
+<p>{{ _('list.quantities_no_results') }}</p>
 {% endif %}
 
 {% endblock %}

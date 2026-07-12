@@ -119,7 +119,8 @@ def open_database():
 def search_headings(conn, query, limit=30):
     """Search entity names, symbols, and IDs via SQL LIKE substring match.
 
-    Returns a list of (kind, id, name_en).
+    Returns a list of (kind, id, display_name).
+    Searches across all locales in the name JSON, not just en-us.
     """
     if not query or not query.strip():
         return []
@@ -127,17 +128,45 @@ def search_headings(conn, query, limit=30):
     pat = f"%{q}%"
     rows = conn.execute("""
         SELECT * FROM (
-            SELECT id, 'formula' AS kind, json_extract(name, '$.en-us') AS name_en
-            FROM formula WHERE LOWER(json_extract(name, '$.en-us')) LIKE ? OR LOWER(id) LIKE ?
+            SELECT id, 'formula' AS kind,
+                   COALESCE(
+                       CASE WHEN LOWER(json_extract(name, '$.cs-cz')) LIKE ? THEN json_extract(name, '$.cs-cz') END,
+                       CASE WHEN LOWER(json_extract(name, '$.en-us')) LIKE ? THEN json_extract(name, '$.en-us') END,
+                       json_extract(name, '$.en-us')
+                   ) AS display_name
+            FROM formula
+            WHERE LOWER(json_extract(name, '$.cs-cz')) LIKE ?
+               OR LOWER(json_extract(name, '$.en-us')) LIKE ?
+               OR LOWER(id) LIKE ?
             UNION ALL
-            SELECT id, 'quantity' AS kind, json_extract(name, '$.en-us') AS name_en
-            FROM quantity WHERE LOWER(json_extract(name, '$.en-us')) LIKE ? OR LOWER(symbol) LIKE ? OR LOWER(id) LIKE ?
+            SELECT id, 'quantity' AS kind,
+                   COALESCE(
+                       CASE WHEN LOWER(json_extract(name, '$.cs-cz')) LIKE ? THEN json_extract(name, '$.cs-cz') END,
+                       CASE WHEN LOWER(json_extract(name, '$.en-us')) LIKE ? THEN json_extract(name, '$.en-us') END,
+                       json_extract(name, '$.en-us')
+                   ) AS display_name
+            FROM quantity
+            WHERE LOWER(json_extract(name, '$.cs-cz')) LIKE ?
+               OR LOWER(json_extract(name, '$.en-us')) LIKE ?
+               OR LOWER(symbol) LIKE ?
+               OR LOWER(id) LIKE ?
             UNION ALL
-            SELECT id, 'unit' AS kind, json_extract(name, '$.en-us') AS name_en
-            FROM unit WHERE LOWER(json_extract(name, '$.en-us')) LIKE ? OR LOWER(symbol) LIKE ? OR LOWER(id) LIKE ?
-        ) ORDER BY CASE WHEN LOWER(name_en) = LOWER(?) THEN 0 ELSE 1 END, LENGTH(name_en)
-    """, (pat, pat, pat, pat, pat, pat, pat, pat, q)).fetchall()
-    return [(r["kind"], r["id"], r["name_en"]) for r in rows]
+            SELECT id, 'unit' AS kind,
+                   COALESCE(
+                       CASE WHEN LOWER(json_extract(name, '$.cs-cz')) LIKE ? THEN json_extract(name, '$.cs-cz') END,
+                       CASE WHEN LOWER(json_extract(name, '$.en-us')) LIKE ? THEN json_extract(name, '$.en-us') END,
+                       json_extract(name, '$.en-us')
+                   ) AS display_name
+            FROM unit
+            WHERE LOWER(json_extract(name, '$.cs-cz')) LIKE ?
+               OR LOWER(json_extract(name, '$.en-us')) LIKE ?
+               OR LOWER(symbol) LIKE ?
+               OR LOWER(id) LIKE ?
+        ) ORDER BY CASE WHEN LOWER(display_name) = LOWER(?) THEN 0 ELSE 1 END, LENGTH(display_name)
+    """, (pat, pat, pat, pat, pat,
+          pat, pat, pat, pat, pat, pat,
+          pat, pat, pat, pat, pat, pat, q)).fetchall()
+    return [(r["kind"], r["id"], r["display_name"]) for r in rows]
 
 
 def suggest_headings(conn, query, limit=8):
@@ -282,6 +311,7 @@ def split_numerator_denominator(parts):
 
 def format_default_unit_html(
     json_text, unit_url=None, unit_name=None, locale="en-us",
+    unit_quantity_map=None,
 ):
     """Render default_unit JSON as HTML with optional unit links."""
     parts = parse_default_unit(json_text)
@@ -292,10 +322,21 @@ def format_default_unit_html(
     num_html = render_unit_group(numerators, unit_url, unit_name, locale)
     if not denominators:
         return num_html
-    den_html = render_unit_group(denominators, unit_url, unit_name, locale)
+    per_word = words["per"]
+    use_special = False
+    if unit_quantity_map and denominators:
+        special = locale_quantities_special(locale)
+        if special:
+            for uid, _ in denominators:
+                if unit_quantity_map.get(uid) in special:
+                    per_word = words.get("perSpecial", per_word)
+                    use_special = True
+                    break
+    den_html = render_unit_group(denominators, unit_url, unit_name, locale,
+                                 use_special_exponents=use_special)
     if not num_html:
         return f"{words['reciprocal']} {den_html}"
-    return f"{num_html} {words['per']} {den_html}"
+    return f"{num_html} {per_word} {den_html}"
 
 
 def format_default_unit_symbol(json_text, unit_symbol=None):
@@ -321,12 +362,17 @@ def format_default_unit_symbol(json_text, unit_symbol=None):
     return f"{num_str} / ({den_str})" if len(denominators) > 1 else f"{num_str} / {den_str}"
 
 
-def render_unit_group(parts, url_func, name_func=None, locale="en-us"):
+def render_unit_group(parts, url_func, name_func=None, locale="en-us", use_special_exponents=False):
     """Render [(unit_id, exponent)] as HTML with natural-language exponents."""
+    accusative = locale_accusative_names(locale) if use_special_exponents else {}
     items = []
-    for unit_id, exponent in parts:
+    for i, (unit_id, exponent) in enumerate(parts):
         label = name_func(unit_id) if name_func else unit_id.replace("_", " ").title()
-        word = exponent_word(exponent, locale)
+        if use_special_exponents and label.lower() in accusative:
+            label = accusative[label.lower()]
+        if i > 0:
+            label = label[0].lower() + label[1:] if label else label
+        word = exponent_word(exponent, locale, denominator=use_special_exponents)
         if url_func:
             text = f'<a href="{html.escape(url_func(unit_id))}">{html.escape(label)}</a>'
         else:
@@ -346,6 +392,21 @@ def locale_words(locale):
     return config.get("unitWords", _load_locale_config("en-us").get("unitWords", {}))
 
 
+def locale_quantities_special(locale):
+    config = _load_locale_config(locale)
+    return config.get("quantitiesSpecial", [])
+
+
+def locale_accusative_names(locale):
+    config = _load_locale_config(locale)
+    return config.get("accusativeNames", {})
+
+
+def locale_sibilants(locale):
+    config = _load_locale_config(locale)
+    return config.get("sibilants", {"chars": [], "preposition": {"suffix": ""}})
+
+
 def _ordinal(n, locale="en-us"):
     config = _load_locale_config(locale)
     suffix = config.get("ordinalSuffix", "th")
@@ -357,13 +418,13 @@ def _ordinal(n, locale="en-us"):
     return f"{n}{suffix}"
 
 
-def exponent_word(exp, locale="en-us"):
+def exponent_word(exp, locale="en-us", denominator=False):
     """Return the natural-language word for a unit exponent."""
     words = locale_words(locale)
     if exp == 2:
-        return words.get("squared", "squared")
+        return words.get("squaredSpecial" if denominator else "squared", "squared" if not denominator else words.get("squared", "squared"))
     if exp == 3:
-        return words.get("cubed", "cubed")
+        return words.get("cubedSpecial" if denominator else "cubed", "cubed" if not denominator else words.get("cubed", "cubed"))
     if exp == 1:
         return ""
     if exp == -1:
@@ -700,22 +761,27 @@ def render_variable_base(item, locale="en-us"):
 
 
 def parse_quantity_name_markers(text):
-    """Replace [quantity_id] markers within a string with <a> links.
+    """Replace [quantity_id] or [quantity_id|display_text] markers with <a> links.
 
-    The marker text is lowercased and spaces are converted to underscores
-    to look up the quantity ID; the display text of the link is the raw
-    marker text (preserving original casing).  For example:
+    Format: ``[quantity_id]`` or ``[quantity_id|display_text]``
+
+    Examples:
 
     ``"Initial [velocity]"`` →
     ``'Initial <a href="/quantity/velocity">velocity</a>'``
 
-    ``"Specific [Specific heat capacity]"`` →
-    ``'Specific <a href="/quantity/specific_heat_capacity">Specific heat capacity</a>'``
+    ``"Počáteční [velocity|rychlost]"`` →
+    ``'Počáteční <a href="/quantity/velocity">rychlost</a>'``
     """
     def _repl(m):
         raw = m.group(1)
-        qid = raw.lower().replace(' ', '_')
-        return f'<a href="/quantity/{html.escape(qid)}">{html.escape(raw)}</a>'
+        if '|' in raw:
+            qid, display = raw.split('|', 1)
+        else:
+            qid = raw
+            display = raw
+        qid = qid.lower().replace(' ', '_')
+        return f'<a href="/quantity/{html.escape(qid)}">{html.escape(display)}</a>'
     return re.sub(r'\[([^\]]+)\]', _repl, text)
 
 
@@ -725,8 +791,7 @@ def fetch_formula_quantities(conn, formula_id):
         f"""
         SELECT DISTINCT q.id, q.name, q.symbol,
                json_extract(q.name, '$.en-us') AS name_en,
-               COALESCE(json_extract(fi.quantity_name_overwrite, '$.en-us'),
-                        json_extract(q.name, '$.en-us')) AS display_name,
+               COALESCE(fi.quantity_name_overwrite, q.name) AS display_name_raw,
                q.default_unit,
                {', '.join(f'q.{c}' for c in dim_cols)}
         FROM formula_item fi
@@ -882,6 +947,11 @@ def fetch_unit(conn, unit_id):
 def _unit_name_map(db, locale):
     rows = db.execute("SELECT id, name FROM unit").fetchall()
     return {r["id"]: localise(r["name"], locale) for r in rows}
+
+
+def _unit_quantity_map(db):
+    rows = db.execute("SELECT id, quantity_id FROM unit").fetchall()
+    return {r["id"]: r["quantity_id"] for r in rows}
 
 
 def _unit_symbol_map(db):

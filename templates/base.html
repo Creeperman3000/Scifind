@@ -323,7 +323,7 @@
   <!-- Top Bar -->
   <div class="topbar">
     <div class="topbar-left">
-      <button class="topbar-btn" data-action="toggle-sidebar-left" title="Toggle sidebar" aria-label="Toggle left sidebar">
+      <button class="topbar-btn" data-action="toggle-sidebar-left" title="{{ _('tooltip.toggle_sidebar') }}" aria-label="{{ _('tooltip.toggle_sidebar') }}">
         <span id="left-sidebar-icon"><i data-lucide="panel-left-close" width="18" height="18"></i></span>
       </button>
       <a href="/" class="topbar-logo">
@@ -338,7 +338,7 @@
             <i data-lucide="search" width="16" height="16"></i>
           </span>
           <input type="text" name="q" placeholder="{{ _('search.placeholder') }}" value="{{ request.args.get('q', '') }}" autocomplete="off">
-          <button type="button" class="search-cancel" data-action="exit-search" aria-label="Cancel search">
+          <button type="button" class="search-cancel" data-action="exit-search" aria-label="{{ _('tooltip.cancel_search') }}">
             <i data-lucide="x" width="16" height="16"></i>
           </button>
           <div class="search-suggestions" id="search-suggestions"></div>
@@ -347,21 +347,21 @@
     </div>
     <div class="topbar-right">
       <div class="topbar-search-icon">
-        <button class="topbar-btn" data-action="enter-search" title="Search" aria-label="Search">
+        <button class="topbar-btn" data-action="enter-search" title="{{ _('tooltip.search') }}" aria-label="{{ _('tooltip.search') }}">
           <i data-lucide="search" width="16" height="16"></i>
         </button>
       </div>
       <div class="settings-wrap">
-        <button class="topbar-btn" data-action="toggle-settings" title="Settings" aria-label="Settings">
+        <button class="topbar-btn" data-action="toggle-settings" title="{{ _('tooltip.settings') }}" aria-label="{{ _('tooltip.settings') }}">
           <i data-lucide="settings" width="18" height="18"></i>
         </button>
         <div class="dropdown-menu settings-menu" id="settings-menu">
           <div class="settings-item">
             <span>{{ _('settings.theme') }}</span>
             <select id="setting-theme" data-action="switch-theme">
-              <option value="system">{{ _('theme.system') }}</option>
-              <option value="light">{{ _('theme.light') }}</option>
-              <option value="dark">{{ _('theme.dark') }}</option>
+              <option value="system">{{ _('settings.theme_system') }}</option>
+              <option value="light">{{ _('settings.theme_light') }}</option>
+              <option value="dark">{{ _('settings.theme_dark') }}</option>
             </select>
           </div>
           <div class="settings-item">
@@ -376,9 +376,9 @@
           <div class="settings-item">
             <span>{{ _('settings.dimensions') }}</span>
             <select id="setting-dim" data-action="switch-dim-mode">
-              <option value="dim" {{ 'selected' if g.dim_mode == 'dim' }}>{{ _('dim.mode.dimensions') }}</option>
-              <option value="var" {{ 'selected' if g.dim_mode == 'var' }}>{{ _('dim.mode.quantities') }}</option>
-              <option value="unit" {{ 'selected' if g.dim_mode == 'unit' }}>{{ _('dim.mode.units') }}</option>
+              <option value="dim" {{ 'selected' if g.dim_mode == 'dim' }}>{{ _('settings.dim_mode_dimensions') }}</option>
+              <option value="var" {{ 'selected' if g.dim_mode == 'var' }}>{{ _('settings.dim_mode_quantities') }}</option>
+              <option value="unit" {{ 'selected' if g.dim_mode == 'unit' }}>{{ _('settings.dim_mode_units') }}</option>
             </select>
           </div>
           <div class="settings-divider"></div>
@@ -390,12 +390,12 @@
                 <option value="xlsx" {{ 'selected' if request.cookies.get('sf_export_format') == 'xlsx' }}>XLSX</option>
                 <option value="ods" {{ 'selected' if request.cookies.get('sf_export_format') == 'ods' }}>ODS</option>
               </select>
-              <button type="submit">{{ _('export.download') }}</button>
+              <button type="submit">{{ _('settings.export_download') }}</button>
             </form>
           </div>
         </div>
       </div>
-      <button class="topbar-btn" data-action="toggle-sidebar-right" title="Toggle tree" aria-label="Toggle right sidebar">
+      <button class="topbar-btn" data-action="toggle-sidebar-right" title="{{ _('tooltip.toggle_tree') }}" aria-label="{{ _('tooltip.toggle_tree') }}">
         <span id="right-sidebar-icon"><i data-lucide="panel-right-close" width="18" height="18"></i></span>
       </button>
     </div>
@@ -425,18 +425,18 @@
       <div class="sidebar-scroll">
       <div class="sidebar-inner" id="sidebar-left-inner">
         <div class="view-tabs">
-          <a class="view-tab {{ 'active' if current_view == 'formulas' }}" href="/formulas{{ '?' + request.query_string.decode() if request.query_string.decode() else '' }}">&#x2211; {{ _('view.formulas') }}</a>
-          <a class="view-tab {{ 'active' if current_view == 'quantities' }}" href="/quantities{{ '?' + request.query_string.decode() if request.query_string.decode() else '' }}">&#x2113; {{ _('view.quantities') }}</a>
+          <a class="view-tab {{ 'active' if current_view == 'formulas' }}" href="/formulas{{ '?' + request.query_string.decode() if request.query_string.decode() else '' }}">&#x2211; {{ _('nav.formulas') }}</a>
+          <a class="view-tab {{ 'active' if current_view == 'quantities' }}" href="/quantities{{ '?' + request.query_string.decode() if request.query_string.decode() else '' }}">&#x2113; {{ _('nav.quantities') }}</a>
         </div>
 
         <div id="dim-filter-area">
         <div class="section-label-row">
           <div class="section-label">{{ _('filter.dimension') }}</div>
           <div class="filter-buttons">
-            <button class="filter-btn{{ ' active' if dim_mode == 'or' }}" id="dim-mode-toggle" type="button" title="Dimension filter mode: {{ 'AND' if dim_mode != 'or' else 'OR' }}" style="display:none"><i data-lucide="{{ 'squares-unite' if dim_mode == 'or' else 'squares-intersect' }}" width="16" height="16"></i></button>
-            <button class="filter-btn" id="dim-base-qty" type="button" title="Base quantities"><i data-lucide="ruler" width="16" height="16"></i></button>
-            <button class="filter-btn" id="dim-fill-zeros" type="button" title="Set empty dimension fields to 0"><i data-lucide="paint-bucket" width="16" height="16"></i></button>
-            <button class="filter-btn" id="dim-reset" type="button" title="Clear all dimension filters"><i data-lucide="rotate-ccw" width="16" height="16"></i></button>
+            <button class="filter-btn{{ ' active' if dim_mode == 'or' }}" id="dim-mode-toggle" type="button" title="{{ _('filter.dim_mode_or') if dim_mode == 'or' else _('filter.dim_mode_and') }}" style="display:none"><i data-lucide="{{ 'squares-unite' if dim_mode == 'or' else 'squares-intersect' }}" width="16" height="16"></i></button>
+            <button class="filter-btn" id="dim-base-qty" type="button" title="{{ _('filter.base_quantities') }}"><i data-lucide="ruler" width="16" height="16"></i></button>
+            <button class="filter-btn" id="dim-fill-zeros" type="button" title="{{ _('filter.fill_zeros') }}"><i data-lucide="paint-bucket" width="16" height="16"></i></button>
+            <button class="filter-btn" id="dim-reset" type="button" title="{{ _('filter.clear_dims') }}"><i data-lucide="rotate-ccw" width="16" height="16"></i></button>
           </div>
         </div>
         {% for dsym in dimension_symbol_list %}
@@ -458,8 +458,8 @@
         <div class="section-label-row">
           <div class="section-label">{{ _('filter.quantity') }}</div>
           <div class="filter-buttons">
-            <button class="filter-btn{{ ' active' if (qty_mode == 'and') != (current_view == 'formulas') }}" id="qty-mode-toggle" type="button" title="Quantity filter mode: {{ 'AND' if qty_mode == 'and' else 'OR' }}" style="display:none"><i data-lucide="{{ 'squares-intersect' if qty_mode == 'and' else 'squares-unite' }}" width="16" height="16"></i></button>
-            <button class="filter-btn" id="qty-reset" type="button" title="Clear quantity filter"><i data-lucide="rotate-ccw" width="16" height="16"></i></button>
+            <button class="filter-btn{{ ' active' if (qty_mode == 'and') != (current_view == 'formulas') }}" id="qty-mode-toggle" type="button" title="{{ _('filter.qty_mode_and') if qty_mode == 'and' else _('filter.qty_mode_or') }}" style="display:none"><i data-lucide="{{ 'squares-intersect' if qty_mode == 'and' else 'squares-unite' }}" width="16" height="16"></i></button>
+            <button class="filter-btn" id="qty-reset" type="button" title="{{ _('filter.clear_qty') }}"><i data-lucide="rotate-ccw" width="16" height="16"></i></button>
           </div>
         </div>
         <div class="filter-qty-search-wrap">
@@ -474,7 +474,7 @@
           <div class="section-label-row">
             <div class="diff-label">{{ _('filter.difficulty') }}</div>
             <div class="filter-buttons">
-              <button class="filter-btn" id="diff-reset" type="button" title="Reset difficulty range"><i data-lucide="rotate-ccw" width="16" height="16"></i></button>
+              <button class="filter-btn" id="diff-reset" type="button" title="{{ _('filter.reset_diff') }}"><i data-lucide="rotate-ccw" width="16" height="16"></i></button>
             </div>
           </div>
           <div class="diff-sliders">
@@ -508,8 +508,8 @@
         <div class="section-label-row">
           <div class="section-label">{{ _('filter.topic') }}</div>
           <div class="filter-buttons">
-            <button class="filter-btn" id="tree-deselect-all" type="button" title="Deselect all topics"><i data-lucide="eraser" width="16" height="16"></i></button>
-            <button class="filter-btn" id="tree-select-all" type="button" title="Reset topic selection"><i data-lucide="rotate-ccw" width="16" height="16"></i></button>
+            <button class="filter-btn" id="tree-deselect-all" type="button" title="{{ _('filter.deselect_all') }}"><i data-lucide="eraser" width="16" height="16"></i></button>
+            <button class="filter-btn" id="tree-select-all" type="button" title="{{ _('filter.reset_tree') }}"><i data-lucide="rotate-ccw" width="16" height="16"></i></button>
           </div>
         </div>
         <div id="science-tree"></div>
@@ -556,6 +556,7 @@
     }
 
     window._dimensionSymbols = {{ dimension_symbol_list|tojson|safe }};
+    window._localeUI = {{ locale_ui|tojson|safe }};
 
     // jsTree-backed topic filter
     (function() {
@@ -698,7 +699,7 @@
           var switched = getSwitched(url);
           var isOr = switched.indexOf('dim') !== -1;
           modeBtn.classList.toggle('active', isOr);
-          modeBtn.title = isOr ? 'Dimension filter mode: OR' : 'Dimension filter mode: AND';
+          modeBtn.title = isOr ? ((window._localeUI.filter && window._localeUI.filter.dim_mode_or) || 'Dimension filter mode: OR') : ((window._localeUI.filter && window._localeUI.filter.dim_mode_and) || 'Dimension filter mode: AND');
           modeBtn.innerHTML = '<i data-lucide="' + (isOr ? 'squares-unite' : 'squares-intersect') + '" width="16" height="16"></i>';
           if (typeof lucide !== 'undefined') lucide.createIcons();
         } else {
@@ -763,7 +764,7 @@
           qtyModeBtn.classList.toggle('active', isSwitched);
           qtyModeBtn.classList.remove('inactive');
           var isAnd = isFormulasView() ? !isSwitched : isSwitched;
-          qtyModeBtn.title = isAnd ? 'Quantity filter mode: AND' : 'Quantity filter mode: OR';
+          qtyModeBtn.title = isAnd ? ((window._localeUI.filter && window._localeUI.filter.qty_mode_and) || 'Quantity filter mode: AND') : ((window._localeUI.filter && window._localeUI.filter.qty_mode_or) || 'Quantity filter mode: OR');
           qtyModeBtn.innerHTML = '<i data-lucide="' + (isAnd ? 'squares-intersect' : 'squares-unite') + '" width="16" height="16"></i>';
           if (typeof lucide !== 'undefined') lucide.createIcons();
         } else {
@@ -1501,8 +1502,8 @@
       }
 
       if (doCopy) {
-        doCopy.then(function() { showToast('Copied ' + fmt, 'success'); })
-              .catch(function(e) { showToast('Copy failed: ' + e.message, 'error'); });
+        doCopy.then(function() { showToast(((window._localeUI.toast && window._localeUI.toast.copied) || 'Copied') + ' ' + fmt, 'success'); })
+              .catch(function(e) { showToast(((window._localeUI.toast && window._localeUI.toast.copy_failed) || 'Copy failed') + ': ' + e.message, 'error'); });
       }
     }
 

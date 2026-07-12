@@ -13,23 +13,23 @@
   {% endfor %}
   &gt;
   {% endif %}
-  <a href="/quantity/{{ unit.quantity_id }}">{{ unit.quantity_name }}</a>
+  <a href="/quantity/{{ unit.quantity_id }}">{{ unit.quantity_name_localized }}</a>
 </div>
 {% endif %}
 
 <div class="detail-meta">
-  <span>Unit</span>
+  <span>{{ _('unit.unit') }}</span>
 </div>
 
 <div class="detail-section">
 {% if unit.default_unit == 1 %}
-  <div>This is the SI base unit of <a href="/quantity/{{ unit.quantity_id }}">{{ unit.quantity_name }}</a>.</div>
-  <div><b>Symbol:</b> ${{ render_symbol(unit.symbol) }}$</div>
+  <div>{{ _('unit.si_base_unit') }} <a href="/quantity/{{ unit.quantity_id }}">{{ unit.quantity_name_localized }}</a>.</div>
+  <div><b>{{ _('unit.symbol') }}:</b> ${{ render_symbol(unit.symbol) }}$</div>
 {% else %}
-  <div><b>Quantity:</b> <a href="/quantity/{{ unit.quantity_id }}">{{ unit.quantity_name }}</a></div>
-  <div><b>System:</b> {{ unit.unit_system or "any" }}</div>
-  <div><b>Factor to ${{ render_symbol(si_unit_symbol) }}$:</b> {% if unit.latex_factor %}${{ unit.latex_factor }}${% else %}${{ unit.factor }}${% endif %}</div>
-  {% if unit.offset %}<div><b>Offset from ${{ render_symbol(si_unit_symbol) }}$:</b> ${{ unit.offset }}$</div>{% endif %}
+  <div><b>{{ _('unit.quantity') }}:</b> <a href="/quantity/{{ unit.quantity_id }}">{{ unit.quantity_name_localized }}</a></div>
+  <div><b>{{ _('detail.system') }}:</b> {{ unit.unit_system or _('unit.system_any') }}</div>
+  <div><b>{{ _('unit.factor_to') }} ${{ render_symbol(si_unit_symbol) }}$:</b> {% if unit.latex_factor %}${{ unit.latex_factor }}${% else %}${{ unit.factor }}${% endif %}</div>
+  {% if unit.offset %}<div><b>{{ _('unit.offset_from') }} ${{ render_symbol(si_unit_symbol) }}$:</b> ${{ unit.offset }}$</div>{% endif %}
 {% endif %}
 </div>
 
