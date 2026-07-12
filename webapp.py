@@ -740,10 +740,6 @@ def _build_formula_detail_items(db, formula_id, locale):
 
         qno_raw = localise(item.get("quantity_name_overwrite") or "", locale)
 
-        paren_parts = []
-        if has_overwrite:
-            paren_parts.append(f"${orig_symbol}$")
-
         qlink = (
             f'<a href="/quantity/{html_module.escape(qid)}">'
             f"{html_module.escape(qname_map.get(qid, qid))}</a>"
@@ -756,23 +752,19 @@ def _build_formula_detail_items(db, formula_id, locale):
             )
         ) if qno_raw else False
 
+        paren_parts = []
+        if has_overwrite and orig_symbol:
+            paren_parts.append(f"${orig_symbol}$")
+
         if qno_raw:
-            if has_overwrite:
-                if has_match:
-                    # Case 8: so=1 qno=1 match=1 — name has qno with links
-                    name_html = parse_quantity_name_markers(qno_raw).strip()
-                else:
-                    # Case 7: so=1 qno=1 match=0 — name=qlink, qno in parens
-                    name_html = qlink
-                    paren_parts.append(parse_quantity_name_markers(qno_raw))
+            if has_match:
+                # qno has [quantity_id] marker — resolve links
+                name_html = parse_quantity_name_markers(qno_raw)
             else:
-                if has_match:
-                    # Case 4: so=0 qno=1 match=1 — name has qno with links
-                    name_html = parse_quantity_name_markers(qno_raw)
-                else:
-                    # Case 3: so=0 qno=1 match=0 — name=qlink, qno in parens
-                    name_html = qlink
-                    paren_parts.append(parse_quantity_name_markers(qno_raw))
+                # qno is plain text — use as name, show orig symbol + quantity name in parens
+                name_html = html_module.escape(qno_raw)
+                if has_overwrite and orig_symbol:
+                    paren_parts.append(qlink)
         else:
             if has_overwrite:
                 # Case 5: so=1 qno=0 — name=qlink, parens has orig_symbol

@@ -11,7 +11,6 @@ INSERT OR IGNORE INTO quantity (id, name, symbol, symbol_overwrite, topic, diffi
   ('angle', '{"en-us": "Plane angle", "cs-cz": "Rovinný úhel"}', '\theta', NULL, 'trigonometric_identities', 1, NULL, NULL, '[{"unit": "radian", "exponent": 1}]', 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
   ('angular_acceleration', '{"en-us": "Angular acceleration", "cs-cz": "Úhlové zrychlení"}', '\alpha', NULL, 'rotational_mechanics', 3, NULL, NULL, '[{"unit":"radian","exponent":1},{"unit":"second","exponent":-2}]', 0.0, 0.0, -2.0, 0.0, 0.0, 0.0, 0.0),
   ('angular_momentum', '{"en-us": "Angular momentum", "cs-cz": "Moment hybnosti"}', 'L', NULL, 'angular_momentum', 3, NULL, NULL, '[{"unit":"kilogram","exponent":1},{"unit":"metre","exponent":2},{"unit":"second","exponent":-1}]', 1.0, 2.0, -1.0, 0.0, 0.0, 0.0, 0.0),
-  ('angular_resolution', '{"en-us": "Angular resolution", "cs-cz": "Úhlové rozlišení"}', '\theta_\mathrm{min}', NULL, 'diffraction', 4, NULL, NULL, '[{"unit": "radian", "exponent": 1}]', 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
   ('angular_velocity', '{"en-us": "Angular velocity", "cs-cz": "Úhlová rychlost"}', '\omega', NULL, 'rotational_mechanics', 3, NULL, NULL, '[{"unit":"radian","exponent":1},{"unit":"second","exponent":-1}]', 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0),
   ('area', '{"en-us": "Area", "cs-cz": "Plocha"}', 'A', NULL, 'plane_geometry', 1, NULL, NULL, '[{"unit":"metre","exponent":2}]', 0.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0),
   ('capacitance', '{"en-us": "Capacitance", "cs-cz": "Kapacita"}', 'C', NULL, 'circuits', 3, NULL, NULL, '[{"unit": "farad", "exponent": 1}]', -1.0, -2.0, 4.0, 2.0, 0.0, 0.0, 0.0),
@@ -47,6 +46,7 @@ INSERT OR IGNORE INTO quantity (id, name, symbol, symbol_overwrite, topic, diffi
   ('luminance', '{"en-us": "Luminance", "cs-cz": "Luminance"}', 'L_v', NULL, 'electromagnetic_waves', 3, NULL, NULL, '[{"unit":"candela","exponent":1},{"unit":"metre","exponent":-2}]', 0.0, -2.0, 0.0, 0.0, 0.0, 0.0, 1.0),
   ('luminous_flux', '{"en-us": "Luminous flux", "cs-cz": "Světelný tok"}', '\Phi_v', NULL, 'electromagnetic_waves', 3, NULL, NULL, '[{"unit": "lumen", "exponent": 1}]', 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0),
   ('luminous_intensity', '{"en-us": "Luminous intensity", "cs-cz": "Svítivost"}', 'I_v', NULL, 'electromagnetic_waves', 3, NULL, NULL, '[{"unit": "candela", "exponent": 1}]', 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0),
+  ('logarithmic_ratio', '{"en-us": "Logarithmic ratio", "cs-cz": "Logaritmický podíl"}', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
   ('magnetic_field_strength', '{"en-us": "Magnetic field strength", "cs-cz": "Intenzita magnetického pole"}', 'H', NULL, 'magnetism', 3, NULL, NULL, '[{"unit":"ampere","exponent":1},{"unit":"metre","exponent":-1}]', 0.0, -1.0, 0.0, 1.0, 0.0, 0.0, 0.0),
   ('magnetic_flux', '{"en-us": "Magnetic flux", "cs-cz": "Magnetický tok"}', '\Phi', NULL, 'magnetism', 3, NULL, NULL, '[{"unit": "weber", "exponent": 1}]', 1.0, 2.0, -2.0, -1.0, 0.0, 0.0, 0.0),
   ('magnetic_flux_density', '{"en-us": "Magnetic flux density", "cs-cz": "Magnetická indukce"}', 'B', NULL, 'magnetism', 3, NULL, NULL, '[{"unit": "tesla", "exponent": 1}]', 1.0, 0.0, -2.0, -1.0, 0.0, 0.0, 0.0),
@@ -63,7 +63,6 @@ INSERT OR IGNORE INTO quantity (id, name, symbol, symbol_overwrite, topic, diffi
   ('pressure', '{"en-us": "Pressure", "cs-cz": "Tlak"}', 'P', NULL, 'ideal_gases', 3, NULL, NULL, '[{"unit": "pascal", "exponent": 1}]', 1.0, -1.0, -2.0, 0.0, 0.0, 0.0, 0.0),
   ('radiance', '{"en-us": "Radiance", "cs-cz": "Záře"}', 'L_e', NULL, 'electromagnetic_waves', 4, NULL, NULL, '[{"unit":"watt","exponent":1},{"unit":"metre","exponent":-2},{"unit":"steradian","exponent":-1}]', 1.0, 0.0, -3.0, 0.0, 0.0, 0.0, 0.0),
   ('radiant_intensity', '{"en-us": "Radiant intensity", "cs-cz": "Zářivost"}', 'I_e', NULL, 'electromagnetic_waves', 4, NULL, NULL, '[{"unit":"watt","exponent":1},{"unit":"steradian","exponent":-1}]', 1.0, 2.0, -3.0, 0.0, 0.0, 0.0, 0.0),
-  ('rate_constant', '{"en-us": "Rate constant", "cs-cz": "Rychlostní konstanta"}', 'k', NULL, 'chemical_kinetics', 3, NULL, NULL, '[{"unit": "second", "exponent": -1}]', 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0),
   ('reflectance', '{"en-us": "Reflectance", "cs-cz": "Reflexní schopnost"}', 'R', NULL, 'reflection', 2, NULL, NULL, NULL, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
   ('refractive_index', '{"en-us": "Refractive index", "cs-cz": "Index lomu"}', 'n', NULL, 'refraction', 3, NULL, NULL, NULL, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
   ('resistance', '{"en-us": "Resistance", "cs-cz": "Elektrický odpor"}', 'R', NULL, 'circuits', 3, NULL, NULL, '[{"unit": "ohm", "exponent": 1}]', 1.0, 2.0, -3.0, -2.0, 0.0, 0.0, 0.0),
@@ -90,13 +89,13 @@ INSERT OR IGNORE INTO unit VALUES('arcminute','{"en-us": "Arcminute", "cs-cz": "
 INSERT OR IGNORE INTO unit VALUES('arcsecond','{"en-us": "Arcsecond", "cs-cz": "Úhlová vteřina"}','{}^{\prime\prime}','angle',0,NULL,4.8481368110953598e-06,NULL,0.0);
 INSERT OR IGNORE INTO unit VALUES('astronomical_unit','{"en-us": "Astronomical unit", "cs-cz": "Astronomická jednotka"}','au','length',0,NULL,149597870700.0,NULL,0.0);
 INSERT OR IGNORE INTO unit VALUES('becquerel','{"en-us": "Becquerel", "cs-cz": "Becquerel"}','Bq','activity',1,'SI',1.0,NULL,0.0);
-INSERT OR IGNORE INTO unit VALUES('bel','{"en-us": "Bel", "cs-cz": "Bel"}','B','angle',0,NULL,1.0,NULL,0.0);
+INSERT OR IGNORE INTO unit VALUES('bel','{"en-us": "Bel", "cs-cz": "Bel"}','B','logarithmic_ratio',0,NULL,1.0,NULL,0.0);
 INSERT OR IGNORE INTO unit VALUES('candela','{"en-us": "Candela", "cs-cz": "Kandela"}','cd','luminous_intensity',1,'SI',1.0,NULL,0.0);
 INSERT OR IGNORE INTO unit VALUES('centimetre','{"en-us": "Centimeter", "en-uk": "Centimetre", "cs-cz": "Centimetr"}','cm','length',0,'CGS',0.01,NULL,0.0);
 INSERT OR IGNORE INTO unit VALUES('coulomb','{"en-us": "Coulomb", "cs-cz": "Coulomb"}','C','charge',1,'SI',1.0,NULL,0.0);
 INSERT OR IGNORE INTO unit VALUES('dalton','{"en-us": "Dalton", "cs-cz": "Dalton"}','Da','mass',0,NULL,1.66053906892e-27,NULL,0.0);
 INSERT OR IGNORE INTO unit VALUES('day','{"en-us": "Day", "cs-cz": "Den"}','d','time',0,NULL,86400.0,NULL,0.0);
-INSERT OR IGNORE INTO unit VALUES('decibel','{"en-us": "Decibel", "cs-cz": "Decibel"}','dB','angle',0,NULL,0.1,NULL,0.0);
+INSERT OR IGNORE INTO unit VALUES('decibel','{"en-us": "Decibel", "cs-cz": "Decibel"}','dB','logarithmic_ratio',0,NULL,0.1,NULL,0.0);
 INSERT OR IGNORE INTO unit VALUES('degree','{"en-us": "Degree", "cs-cz": "Stupeň"}','{}^{\circ}','angle',0,NULL,0.017453292519943296,NULL,0.0);
 INSERT OR IGNORE INTO unit VALUES('degree_celsius','{"en-us": "Degree Celsius", "cs-cz": "Stupeň Celsia"}','{}^{\circ}\mathrm{C}','temperature',0,NULL,1.0,NULL,273.15);
 INSERT OR IGNORE INTO unit VALUES('dyne','{"en-us": "Dyne", "cs-cz": "Dyn"}','dyn','force',0,'CGS',1.0e-05,NULL,0.0);
@@ -118,7 +117,7 @@ INSERT OR IGNORE INTO unit VALUES('lux','{"en-us": "Lux", "cs-cz": "Lux"}','lx',
 INSERT OR IGNORE INTO unit VALUES('metre','{"en-us": "Meter", "en-uk": "Metre", "cs-cz": "Metr"}','m','length',1,'SI',1.0,NULL,0.0);
 INSERT OR IGNORE INTO unit VALUES('minute','{"en-us": "Minute", "cs-cz": "Minuta"}','min','time',0,NULL,60.0,NULL,0.0);
 INSERT OR IGNORE INTO unit VALUES('mole','{"en-us": "Mole", "cs-cz": "Mol"}','mol','amount',1,'SI',1.0,NULL,0.0);
-INSERT OR IGNORE INTO unit VALUES('neper','{"en-us": "Neper", "cs-cz": "Neper"}','Np','angle',0,NULL,1.0,NULL,0.0);
+INSERT OR IGNORE INTO unit VALUES('neper','{"en-us": "Neper", "cs-cz": "Neper"}','Np','logarithmic_ratio',0,NULL,1.0,NULL,0.0);
 INSERT OR IGNORE INTO unit VALUES('newton','{"en-us": "Newton", "cs-cz": "Newton"}','N','force',1,'SI',1.0,NULL,0.0);
 INSERT OR IGNORE INTO unit VALUES('ohm','{"en-us": "Ohm", "cs-cz": "Ohm"}','\Omega','resistance',1,'SI',1.0,NULL,0.0);
 INSERT OR IGNORE INTO unit VALUES('pascal','{"en-us": "Pascal", "cs-cz": "Pascal"}','Pa','pressure',1,'SI',1.0,NULL,0.0);
@@ -233,7 +232,7 @@ INSERT OR IGNORE INTO formula_item VALUES('archimedes_principle',1,0,0,NULL,NULL
 INSERT OR IGNORE INTO formula_item VALUES('archimedes_principle',1,0,1,NULL,NULL,1.0,'gravitational_constant',1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('archimedes_principle',1,0,2,NULL,NULL,1.0,'volume',1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('archimedes_principle',1,1,0,NULL,NULL,1.0,'force',-1.0,NULL,'{"en-us": "F_b"}',NULL,NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('area',1,0,0,NULL,NULL,1.0,'length',2.0,NULL,'{"en-us": "s"}','{"en-us": "[Length]"}',NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('area',1,0,0,NULL,NULL,1.0,'length',2.0,NULL,'{"en-us": "s"}',NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('area',1,1,0,NULL,NULL,1.0,'area',-1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('atomic_physics',1,0,0,NULL,NULL,1.0,'frequency',1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('atomic_physics',1,1,0,NULL,NULL,1.0,'energy',-1.0,NULL,NULL,NULL,'\Delta',NULL);
@@ -242,21 +241,21 @@ INSERT OR IGNORE INTO formula_item VALUES('capacitance',1,0,0,NULL,NULL,1.0,'cha
 INSERT OR IGNORE INTO formula_item VALUES('capacitance',1,0,1,NULL,NULL,1.0,'electric_potential',-1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('capacitance',1,1,0,NULL,NULL,1.0,'capacitance',-1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('centripetal_acceleration',1,0,0,NULL,NULL,1.0,'velocity',2.0,NULL,NULL,NULL,NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('centripetal_acceleration',1,0,1,NULL,NULL,1.0,'length',-1.0,NULL,'{"en-us": "r"}','{"en-us": "[Length]"}',NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('centripetal_acceleration',1,0,1,NULL,NULL,1.0,'length',-1.0,NULL,'{"en-us": "r"}',NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('centripetal_acceleration',1,1,0,NULL,NULL,1.0,'acceleration',-1.0,'{"en-us": "c"}',NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('chemical_bonding',1,0,0,NULL,NULL,1.0,'charge',0.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('chemical_equilibrium',1,0,0,NULL,NULL,1.0,'concentration',1.0,NULL,'[\mathrm{C}]','{"en-us": "Product [Concentration]", "cs-cz": "Produkt [Concentration]"}',NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('chemical_equilibrium',1,0,1,NULL,NULL,1.0,'concentration',-1.0,NULL,'[\mathrm{A}]','{"en-us": "Reactant [Concentration]", "cs-cz": "Reaktant [Concentration]"}',NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('chemical_kinetics',1,0,0,NULL,NULL,1.0,'concentration',1.0,NULL,'[\mathrm{A}]',NULL,NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('chemical_kinetics',1,0,1,NULL,NULL,1.0,'rate_constant',1.0,NULL,NULL,'{"en-us": "[Rate constant]"}',NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('chemical_kinetics',1,0,1,NULL,NULL,1.0,'activity',1.0,NULL,'k','Rate constant [Activity]',NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('chemical_reactions',1,0,0,NULL,NULL,1.0,'mass',0.0,NULL,NULL,NULL,NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('circle_area',1,0,0,NULL,NULL,1.0,NULL,1.0,NULL,'{"en-us": "r"}','{"en-us": "[Length]"}',NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('circle_area',1,0,0,NULL,NULL,1.0,NULL,1.0,NULL,'{"en-us": "r"}',NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('circle_area',1,0,1,NULL,NULL,1.0,'length',2.0,NULL,'{"en-us": "r"}',NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('circle_area',1,1,0,NULL,NULL,1.0,'area',-1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('circle_circumference',1,0,0,2.0,NULL,1.0,NULL,1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('circle_circumference',1,0,1,NULL,NULL,1.0,NULL,1.0,NULL,NULL,NULL,NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('circle_circumference',1,0,2,NULL,NULL,1.0,'length',1.0,NULL,'{"en-us": "r"}','{"en-us": "[Length]"}',NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('circle_circumference',1,1,0,NULL,NULL,1.0,'length',-1.0,NULL,'{"en-us": "C"}','{"en-us": "Circumference [Length]", "cs-cz": "Obvod [Length]"}',NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('circle_circumference',1,0,2,NULL,NULL,1.0,'length',1.0,NULL,'{"en-us": "r"}',NULL,NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('circle_circumference',1,1,0,NULL,NULL,1.0,'length',-1.0,NULL,'{"en-us": "C"}','Circumference',NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('conservation_of_momentum',1,1,0,NULL,NULL,1.0,'mass',-1.0,'{"en-us": "1"}',NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('conservation_of_momentum',1,1,1,NULL,NULL,1.0,'velocity',-1.0,'{"en-us": "1"}','{"en-us": "u"}','{"en-us": "Initial [velocity]", "cs-cz": "Počáteční [velocity]"}',NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('conservation_of_momentum',2,1,0,NULL,NULL,1.0,'mass',-1.0,'{"en-us": "2"}',NULL,NULL,NULL,NULL);
@@ -271,8 +270,8 @@ INSERT OR IGNORE INTO formula_item VALUES('density_formula',1,0,0,NULL,NULL,1.0,
 INSERT OR IGNORE INTO formula_item VALUES('density_formula',1,0,1,NULL,NULL,1.0,'volume',-1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('density_formula',1,1,0,NULL,NULL,1.0,'density',-1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('differential_equations',1,0,0,NULL,NULL,1.0,'length',0.0,NULL,NULL,NULL,NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('diffraction',1,0,0,NULL,NULL,1.0,'length',1.0,NULL,'{"en-us": "\\lambda"}','{"en-us": "Wavelength [Length]", "cs-cz": "Vlnová délka [Length]"}',NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('diffraction',1,0,1,NULL,NULL,1.0,'length',-1.0,NULL,'{"en-us": "d"}','{"en-us": "Slit separation [Length]", "cs-cz": "Vzdálenost štěrbin [Length]"}',NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('diffraction',1,0,0,NULL,NULL,1.0,'length',1.0,NULL,'{"en-us": "\\lambda"}','Wave[length]',NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('diffraction',1,0,1,NULL,NULL,1.0,'length',-1.0,NULL,'{"en-us": "d"}','Slit separation',NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('diffraction',1,1,0,NULL,NULL,1.0,'angle',1.0,NULL,NULL,NULL,'\sin',NULL);
 INSERT OR IGNORE INTO formula_item VALUES('einstein_emc2',1,0,0,NULL,NULL,1.0,'mass',1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('einstein_emc2',1,0,1,NULL,NULL,2.0,NULL,1.0,NULL,NULL,NULL,NULL,NULL);
@@ -281,16 +280,16 @@ INSERT OR IGNORE INTO formula_item VALUES('electric_fields',1,0,0,NULL,NULL,1.0,
 INSERT OR IGNORE INTO formula_item VALUES('electric_fields',1,0,1,NULL,NULL,1.0,'charge',-1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('electric_fields',1,1,0,NULL,NULL,1.0,'electric_field_strength',-1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('electrochemistry',1,0,0,NULL,NULL,1.0,'electric_potential',1.0,NULL,'E^\circ_\mathrm{cathode}',NULL,NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('electrochemistry',1,1,0,NULL,NULL,1.0,'electric_potential',-1.0,NULL,'{"en-us": "E_\\mathrm{cell}"}','{"en-us": "Cell [Electric potential]", "cs-cz": "Článek [Electric potential]"}',NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('electrochemistry',1,1,0,NULL,NULL,1.0,'electric_potential',-1.0,NULL,'{"en-us": "E_\\mathrm{cell}"}','Cell',NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('electrochemistry',2,0,0,-1.0,NULL,1.0,NULL,1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('electrochemistry',2,0,1,NULL,NULL,1.0,'electric_potential',1.0,NULL,'E^\circ_\mathrm{anode}',NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('electromagnetic_induction',1,0,0,NULL,NULL,1.0,'magnetic_flux',1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('electromagnetic_induction',1,0,1,NULL,NULL,1.0,'time',-1.0,NULL,NULL,NULL,'\mathrm{d}',NULL);
 INSERT OR IGNORE INTO formula_item VALUES('electromagnetic_induction',1,1,0,-1.0,NULL,1.0,NULL,1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('electromagnetic_waves',1,0,0,NULL,NULL,1.0,'frequency',1.0,NULL,NULL,NULL,NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('electromagnetic_waves',1,0,1,NULL,NULL,1.0,'length',1.0,NULL,'{"en-us": "\\lambda"}','{"en-us": "Wavelength [Length]", "cs-cz": "Vlnová délka [Length]"}',NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('electromagnetic_waves',1,1,0,NULL,NULL,1.0,'velocity',-1.0,NULL,'{"en-us": "c"}','{"en-us": "Wave [Velocity]", "cs-cz": "Fázová [Velocity]"}',NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('entropy',1,0,0,NULL,NULL,1.0,'energy',1.0,NULL,'{"en-us": "Q"}','{"en-us": "[Energy]"}',NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('electromagnetic_waves',1,0,1,NULL,NULL,1.0,'length',1.0,NULL,'{"en-us": "\\lambda"}','Wave[length]',NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('electromagnetic_waves',1,1,0,NULL,NULL,1.0,'velocity',-1.0,NULL,'{"en-us": "c"}','{"en-us": "Wave [velocity]"}',NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('entropy',1,0,0,NULL,NULL,1.0,'energy',1.0,NULL,'{"en-us": "Q"}',NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('entropy',1,0,1,NULL,NULL,1.0,'temperature',-1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('entropy',1,1,0,NULL,NULL,1.0,'entropy',-1.0,NULL,NULL,NULL,'\Delta',NULL);
 INSERT OR IGNORE INTO formula_item VALUES('escape_velocity',1,0,0,2.0,NULL,1.0,NULL,1.0,NULL,NULL,NULL,NULL,NULL);
@@ -300,27 +299,27 @@ INSERT OR IGNORE INTO formula_item VALUES('escape_velocity',1,0,3,NULL,NULL,1.0,
 INSERT OR IGNORE INTO formula_item VALUES('escape_velocity',1,1,0,NULL,NULL,1.0,'velocity',-1.0,NULL,'{"en-us": "v_\\mathrm{esc}"}','{"en-us": "Escape [Velocity]", "cs-cz": "Úniková [Velocity]"}',NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('exponents',1,0,0,NULL,NULL,1.0,'length',0.0,NULL,'{"en-us": "x"}',NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('first_law_thermodynamics',1,1,0,NULL,NULL,NULL,'energy',-1.0,NULL,'{"en-us": "U"}','{"en-us": "Internal [Energy]", "cs-cz": "Vnitřní [Energy]"}','\Delta',NULL);
-INSERT OR IGNORE INTO formula_item VALUES('first_law_thermodynamics',2,0,0,NULL,NULL,NULL,'energy',1.0,NULL,'{"en-us": "Q"}','{"en-us": "[Energy]"}',NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('first_law_thermodynamics',2,0,0,NULL,NULL,NULL,'energy',1.0,NULL,'{"en-us": "Q"}','Heat',NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('first_law_thermodynamics',3,0,0,-1.0,NULL,1.0,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('first_law_thermodynamics',3,0,1,NULL,NULL,NULL,'energy',1.0,NULL,'{"en-us": "W"}','{"en-us": "[Energy]"}',NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('first_law_thermodynamics',3,0,1,NULL,NULL,NULL,'energy',1.0,NULL,'{"en-us": "W"}','Work',NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('first_law_thermodynamics_adiabatic',1,1,0,NULL,NULL,NULL,'energy',-1.0,NULL,'{"en-us": "U"}','{"en-us": "Internal [Energy]", "cs-cz": "Vnitřní [Energy]"}','\Delta',NULL);
 INSERT OR IGNORE INTO formula_item VALUES('first_law_thermodynamics_adiabatic',2,0,0,-1.0,NULL,1.0,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('first_law_thermodynamics_adiabatic',2,0,1,NULL,NULL,NULL,'energy',1.0,NULL,'{"en-us": "W"}','{"en-us": "[Energy]"}',NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('first_law_thermodynamics_adiabatic',2,0,1,NULL,NULL,NULL,'energy',1.0,NULL,'{"en-us": "W"}',NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('first_law_thermodynamics_isochoric',1,1,0,NULL,NULL,1.0,'energy',-1.0,NULL,'{"en-us": "U"}','{"en-us": "Internal [Energy]", "cs-cz": "Vnitřní [Energy]"}','\Delta',NULL);
-INSERT OR IGNORE INTO formula_item VALUES('first_law_thermodynamics_isochoric',2,0,0,NULL,NULL,1.0,'energy',1.0,NULL,'{"en-us": "Q"}','{"en-us": "[Energy]"}',NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('friction',1,0,0,NULL,NULL,1.0,'force',1.0,NULL,'{"en-us": "N"}',NULL,NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('friction',1,1,0,NULL,NULL,1.0,'force',-1.0,NULL,'F_\mathrm{f}',NULL,NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('first_law_thermodynamics_isochoric',2,0,0,NULL,NULL,1.0,'energy',1.0,NULL,'{"en-us": "Q"}',NULL,NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('friction',1,0,0,NULL,NULL,1.0,'force',1.0,NULL,'{"en-us": "N"}','Normal [force]',NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('friction',1,1,0,NULL,NULL,1.0,'force',-1.0,NULL,'F_\mathrm{f}','Friction [force]',NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('heat',1,0,0,NULL,NULL,1.0,'mass',1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('heat',1,0,1,NULL,NULL,1.0,'specific_heat_capacity',1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('heat',1,0,2,NULL,NULL,1.0,'temperature',1.0,NULL,NULL,NULL,'\Delta',NULL);
-INSERT OR IGNORE INTO formula_item VALUES('heat',1,1,0,NULL,NULL,1.0,'energy',-1.0,NULL,'{"en-us": "Q"}','{"en-us": "[Energy]"}',NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('heat',1,1,0,NULL,NULL,1.0,'energy',-1.0,NULL,'{"en-us": "Q"}',NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('heat_conduction',1,0,0,NULL,NULL,1.0,'thermal_conductivity',1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('heat_conduction',1,0,1,NULL,NULL,1.0,'area',1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('heat_conduction',1,0,2,NULL,NULL,1.0,'temperature',1.0,NULL,NULL,NULL,'\Delta',NULL);
 INSERT OR IGNORE INTO formula_item VALUES('heat_conduction',1,0,3,NULL,NULL,1.0,'length',-1.0,NULL,'{"en-us": "x"}',NULL,'\Delta',NULL);
 INSERT OR IGNORE INTO formula_item VALUES('heat_conduction',1,1,0,-1.0,NULL,1.0,'power',-1.0,NULL,NULL,NULL,NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('heat_engines',1,0,0,NULL,NULL,1.0,'energy',1.0,NULL,'{"en-us": "W"}','{"en-us": "[Energy]"}',NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('heat_engines',1,0,1,NULL,NULL,1.0,'energy',-1.0,NULL,'{"en-us": "Q"}','{"en-us": "[Energy]"}',NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('heat_engines',1,0,0,NULL,NULL,1.0,'energy',1.0,NULL,'{"en-us": "W"}',NULL,NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('heat_engines',1,0,1,NULL,NULL,1.0,'energy',-1.0,NULL,'{"en-us": "Q"}',NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('heat_engines',1,1,0,NULL,NULL,1.0,'heat_engine_efficiency',-1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('hookes_law',1,0,0,-1.0,NULL,1.0,NULL,1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('hookes_law',1,0,1,NULL,NULL,1.0,'spring_constant',1.0,NULL,NULL,NULL,NULL,NULL);
@@ -335,8 +334,8 @@ INSERT OR IGNORE INTO formula_item VALUES('impulse',1,0,0,NULL,NULL,1.0,'force',
 INSERT OR IGNORE INTO formula_item VALUES('impulse',1,0,1,NULL,NULL,1.0,'time',1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('impulse',1,1,0,NULL,NULL,1.0,'momentum',-1.0,NULL,'{"en-us": "J"}','{"en-us": "Impulse [Momentum]", "cs-cz": "Impuls [Momentum]"}',NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('interference',1,0,0,NULL,NULL,1.0,'angle',1.0,NULL,NULL,NULL,'\sin',NULL);
-INSERT OR IGNORE INTO formula_item VALUES('interference',1,0,1,NULL,NULL,1.0,'length',1.0,NULL,'{"en-us": "\\lambda"}','{"en-us": "Wavelength [Length]", "cs-cz": "Vlnová délka [Length]"}',NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('interference',1,1,0,NULL,NULL,1.0,'length',-1.0,NULL,'{"en-us": "d"}','{"en-us": "Slit separation [Length]", "cs-cz": "Vzdálenost štěrbin [Length]"}',NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('interference',1,0,1,NULL,NULL,1.0,'length',1.0,NULL,'{"en-us": "\\lambda"}','Wave[length]',NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('interference',1,1,0,NULL,NULL,1.0,'length',-1.0,NULL,'{"en-us": "d"}','Slit separation',NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('keplers_third_law',1,1,0,NULL,NULL,NULL,'time',-2.0,NULL,'{"en-us": "T"}','{"en-us": "Orbital [Time]", "cs-cz": "Orbitální [Time]"}',NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('keplers_third_law',2,0,0,4.0,NULL,1.0,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('keplers_third_law',2,0,1,NULL,'\\pi',2.0,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
@@ -353,9 +352,9 @@ INSERT OR IGNORE INTO formula_item VALUES('laws_of_sines_and_cosines',1,0,2,NULL
 INSERT OR IGNORE INTO formula_item VALUES('laws_of_sines_and_cosines',1,1,0,NULL,NULL,1.0,'length',-1.0,NULL,'{"en-us": "a"}',NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('limiting_reactants',1,0,0,NULL,NULL,1.0,'amount',0.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('limits',1,0,0,NULL,NULL,1.0,'length',0.0,NULL,NULL,NULL,NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('mirrors',1,0,0,NULL,NULL,1.0,'length',-1.0,NULL,'{"en-us": "u"}','{"en-us": "Object distance [Length]", "cs-cz": "Předmětová vzdálenost [Length]"}',NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('mirrors',1,0,1,NULL,NULL,1.0,'length',-1.0,NULL,'{"en-us": "v"}','{"en-us": "Image distance [Length]", "cs-cz": "Obrazová vzdálenost [Length]"}',NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('mirrors',1,1,0,NULL,NULL,1.0,'length',-1.0,NULL,'{"en-us": "f"}','{"en-us": "Focal length [Length]", "cs-cz": "Ohnisková vzdálenost [Length]"}',NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('mirrors',1,0,0,NULL,NULL,1.0,'length',-1.0,NULL,'{"en-us": "u"}','Object distance',NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('mirrors',1,0,1,NULL,NULL,1.0,'length',-1.0,NULL,'{"en-us": "v"}','Image distance',NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('mirrors',1,1,0,NULL,NULL,1.0,'length',-1.0,NULL,'{"en-us": "f"}','Focal length',NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('molarity_formula',1,0,0,NULL,NULL,1.0,'amount',1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('molarity_formula',1,0,1,NULL,NULL,1.0,'volume',-1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('molarity_formula',1,1,0,NULL,NULL,1.0,'concentration',-1.0,NULL,NULL,NULL,NULL,NULL);
@@ -363,7 +362,7 @@ INSERT OR IGNORE INTO formula_item VALUES('moles_from_mass',1,0,0,NULL,NULL,1.0,
 INSERT OR IGNORE INTO formula_item VALUES('moles_from_mass',1,0,1,NULL,NULL,1.0,'molar_mass',-1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('moles_from_mass',1,1,0,NULL,NULL,1.0,'amount',-1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('moment_of_inertia',1,0,0,NULL,NULL,1.0,'mass',1.0,NULL,NULL,NULL,NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('moment_of_inertia',1,0,1,NULL,NULL,1.0,'length',2.0,NULL,'{"en-us": "r"}','{"en-us": "[Length]"}',NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('moment_of_inertia',1,0,1,NULL,NULL,1.0,'length',2.0,NULL,'{"en-us": "r"}',NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('moment_of_inertia',1,1,0,NULL,NULL,1.0,'moment_of_inertia',-1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('momentum_formula',1,0,0,NULL,NULL,1.0,'mass',1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('momentum_formula',1,0,1,NULL,NULL,1.0,'velocity',1.0,NULL,NULL,NULL,NULL,NULL);
@@ -394,14 +393,14 @@ INSERT OR IGNORE INTO formula_item VALUES('percent_yield',1,0,0,NULL,NULL,1.0,'a
 INSERT OR IGNORE INTO formula_item VALUES('percent_yield',1,0,1,NULL,NULL,1.0,'amount',-1.0,NULL,NULL,'{"en-us": "Theoretical [Amount]", "cs-cz": "Teoretické [Amount]"}',NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('periodic_table',1,0,0,NULL,NULL,1.0,'amount',0.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('plane_geometry',1,0,0,2.0,NULL,-1.0,NULL,1.0,NULL,NULL,NULL,NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('plane_geometry',1,0,1,NULL,NULL,1.0,'length',1.0,NULL,'{"en-us": "b"}','{"en-us": "[Length]"}',NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('plane_geometry',1,0,2,NULL,NULL,1.0,'length',1.0,NULL,'{"en-us": "h"}','{"en-us": "[Length]"}',NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('plane_geometry',1,0,1,NULL,NULL,1.0,'length',1.0,NULL,'{"en-us": "b"}',NULL,NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('plane_geometry',1,0,2,NULL,NULL,1.0,'length',1.0,NULL,'{"en-us": "h"}',NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('plane_geometry',1,1,0,NULL,NULL,1.0,'area',-1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('polarization',1,0,0,NULL,NULL,1.0,'refractive_index',1.0,NULL,'{"en-us": "n_2"}','{"en-us": "Transmitted [Refractive index]", "cs-cz": "Lomený [Refractive index]"}',NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('polarization',1,0,1,NULL,NULL,1.0,'refractive_index',-1.0,NULL,'{"en-us": "n_1"}','{"en-us": "Incident [Refractive index]", "cs-cz": "Dopadající [Refractive index]"}',NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('polarization',1,1,0,NULL,NULL,1.0,'angle',1.0,NULL,'\theta_\mathrm{B}','{"en-us": "Brewster [Angle]", "cs-cz": "Brewsterův [Angle]"}','\tan',NULL);
 INSERT OR IGNORE INTO formula_item VALUES('polygons',1,0,0,2.0,NULL,-1.0,NULL,1.0,NULL,NULL,NULL,NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('polygons',1,0,1,NULL,NULL,1.0,'length',1.0,NULL,'{"en-us": "s"}','{"en-us": "[Length]"}',NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('polygons',1,0,1,NULL,NULL,1.0,'length',1.0,NULL,'{"en-us": "s"}',NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('polygons',1,0,2,NULL,NULL,1.0,'angle',1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('polygons',1,1,0,NULL,NULL,1.0,'area',-1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('polynomials',2,0,0,NULL,NULL,1.0,'length',2.0,NULL,'{"en-us": "x"}',NULL,NULL,NULL);
@@ -411,7 +410,7 @@ INSERT OR IGNORE INTO formula_item VALUES('potential_energy',1,0,0,NULL,NULL,1.0
 INSERT OR IGNORE INTO formula_item VALUES('potential_energy',1,0,1,NULL,NULL,1.0,'acceleration',1.0,NULL,'{"en-us": "g"}',NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('potential_energy',1,0,2,NULL,NULL,1.0,'length',1.0,NULL,'{"en-us": "h"}',NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('potential_energy',1,1,0,NULL,NULL,1.0,'energy',-1.0,'{"en-us": "p"}',NULL,'{"en-us": "Potential [Energy]", "cs-cz": "Potenciální [Energy]"}',NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('power_formula',1,0,0,NULL,NULL,1.0,'energy',1.0,NULL,'{"en-us": "W"}','{"en-us": "[Energy]"}',NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('power_formula',1,0,0,NULL,NULL,1.0,'energy',1.0,NULL,'{"en-us": "W"}',NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('power_formula',1,0,1,NULL,NULL,1.0,'time',-1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('power_formula',1,1,0,NULL,NULL,1.0,'power',-1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('pressure',1,0,0,NULL,NULL,1.0,'force',1.0,NULL,NULL,NULL,NULL,NULL);
@@ -419,10 +418,10 @@ INSERT OR IGNORE INTO formula_item VALUES('pressure',1,0,1,NULL,NULL,1.0,'area',
 INSERT OR IGNORE INTO formula_item VALUES('pressure',1,1,0,NULL,NULL,1.0,'pressure',-1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('projectile_motion',1,0,0,NULL,NULL,1.0,'velocity',2.0,NULL,NULL,'{"en-us": "Initial [velocity]", "cs-cz": "Počáteční [velocity]"}',NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('projectile_motion',1,0,1,NULL,NULL,1.0,'acceleration',-1.0,NULL,NULL,NULL,NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('projectile_motion',1,1,0,NULL,NULL,1.0,'length',-1.0,NULL,'{"en-us": "R"}','{"en-us": "Range [Length]", "cs-cz": "Dosah [Length]"}',NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('pythagorean_theorem',1,1,0,NULL,NULL,1.0,'length',-2.0,NULL,'{"en-us": "c"}','{"en-us": "Hypotenuse [Length]", "cs-cz": "Přepona [Length]"}',NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('pythagorean_theorem',2,0,0,NULL,NULL,1.0,'length',2.0,NULL,'{"en-us": "a"}',NULL,NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('pythagorean_theorem',3,0,0,NULL,NULL,1.0,'length',2.0,NULL,'{"en-us": "b"}',NULL,NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('projectile_motion',1,1,0,NULL,NULL,1.0,'length',-1.0,NULL,'{"en-us": "R"}','Range',NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('pythagorean_theorem',1,1,0,NULL,NULL,1.0,'length',-2.0,NULL,'{"en-us": "c"}','Hypotenuse',NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('pythagorean_theorem',2,0,0,NULL,NULL,1.0,'length',2.0,NULL,'{"en-us": "a"}','Side a',NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('pythagorean_theorem',3,0,0,NULL,NULL,1.0,'length',2.0,NULL,'{"en-us": "b"}','Side b',NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('reflection',1,0,0,NULL,NULL,1.0,'angle',1.0,NULL,'\theta_\mathrm{r}',NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('reflection',1,1,0,NULL,NULL,1.0,'angle',-1.0,NULL,'\theta_\mathrm{i}',NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('reynolds_number',1,0,0,NULL,NULL,1.0,'density',1.0,NULL,NULL,NULL,NULL,NULL);
@@ -444,17 +443,17 @@ INSERT OR IGNORE INTO formula_item VALUES('surface_tension',1,1,0,NULL,NULL,1.0,
 INSERT OR IGNORE INTO formula_item VALUES('suvat_v2',1,1,0,NULL,NULL,1.0,'velocity',-2.0,NULL,NULL,'{"en-us": "Final [velocity]", "cs-cz": "Konečná [velocity]"}',NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('suvat_v2',2,0,0,NULL,NULL,1.0,'velocity',2.0,NULL,'{"en-us": "u"}','{"en-us": "Initial [velocity]", "cs-cz": "Počáteční [velocity]"}',NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('suvat_v2',3,0,0,2.0,NULL,1.0,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('suvat_v2',3,0,1,NULL,NULL,1.0,'acceleration',1.0,NULL,NULL,'{"en-us": "[Acceleration]"}',NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('suvat_v2',3,0,2,NULL,NULL,1.0,'length',1.0,NULL,'{"en-us": "s"}','{"en-us": "Displacement [Length]", "cs-cz": "Dráha [Length]"}',NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('suvat_v2',3,0,1,NULL,NULL,1.0,'acceleration',1.0,NULL,NULL,NULL,NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('suvat_v2',3,0,2,NULL,NULL,1.0,'length',1.0,NULL,'{"en-us": "s"}','Displacement',NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('wave_equation',1,0,0,NULL,NULL,1.0,'frequency',1.0,NULL,NULL,NULL,NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('wave_equation',1,0,1,NULL,NULL,1.0,'length',1.0,NULL,'{"en-us": "\\lambda"}','{"en-us": "Wavelength [Length]", "cs-cz": "Vlnová délka [Length]"}',NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('wave_equation',1,0,1,NULL,NULL,1.0,'length',1.0,NULL,'{"en-us": "\\lambda"}','Wave[length]',NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('wave_equation',1,1,0,NULL,NULL,1.0,'velocity',-1.0,NULL,NULL,NULL,NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('wave_interference',1,0,0,NULL,NULL,1.0,'length',1.0,NULL,'{"en-us": "\\lambda"}','{"en-us": "Wavelength [Length]", "cs-cz": "Vlnová délka [Length]"}',NULL,NULL);
-INSERT OR IGNORE INTO formula_item VALUES('wave_interference',1,1,0,NULL,NULL,1.0,'length',-1.0,NULL,'{"en-us": "\\Delta x"}','{"en-us": "Path difference [Length]", "cs-cz": "Dráhový rozdíl [Length]"}','\Delta',NULL);
+INSERT OR IGNORE INTO formula_item VALUES('wave_interference',1,0,0,NULL,NULL,1.0,'length',1.0,NULL,'{"en-us": "\\lambda"}','Wave[length]',NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('wave_interference',1,1,0,NULL,NULL,1.0,'length',-1.0,NULL,'{"en-us": "\\Delta x"}','Path difference','\Delta',NULL);
 INSERT OR IGNORE INTO formula_item VALUES('work_formula',1,0,0,NULL,NULL,1.0,'force',1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('work_formula',1,0,1,NULL,NULL,1.0,'length',1.0,NULL,NULL,NULL,NULL,NULL);
 INSERT OR IGNORE INTO formula_item VALUES('work_formula',1,0,2,NULL,NULL,1.0,'angle',1.0,NULL,NULL,NULL,NULL,'{}');
-INSERT OR IGNORE INTO formula_item VALUES('work_formula',1,1,0,NULL,NULL,1.0,'energy',-1.0,NULL,'{"en-us": "W"}','{"en-us": "[Energy]"}',NULL,NULL);
+INSERT OR IGNORE INTO formula_item VALUES('work_formula',1,1,0,NULL,NULL,1.0,'energy',-1.0,NULL,'{"en-us": "W"}',NULL,NULL,NULL);
 
 -- Dimension definitions (base SI quantities identified via formula_item)
 INSERT OR IGNORE INTO formula_item VALUES('dimensions',0,0,1,NULL,NULL,1.0,'mass',1.0,NULL,'M',NULL,NULL,NULL);
@@ -484,24 +483,24 @@ UPDATE formula_item SET quantity_id='energy', symbol_overwrite='{"en-us": "W"}' 
 UPDATE formula_item SET quantity_id='energy', symbol_overwrite='{"en-us": "W"}' WHERE formula_id='power_formula' AND term=1 AND is_primary=0 AND sort_order=0;
 UPDATE formula_item SET quantity_id='power' WHERE formula_id='power_formula' AND term=1 AND is_primary=1 AND sort_order=0;
 UPDATE formula_item SET quantity_id='velocity', symbol_overwrite='{"en-us": "v_\\mathrm{esc}"}', quantity_name_overwrite='{"en-us": "Escape [velocity]"}' WHERE formula_id='escape_velocity' AND term=1 AND is_primary=1 AND sort_order=0;
-UPDATE formula_item SET quantity_id='length', symbol_overwrite='{"en-us": "\\lambda"}', quantity_name_overwrite='{"en-us": "Wavelength [length]"}' WHERE formula_id='diffraction' AND term=1 AND is_primary=0 AND sort_order=0;
-UPDATE formula_item SET quantity_id='length', symbol_overwrite='{"en-us": "\\lambda"}', quantity_name_overwrite='{"en-us": "Wavelength [length]"}' WHERE formula_id='electromagnetic_waves' AND term=1 AND is_primary=0 AND sort_order=1;
-UPDATE formula_item SET quantity_id='length', symbol_overwrite='{"en-us": "\\lambda"}', quantity_name_overwrite='{"en-us": "Wavelength [length]"}' WHERE formula_id='interference' AND term=1 AND is_primary=0 AND sort_order=1;
-UPDATE formula_item SET quantity_id='length', symbol_overwrite='{"en-us": "\\lambda"}', quantity_name_overwrite='{"en-us": "Wavelength [length]"}' WHERE formula_id='wave_equation' AND term=1 AND is_primary=0 AND sort_order=1;
-UPDATE formula_item SET quantity_id='length', symbol_overwrite='{"en-us": "\\lambda"}', quantity_name_overwrite='{"en-us": "Wavelength [length]"}' WHERE formula_id='wave_interference' AND term=1 AND is_primary=0 AND sort_order=0;
-UPDATE formula_item SET quantity_id='length', symbol_overwrite='{"en-us": "\\Delta x"}', quantity_name_overwrite='{"en-us": "Path difference [length]"}' WHERE formula_id='wave_interference' AND term=1 AND is_primary=1 AND sort_order=0;
-UPDATE formula_item SET quantity_id='electric_potential', symbol_overwrite='{"en-us": "E_\\mathrm{cell}"}', quantity_name_overwrite='{"en-us": "Cell [electric potential]"}' WHERE formula_id='electrochemistry' AND term=1 AND is_primary=1 AND sort_order=0;
-UPDATE formula_item SET quantity_id='momentum', symbol_overwrite='{"en-us": "J"}', quantity_name_overwrite='{"en-us": "Impulse [momentum]"}' WHERE formula_id='impulse' AND term=1 AND is_primary=1 AND sort_order=0;
+UPDATE formula_item SET quantity_id='length', symbol_overwrite='{"en-us": "\\lambda"}', quantity_name_overwrite='Wave[length]' WHERE formula_id='diffraction' AND term=1 AND is_primary=0 AND sort_order=0;
+UPDATE formula_item SET quantity_id='length', symbol_overwrite='{"en-us": "\\lambda"}', quantity_name_overwrite='Wave[length]' WHERE formula_id='electromagnetic_waves' AND term=1 AND is_primary=0 AND sort_order=1;
+UPDATE formula_item SET quantity_id='length', symbol_overwrite='{"en-us": "\\lambda"}', quantity_name_overwrite='Wave[length]' WHERE formula_id='interference' AND term=1 AND is_primary=0 AND sort_order=1;
+UPDATE formula_item SET quantity_id='length', symbol_overwrite='{"en-us": "\\lambda"}', quantity_name_overwrite='Wave[length]' WHERE formula_id='wave_equation' AND term=1 AND is_primary=0 AND sort_order=1;
+UPDATE formula_item SET quantity_id='length', symbol_overwrite='{"en-us": "\\lambda"}', quantity_name_overwrite='Wave[length]' WHERE formula_id='wave_interference' AND term=1 AND is_primary=0 AND sort_order=0;
+UPDATE formula_item SET quantity_id='length', symbol_overwrite='{"en-us": "\\Delta x"}', quantity_name_overwrite='Path difference' WHERE formula_id='wave_interference' AND term=1 AND is_primary=1 AND sort_order=0;
+UPDATE formula_item SET quantity_id='electric_potential', symbol_overwrite='{"en-us": "E_\\mathrm{cell}"}', quantity_name_overwrite='Cell' WHERE formula_id='electrochemistry' AND term=1 AND is_primary=1 AND sort_order=0;
+UPDATE formula_item SET quantity_id='momentum', symbol_overwrite='{"en-us": "J"}', quantity_name_overwrite='Impulse' WHERE formula_id='impulse' AND term=1 AND is_primary=1 AND sort_order=0;
 
 -- Pythagorean theorem: c² = a² + b²
-UPDATE formula_item SET symbol_overwrite='{"en-us": "c"}', quantity_name_overwrite='{"en-us": "Hypotenuse [length]"}' WHERE formula_id='pythagorean_theorem' AND term=1 AND is_primary=1 AND sort_order=0;
+UPDATE formula_item SET symbol_overwrite='{"en-us": "c"}', quantity_name_overwrite='Hypotenuse' WHERE formula_id='pythagorean_theorem' AND term=1 AND is_primary=1 AND sort_order=0;
 UPDATE formula_item SET symbol_overwrite='{"en-us": "a"}' WHERE formula_id='pythagorean_theorem' AND term=2 AND is_primary=0 AND sort_order=0;
 UPDATE formula_item SET symbol_overwrite='{"en-us": "b"}', label=NULL WHERE formula_id='pythagorean_theorem' AND term=3 AND is_primary=0 AND sort_order=0;
 
 -- SUVAT: v² = u² + 2as
 UPDATE formula_item SET label=NULL, quantity_name_overwrite='{"en-us": "Final [velocity]", "cs-cz": "Konečná [velocity]"}' WHERE formula_id='suvat_v2' AND term=1 AND is_primary=1 AND sort_order=0;
 UPDATE formula_item SET symbol_overwrite='{"en-us": "u"}', label=NULL, quantity_name_overwrite='{"en-us": "Initial [velocity]", "cs-cz": "Počáteční [velocity]"}' WHERE formula_id='suvat_v2' AND term=2 AND is_primary=0 AND sort_order=0;
-UPDATE formula_item SET symbol_overwrite='{"en-us": "s"}', quantity_name_overwrite='{"en-us": "Displacement [length]"}' WHERE formula_id='suvat_v2' AND term=3 AND is_primary=0 AND sort_order=2;
+UPDATE formula_item SET symbol_overwrite='{"en-us": "s"}', quantity_name_overwrite='Displacement' WHERE formula_id='suvat_v2' AND term=3 AND is_primary=0 AND sort_order=2;
 
 -- Conservation of momentum: m₁u₁ + m₂u₂ = m₁v₁ + m₂v₂
 UPDATE formula_item SET symbol_overwrite='{"en-us": "u"}', label='{"en-us": "1"}', quantity_name_overwrite='{"en-us": "Initial [velocity]", "cs-cz": "Počáteční [velocity]"}' WHERE formula_id='conservation_of_momentum' AND term=1 AND is_primary=1 AND sort_order=1;
@@ -512,21 +511,21 @@ UPDATE formula_item SET label='{"en-us": "2"}', quantity_name_overwrite='{"en-us
 -- Other formula_item refinements (labels → symbol_overwrite/quantity_name_overwrite)
 UPDATE formula_item SET symbol_overwrite='{"en-us": "s"}', label=NULL WHERE formula_id='area' AND term=1 AND is_primary=0 AND sort_order=0;
 UPDATE formula_item SET symbol_overwrite='{"en-us": "r"}' WHERE formula_id='circle_area' AND term=1 AND is_primary=0 AND sort_order=0;
-UPDATE formula_item SET symbol_overwrite='{"en-us": "C"}', quantity_name_overwrite='{"en-us": "Circumference [length]"}' WHERE formula_id='circle_circumference' AND term=1 AND is_primary=1 AND sort_order=0;
+UPDATE formula_item SET symbol_overwrite='{"en-us": "C"}', quantity_name_overwrite='Circumference' WHERE formula_id='circle_circumference' AND term=1 AND is_primary=1 AND sort_order=0;
 UPDATE formula_item SET symbol_overwrite='{"en-us": "r"}' WHERE formula_id='circle_circumference' AND term=1 AND is_primary=0 AND sort_order=2;
 UPDATE formula_item SET symbol_overwrite='{"en-us": "r"}' WHERE formula_id='moment_of_inertia' AND term=1 AND is_primary=0 AND sort_order=1;
 UPDATE formula_item SET symbol_overwrite='{"en-us": "s"}', label=NULL WHERE formula_id='polygons' AND term=1 AND is_primary=0 AND sort_order=1;
 UPDATE formula_item SET symbol_overwrite='{"en-us": "b"}', label=NULL WHERE formula_id='plane_geometry' AND term=1 AND is_primary=0 AND sort_order=1;
 UPDATE formula_item SET symbol_overwrite='{"en-us": "h"}', label=NULL WHERE formula_id='plane_geometry' AND term=1 AND is_primary=0 AND sort_order=2;
-UPDATE formula_item SET symbol_overwrite='{"en-us": "d"}', label=NULL, quantity_name_overwrite='{"en-us": "Slit separation [length]"}' WHERE formula_id='interference' AND term=1 AND is_primary=1 AND sort_order=0;
-UPDATE formula_item SET symbol_overwrite='{"en-us": "d"}', label=NULL, quantity_name_overwrite='{"en-us": "Slit separation [length]"}' WHERE formula_id='diffraction' AND term=1 AND is_primary=0 AND sort_order=1;
-UPDATE formula_item SET symbol_overwrite='{"en-us": "f"}', label=NULL, quantity_name_overwrite='{"en-us": "Focal length [length]"}' WHERE formula_id='mirrors' AND term=1 AND is_primary=1 AND sort_order=0;
-UPDATE formula_item SET symbol_overwrite='{"en-us": "u"}', label=NULL, quantity_name_overwrite='{"en-us": "Object distance [length]"}' WHERE formula_id='mirrors' AND term=1 AND is_primary=0 AND sort_order=0;
-UPDATE formula_item SET symbol_overwrite='{"en-us": "v"}', label=NULL, quantity_name_overwrite='{"en-us": "Image distance [length]"}' WHERE formula_id='mirrors' AND term=1 AND is_primary=0 AND sort_order=1;
+UPDATE formula_item SET symbol_overwrite='{"en-us": "d"}', label=NULL, quantity_name_overwrite='Slit separation' WHERE formula_id='interference' AND term=1 AND is_primary=1 AND sort_order=0;
+UPDATE formula_item SET symbol_overwrite='{"en-us": "d"}', label=NULL, quantity_name_overwrite='Slit separation' WHERE formula_id='diffraction' AND term=1 AND is_primary=0 AND sort_order=1;
+UPDATE formula_item SET symbol_overwrite='{"en-us": "f"}', label=NULL, quantity_name_overwrite='Focal length' WHERE formula_id='mirrors' AND term=1 AND is_primary=1 AND sort_order=0;
+UPDATE formula_item SET symbol_overwrite='{"en-us": "u"}', label=NULL, quantity_name_overwrite='Object distance' WHERE formula_id='mirrors' AND term=1 AND is_primary=0 AND sort_order=0;
+UPDATE formula_item SET symbol_overwrite='{"en-us": "v"}', label=NULL, quantity_name_overwrite='Image distance' WHERE formula_id='mirrors' AND term=1 AND is_primary=0 AND sort_order=1;
 UPDATE formula_item SET label=NULL, quantity_name_overwrite='{"en-us": "Brewster [angle]"}' WHERE formula_id='polarization' AND term=1 AND is_primary=1 AND sort_order=0;
 UPDATE formula_item SET label=NULL, quantity_name_overwrite='{"en-us": "Transmitted [refractive index]"}' WHERE formula_id='polarization' AND term=1 AND is_primary=0 AND sort_order=0;
 UPDATE formula_item SET label=NULL, quantity_name_overwrite='{"en-us": "Incident [refractive index]"}' WHERE formula_id='polarization' AND term=1 AND is_primary=0 AND sort_order=1;
-UPDATE formula_item SET symbol_overwrite='{"en-us": "R"}', label=NULL, quantity_name_overwrite='{"en-us": "Range [length]"}' WHERE formula_id='projectile_motion' AND term=1 AND is_primary=1 AND sort_order=0;
+UPDATE formula_item SET symbol_overwrite='{"en-us": "R"}', label=NULL, quantity_name_overwrite='Range' WHERE formula_id='projectile_motion' AND term=1 AND is_primary=1 AND sort_order=0;
 UPDATE formula_item SET label=NULL, quantity_name_overwrite='{"en-us": "Initial [velocity]", "cs-cz": "Počáteční [velocity]"}' WHERE formula_id='projectile_motion' AND term=1 AND is_primary=0 AND sort_order=0;
 
 -- Clear English-word labels where qno/symbol already describes the quantity
