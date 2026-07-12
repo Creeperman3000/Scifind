@@ -132,17 +132,17 @@
     .section-label-row .section-label { margin: 0; }
 
     /* jsTree in right sidebar */
-    #sidebar-right .jstree-default .jstree-anchor { font-size: 0.85rem; padding: 2px 8px 2px 4px !important; }
-    #sidebar-right .jstree-node { background: none !important; }
-    /* Narrower caret */
-    #sidebar-right .jstree-default .jstree-ocl { width: 18px !important; position: relative; }
+    #sidebar-right .jstree-node { background: none !important; white-space: normal; display: flex !important; flex-wrap: wrap; align-items: flex-start; }
+    #sidebar-right .jstree-default .jstree-ocl { width: 18px !important; position: relative; flex-shrink: 0; }
+    #sidebar-right .jstree-default .jstree-anchor { font-size: 0.85rem; padding: 2px 8px 2px 24px !important; word-break: break-word; overflow-wrap: break-word; white-space: normal; height: auto !important; position: relative; flex: 1; min-width: 0; line-height: 1.25; }
+    #sidebar-right .jstree-children { width: 100%; }
     /* Custom checkboxes – match app theme */
-    #sidebar-right .jstree-default .jstree-checkbox { background: none !important; width: 16px !important; height: 16px !important; border: 2px solid var(--border) !important; border-radius: 3px; position: relative; margin-top: 3px; margin-right: 4px; }
+    #sidebar-right .jstree-default .jstree-checkbox { background: none !important; width: 16px !important; height: 16px !important; border: 2px solid var(--border) !important; border-radius: 3px; position: absolute !important; left: 4px; top: 2px; }
     #sidebar-right .jstree-default .jstree-clicked > .jstree-checkbox,
     #sidebar-right .jstree-default .jstree-checked > .jstree-checkbox { background: var(--accent) !important; border-color: var(--accent) !important; }
     #sidebar-right .jstree-default .jstree-clicked > .jstree-checkbox::after,
     #sidebar-right .jstree-default .jstree-checked > .jstree-checkbox::after { content: ''; position: absolute; left: 4px; top: 2px; width: 4px; height: 7px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
-    #sidebar-right .jstree-default .jstree-anchor > .jstree-undetermined { background: var(--accent) !important; width: 16px !important; height: 16px !important; border: 2px solid var(--accent) !important; border-radius: 3px; position: relative; margin-top: 3px; }
+    #sidebar-right .jstree-default .jstree-anchor > .jstree-undetermined { background: var(--accent) !important; width: 16px !important; height: 16px !important; border: 2px solid var(--accent) !important; border-radius: 3px; position: absolute !important; left: 4px; top: 2px; }
     #sidebar-right .jstree-default .jstree-anchor > .jstree-undetermined::after { content: ''; position: absolute; left: 2px; top: 5px; width: 8px; height: 2px; background: #fff; border-radius: 1px; border: none; transform: none; }
     /* Unchecked checkboxes hidden by default, shown on sidebar hover */
     #sidebar-right .jstree-checkbox { opacity: 0; }
@@ -153,13 +153,13 @@
     #sidebar-right .jstree-node.jstree-undetermined-parent > .jstree-children > .jstree-node > .jstree-anchor > .jstree-checkbox { opacity: 1 !important; }
     /* Collapsed caret: filled right-pointing triangle, always visible */
     #sidebar-right .jstree-default .jstree-closed > .jstree-ocl { background: none !important; }
-    #sidebar-right .jstree-default .jstree-closed > .jstree-ocl::after { content: ''; position: absolute; left: 6px; top: 8px; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 7px solid var(--text); }
+    #sidebar-right .jstree-default .jstree-closed > .jstree-ocl::after { content: ''; position: absolute; left: 6px; top: 4px; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 7px solid var(--text); }
     /* Leaf nodes that were incorrectly closed via toggle_node should not show caret */
     #sidebar-right .jstree-default .jstree-leaf.jstree-closed > .jstree-ocl { background: none !important; }
     #sidebar-right .jstree-default .jstree-leaf.jstree-closed > .jstree-ocl::after { content: none !important; }
     /* Expanded caret hidden by default, shown on node hover, filled down-pointing triangle */
     #sidebar-right .jstree-default .jstree-open > .jstree-ocl { background: none !important; opacity: 0; }
-    #sidebar-right .jstree-default .jstree-open > .jstree-ocl::after { content: ''; position: absolute; left: 4px; top: 10px; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 7px solid var(--text); }
+    #sidebar-right .jstree-default .jstree-open > .jstree-ocl::after { content: ''; position: absolute; left: 4px; top: 6px; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 7px solid var(--text); }
     #sidebar-right .jstree-default .jstree-open:hover > .jstree-ocl { opacity: 1; }
     /* Remove hover highlight on nodes */
     #sidebar-right .jstree-default .jstree-hovered { background: transparent !important; box-shadow: none !important; }
