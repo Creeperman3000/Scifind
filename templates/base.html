@@ -1085,6 +1085,7 @@
           var newContent = doc.querySelector('#main-content .main-inner');
           if (newContent) {
             document.querySelector('#main-content .main-inner').innerHTML = newContent.innerHTML;
+            document.getElementById('main-content').scrollTop = 0;
           }
           if (pushState) {
             history.pushState({url: url}, '', url);
@@ -1607,6 +1608,7 @@
           var newSidebar = doc.getElementById('sidebar');
           if (!newContent) { window.location.href = url; return; }
           document.getElementById('main-content').innerHTML = newContent.innerHTML;
+          document.getElementById('main-content').scrollTop = 0;
           if (newSidebar) document.getElementById('sidebar').innerHTML = newSidebar.innerHTML;
           if (!isPop && !(window.history.state && window.history.state.url === url)) history.pushState({url: url}, '', url);
           var isFormulas = url.indexOf('/quantities') === -1 && url.indexOf('/quantity/') === -1 && url.indexOf('/unit/') === -1;
