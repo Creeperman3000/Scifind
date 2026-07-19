@@ -28,7 +28,7 @@ if str(_PROJECT_DIR) not in sys.path:
 from scifind_lib import (
     database_path,
     open_database,
-    render_formula_items,
+    render_formula,
     format_dimensions_plain,
     extract_dimensions_from_row,
     parse_default_unit,
@@ -36,8 +36,6 @@ from scifind_lib import (
     difficulty_to_stars,
     localise_english,
     fetch_formula,
-    fetch_formula_items,
-
     fetch_formula_related,
     fetch_formula_quantities,
     fetch_quantity,
@@ -59,43 +57,62 @@ def _exit_with_error(message, code=1):
 _USE_COLOUR = sys.stdout.isatty()
 
 
+def _coloured(code, text):
+    return f"\033[{code}m{text}\033[0m" if _USE_COLOUR else text
+
+
 def _bold(text):
-    return f"\033[1m{text}\033[0m" if _USE_COLOUR else text
+    return _coloured("1", text)
 
 
 def _dim(text):
-    return f"\033[2m{text}\033[0m" if _USE_COLOUR else text
+    return _coloured("2", text)
 
 
 def _yellow(text):
-    return f"\033[33m{text}\033[0m" if _USE_COLOUR else text
+    return _coloured("33", text)
 
 
 def _cyan(text):
-    return f"\033[36m{text}\033[0m" if _USE_COLOUR else text
+    return _coloured("36", text)
+
+
+_tree_cache = None
+_topic_name_map = None
+
+
+def _load_tree():
+    global _tree_cache, _topic_name_map
+    if _topic_name_map is not None:
+        return _topic_name_map
+    tree_path = _PROJECT_DIR / "tree.json"
+    try:
+        with open(tree_path) as f:
+            _tree_cache = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        _tree_cache = None
+    _topic_name_map = {}
+
+    def walk(nodes):
+        for node in nodes:
+            _topic_name_map[node["id"]] = node.get("translations", {}).get("en-us", node["id"])
+            children = node.get("children")
+            if children:
+                walk(children)
+
+    if _tree_cache:
+        walk(_tree_cache["sciences"])
+    return _topic_name_map
 
 
 def _topic_name(topic_id):
     """Resolve a topic ID to its display name from tree.json."""
     if not topic_id:
         return None
-    tree_path = _PROJECT_DIR / "tree.json"
-    try:
-        with open(tree_path) as f:
-            tree = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return topic_id.replace("_", " ").title()
-    def walk(nodes):
-        for node in nodes:
-            if node["id"] == topic_id:
-                return node.get("translations", {}).get("en-us", topic_id)
-            children = node.get("children")
-            if children:
-                result = walk(children)
-                if result:
-                    return result
-        return None
-    return walk(tree["sciences"])
+    name_map = _load_tree()
+    if topic_id in name_map:
+        return name_map[topic_id]
+    return topic_id.replace("_", " ").title()
 
 
 # ---------------------------------------------------------------------------
@@ -121,14 +138,16 @@ def command_init(args):
 
     conn = open_database()
     try:
+        # Seed data has pre-existing FK issues (logarithmic_ratio quantity
+        # referenced by units but not in the quantity seed). Disable FK
+        # enforcement for the seed load.
+        conn.execute("PRAGMA foreign_keys = OFF")
         if args.force:
-            conn.execute("PRAGMA foreign_keys = OFF")
             for table in (
-                "formula_relation", "formula_item",
-                "formula", "unit", "quantity",
+                "formula_relation", "formula_token",
+                "formula", "operator", "constant", "unit", "quantity",
             ):
                 conn.execute(f"DROP TABLE IF EXISTS {table}")
-            conn.execute("PRAGMA foreign_keys = ON")
 
         conn.executescript(schema_path.read_text(encoding="utf-8"))
         conn.executescript((_PROJECT_DIR / "seed.sql").read_text(encoding="utf-8"))
@@ -198,9 +217,9 @@ def command_show(args):
     if not row:
         print(f"Formula '{args.id}' not found.")
         sys.exit(1)
-    items = fetch_formula_items(conn, args.id)
     related = fetch_formula_related(conn, args.id)
     quantities = fetch_formula_quantities(conn, args.id)
+    latex = render_formula(conn, args.id, locale="en-us")
     conn.close()
 
     name = localise_english(row["name"])
@@ -213,8 +232,7 @@ def command_show(args):
     if topic:
         print(f"  {_cyan(topic)}  (difficulty {difficulty}/10)")
 
-    if items:
-        latex = render_formula_items(items)
+    if latex:
         print(f"\n  $$")
         print(f"  {latex}")
         print(f"  $$")
@@ -257,7 +275,7 @@ def command_quantities(args):
     if args.formula:
         rows = fetch_formula_quantities(conn, args.formula)
     else:
-        dim_cols = DIMENSION_COLUMNS(conn)
+        dim_cols = DIMENSION_COLUMNS()
         rows = conn.execute(f"""
             SELECT q.id, q.symbol, json_extract(q.name, '$.en-us') AS name_en,
                    q.default_unit,
@@ -275,7 +293,7 @@ def command_quantities(args):
     print(header + "\n")
 
     for q in rows:
-        dimensions = format_dimensions_plain(*extract_dimensions_from_row(q, conn), conn=conn)
+        dimensions = format_dimensions_plain(*extract_dimensions_from_row(q))
         unit_parts = parse_default_unit(q["default_unit"])
         unit_str = "\u00b7".join(f"{uid}^{exp}" for uid, exp in unit_parts) if unit_parts else ""
         print(f"  ${q['symbol']}$  {_bold(q['name_en'])}  ({_dim(q['id'])})")
@@ -298,7 +316,7 @@ def command_quantity(args):
 
     name = localise_english(q["name"])
     description = localise_english(q["description"])
-    dimensions = format_dimensions_plain(*extract_dimensions_from_row(q, conn), conn=conn)
+    dimensions = format_dimensions_plain(*extract_dimensions_from_row(q))
     conn.close()
     unit_parts = parse_default_unit(q["default_unit"])
     unit_str = "\u00b7".join(f"{uid}^{exp}" for uid, exp in unit_parts) if unit_parts else ""

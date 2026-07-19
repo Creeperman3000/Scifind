@@ -10,36 +10,62 @@ import json
 import os
 import re
 import sqlite3
-from collections import defaultdict
+from dataclasses import dataclass, field
 from fractions import Fraction
 from io import StringIO
 from pathlib import Path
+from typing import Optional
 
 
 DEFAULT_DATABASE_PATH = str(Path(__file__).resolve().parent / "scifind.db")
 
+# Base dimension order is fixed; matches the dim_* columns on the `quantity` table.
+_BASE_DIMENSION_ORDER = ("M", "L", "T", "I", "Θ", "N", "J")
+_BASE_DIMENSION_QTY_IDS = {
+    "M": "mass",
+    "L": "length",
+    "T": "time",
+    "I": "current",
+    "Θ": "temperature",
+    "N": "amount",
+    "J": "luminous_intensity",
+}
+
+
+def DIMENSION_SYMBOLS():
+    return list(_BASE_DIMENSION_ORDER)
+
+
+def DIMENSION_COLUMNS():
+    return [f"dim_{s}" for s in _BASE_DIMENSION_ORDER]
+
+
 def fetch_dimensions(conn):
-    """Return dimension rows from formula_item (merged dimension table)."""
-    return conn.execute(
-        """
-        SELECT fi.*, q.id AS quantity_id, q.name AS quantity_name,
-               json_extract(q.name, '$.en-us') AS name_en
-        FROM formula_item fi
-        JOIN quantity q ON q.id = fi.quantity_id
-        WHERE fi.formula_id = 'dimensions'
-        ORDER BY fi.sort_order
-        """
+    """Return dimension rows: one per base dimension, in the canonical order."""
+    qid_rows = conn.execute(
+        f"SELECT id, name, json_extract(name, '$.en-us') AS name_en "
+        f"FROM quantity WHERE id IN ({','.join('?' * len(_BASE_DIMENSION_QTY_IDS))})",
+        tuple(_BASE_DIMENSION_QTY_IDS.values()),
     ).fetchall()
+    by_id = {r["id"]: r for r in qid_rows}
+    return [
+        {
+            "symbol_overwrite": symbol,
+            "quantity_id": qid,
+            "quantity_name": by_id[qid]["name"],
+            "name_en": by_id[qid]["name_en"],
+        }
+        for symbol, qid in _BASE_DIMENSION_QTY_IDS.items()
+        if qid in by_id
+    ]
 
-def DIMENSION_SYMBOLS(conn):
-    return [r["symbol_overwrite"] for r in conn.execute(
-        "SELECT symbol_overwrite FROM formula_item WHERE formula_id = 'dimensions' ORDER BY sort_order"
-    )]
 
-def DIMENSION_COLUMNS(conn):
-    return [f"dim_{r['symbol_overwrite']}" for r in conn.execute(
-        "SELECT symbol_overwrite FROM formula_item WHERE formula_id = 'dimensions' ORDER BY sort_order"
-    )]
+def dimension_quantity_ids():
+    return dict(_BASE_DIMENSION_QTY_IDS)
+
+
+def _base_dimension_order():
+    return {qid: i for i, qid in enumerate(_BASE_DIMENSION_QTY_IDS.values())}
 
 
 # ---------------------------------------------------------------------------
@@ -51,7 +77,6 @@ _locale_configs = {}
 
 
 def _load_locale_config(locale):
-    """Load locale metadata (unit words, ordinal format, etc.) from file."""
     if locale not in _locale_configs:
         path = _LOCALE_DIR / f"{locale}.json"
         try:
@@ -63,26 +88,27 @@ def _load_locale_config(locale):
 
 
 def localise(value, locale, default="en-us"):
-    """Resolve a value that may be a JSON i18n string, a dict, or plain text.
-
-    Returns the localised string, falling back to ``default`` and finally to
-    the raw value if neither key is present.
-    """
+    """Resolve a JSON i18n string, dict, or plain text to the active locale."""
     if not value:
         return ""
     if isinstance(value, dict):
         return value.get(locale) or value.get(default) or ""
-    if not isinstance(value, str):
-        return str(value)
     s = value.strip()
-    if s.startswith("{"):
-        try:
-            d = json.loads(s)
-            if isinstance(d, dict):
-                return d.get(locale) or d.get(default) or s
-            return s
-        except (json.JSONDecodeError, TypeError):
-            return s
+    if not s.startswith("{"):
+        return s
+    try:
+        d = json.loads(s)
+    except (json.JSONDecodeError, TypeError):
+        d = None
+    if isinstance(d, dict):
+        return d.get(locale) or d.get(default) or s
+    # Malformed JSON (e.g. LaTeX backslashes like \_, \lambda) — recover
+    # the first value by stripping the "key": "..." envelope.
+    if d is None and s.endswith("}"):
+        _, _, raw = s[s.find("{") + 1 : s.rfind("}")].partition(":")
+        raw = raw.strip()
+        if raw.startswith('"') and raw.endswith('"'):
+            return raw[1:-1].replace('\\"', '"').replace("\\\\", "\\")
     return s
 
 
@@ -117,11 +143,7 @@ def open_database():
 # ---------------------------------------------------------------------------
 
 def search_headings(conn, query, limit=30):
-    """Search entity names, symbols, and IDs via SQL LIKE substring match.
-
-    Returns a list of (kind, id, display_name).
-    Searches across all locales in the name JSON, not just en-us.
-    """
+    """Search entity names, symbols, and IDs via SQL LIKE substring match."""
     if not query or not query.strip():
         return []
     q = query.strip().lower()
@@ -163,15 +185,14 @@ def search_headings(conn, query, limit=30):
                OR LOWER(symbol) LIKE ?
                OR LOWER(id) LIKE ?
         ) ORDER BY CASE WHEN LOWER(display_name) = LOWER(?) THEN 0 ELSE 1 END, LENGTH(display_name)
-    """, (pat, pat, pat, pat, pat,
-          pat, pat, pat, pat, pat, pat,
-          pat, pat, pat, pat, pat, pat, q)).fetchall()
+    """, (pat,) * 17 + (q,)).fetchall()
     return [(r["kind"], r["id"], r["display_name"]) for r in rows]
 
 
 def suggest_headings(conn, query, limit=8):
-    """Prefix-matched autocomplete suggestions (same as search_headings)."""
-    return [(100, r[1], r[0], r[2]) for r in search_headings(conn, query, limit=limit)]
+    """Prefix-matched autocomplete suggestions (same data as search_headings)."""
+    return [(100, kind_id, kind, name) for kind, kind_id, name
+            in search_headings(conn, query, limit=limit)]
 
 
 # ---------------------------------------------------------------------------
@@ -181,107 +202,70 @@ def suggest_headings(conn, query, limit=8):
 def format_number(n):
     if n == int(n):
         return str(int(n))
-    s = f"{n:.10f}".rstrip("0")
-    return s.rstrip(".")
+    return f"{n:.10f}".rstrip("0").rstrip(".")
 
 
 # ---------------------------------------------------------------------------
 # Dimensions
 # ---------------------------------------------------------------------------
 
-def dimension_quantity_ids(conn):
-    """Build {dim_symbol: quantity_id} from formula_item dimension rows."""
-    rows = conn.execute(
-        "SELECT fi.symbol_overwrite, fi.quantity_id "
-        "FROM formula_item fi "
-        "WHERE fi.formula_id = 'dimensions' "
-        "ORDER BY fi.sort_order"
-    ).fetchall()
-    return {r["symbol_overwrite"]: r["quantity_id"] for r in rows}
-
-
-def format_dimensions_plain(*values, conn):
+def format_dimensions_plain(*values):
     """Render dimension exponents as a human-readable string like M·L²·T⁻¹."""
     parts = []
-    for symbol, exponent in zip(DIMENSION_SYMBOLS(conn), values):
-        if exponent is None:
-            exponent = 0
+    for symbol, exponent in zip(DIMENSION_SYMBOLS(), values):
+        exponent = exponent or 0
         if exponent == 0:
             continue
-        part = symbol if exponent == 1 else f"{symbol}^{format_number(exponent)}"
-        parts.append(part)
+        parts.append(symbol if exponent == 1
+                     else f"{symbol}^{format_number(exponent)}")
     return " · ".join(parts) if parts else "dimensionless"
 
 
 def format_dimensions_latex(
-    *values,
-    conn=None, variable_symbols=None, unit_symbols=None, dimension_symbols=None, mode="var",
+    *values, variable_symbols=None, unit_symbols=None,
+    dimension_symbols=None, mode="var",
 ):
     """Render dimension exponents as LaTeX.
 
-    variable_symbols: {dim_symbol: quantity-symbol LaTeX}
-    unit_symbols:     {dim_symbol: unit-symbol LaTeX}
-    dimension_symbols:{dim_symbol: dimension-symbol LaTeX}
-    mode: "dim", "var" (default), or "unit"
+    mode: "dim", "var" (default), or "unit" — selects which symbol map to use.
     """
-    if mode == "dim" and dimension_symbols:
-        lookup = dimension_symbols
-    elif mode == "var" and variable_symbols:
-        lookup = variable_symbols
-    else:
-        lookup = unit_symbols
+    lookup = {
+        "dim": dimension_symbols,
+        "var": variable_symbols,
+        "unit": unit_symbols,
+    }.get(mode) or {}
     parts = []
-    for symbol, exponent in zip(DIMENSION_SYMBOLS(conn), values):
+    for symbol, exponent in zip(DIMENSION_SYMBOLS(), values):
         if not exponent:
             continue
-        sym = lookup.get(symbol) if lookup else None
-        if sym is None:
-            sym = symbol
+        sym = lookup.get(symbol, symbol)
         if exponent == 1:
             parts.append(sym)
         else:
             e = str(int(exponent)) if exponent == int(exponent) else str(exponent)
             parts.append(f"{sym}^{{{e}}}")
-    if not parts:
-        return "\\text{dimensionless}"
-    return " \\cdot ".join(parts)
+    return " \\cdot ".join(parts) if parts else "\\text{dimensionless}"
 
 
-def extract_dimensions_from_row(row, conn):
-    """Return dimension values from a row (dict or sqlite3.Row)."""
-    return [dict(row).get(c, 0) or 0 for c in DIMENSION_COLUMNS(conn)]
+def extract_dimensions_from_row(row):
+    return [row[c] for c in DIMENSION_COLUMNS()]
 
 
-def _dimension_matches(row_dimensions, dimension_filter, dim_mode="and", conn=None):
-    syms = DIMENSION_SYMBOLS(conn)
-    cols = DIMENSION_COLUMNS(conn)
+def _dimension_matches(row_dimensions, dimension_filter, dim_mode="and"):
+    syms = DIMENSION_SYMBOLS()
+    cols = DIMENSION_COLUMNS()
     sym_to_col = dict(zip(syms, cols))
-    active = [(symbol, df) for symbol, df in dimension_filter.items() if df["val"] is not None]
+    active = [(s, df) for s, df in dimension_filter.items() if df["val"] is not None]
     if not active:
         return True
+    op_map = {"eq": (lambda a, v: a == v),
+              "geq": (lambda a, v: a >= v),
+              "leq": (lambda a, v: a <= v)}
     if dim_mode == "or":
-        for symbol, df in active:
-            actual = row_dimensions.get(sym_to_col.get(symbol, f"dim_{symbol}")) or 0
-            op = df["op"]
-            value = df["val"]
-            if op == "eq" and actual == value:
-                return True
-            if op == "geq" and actual >= value:
-                return True
-            if op == "leq" and actual <= value:
-                return True
-        return False
-    for symbol, df in active:
-        actual = row_dimensions.get(sym_to_col.get(symbol, f"dim_{symbol}")) or 0
-        op = df["op"]
-        value = df["val"]
-        if op == "eq" and actual != value:
-            return False
-        if op == "geq" and actual < value:
-            return False
-        if op == "leq" and actual > value:
-            return False
-    return True
+        return any(op_map[df["op"]](row_dimensions[sym_to_col[s]], df["val"])
+                   for s, df in active)
+    return all(op_map[df["op"]](row_dimensions[sym_to_col[s]], df["val"])
+               for s, df in active)
 
 
 # ---------------------------------------------------------------------------
@@ -293,25 +277,18 @@ def parse_default_unit(json_text):
     if not json_text:
         return []
     try:
-        parts = json.loads(json_text)
-        return [(p["unit"], p["exponent"]) for p in parts]
+        return [(p["unit"], p["exponent"]) for p in json.loads(json_text)]
     except (json.JSONDecodeError, KeyError, TypeError):
         return []
 
 
 def split_numerator_denominator(parts):
-    numerators, denominators = [], []
-    for unit_id, exponent in parts:
-        if exponent >= 0:
-            numerators.append((unit_id, exponent))
-        else:
-            denominators.append((unit_id, -exponent))
-    return numerators, denominators
+    return ([(u, e) for u, e in parts if e >= 0],
+            [(u, -e) for u, e in parts if e < 0])
 
 
 def format_default_unit_html(
-    json_text, unit_url=None, unit_name=None, locale="en-us",
-    unit_quantity_map=None,
+    json_text, unit_url=None, unit_name=None, locale="en-us", unit_quantity_map=None,
 ):
     """Render default_unit JSON as HTML with optional unit links."""
     parts = parse_default_unit(json_text)
@@ -324,14 +301,13 @@ def format_default_unit_html(
         return num_html
     per_word = words["per"]
     use_special = False
-    if unit_quantity_map and denominators:
+    if unit_quantity_map:
         special = locale_quantities_special(locale)
-        if special:
-            for uid, _ in denominators:
-                if unit_quantity_map.get(uid) in special:
-                    per_word = words.get("perSpecial", per_word)
-                    use_special = True
-                    break
+        for uid, _ in denominators:
+            if unit_quantity_map.get(uid) in special:
+                per_word = words.get("perSpecial", per_word)
+                use_special = True
+                break
     den_html = render_unit_group(denominators, unit_url, unit_name, locale,
                                  use_special_exponents=use_special)
     if not num_html:
@@ -346,12 +322,14 @@ def format_default_unit_symbol(json_text, unit_symbol=None):
         return ""
     numerators, denominators = split_numerator_denominator(parts)
 
-    def render(parts_):
-        items = []
-        for unit_id, exponent in parts_:
+    def render(items):
+        if not items:
+            return ""
+        out = []
+        for unit_id, exponent in items:
             sym = unit_symbol(unit_id) if unit_symbol else unit_id
-            items.append(sym if exponent == 1 else f"{sym}^{{{int(exponent)}}}")
-        return " \\cdot ".join(items) if items else ""
+            out.append(sym if exponent == 1 else f"{sym}^{{{int(exponent)}}}")
+        return " \\cdot ".join(out)
 
     num_str = render(numerators)
     den_str = render(denominators)
@@ -370,13 +348,11 @@ def render_unit_group(parts, url_func, name_func=None, locale="en-us", use_speci
         label = name_func(unit_id) if name_func else unit_id.replace("_", " ").title()
         if use_special_exponents and label.lower() in accusative:
             label = accusative[label.lower()]
-        if i > 0:
-            label = label[0].lower() + label[1:] if label else label
+        if i > 0 and label:
+            label = label[0].lower() + label[1:]
         word = exponent_word(exponent, locale, denominator=use_special_exponents)
-        if url_func:
-            text = f'<a href="{html.escape(url_func(unit_id))}">{html.escape(label)}</a>'
-        else:
-            text = html.escape(label)
+        text = (f'<a href="{html.escape(url_func(unit_id))}">{html.escape(label)}</a>'
+                if url_func else html.escape(label))
         if word:
             text += " " + html.escape(word)
         items.append(text)
@@ -393,42 +369,34 @@ def locale_words(locale):
 
 
 def locale_quantities_special(locale):
-    config = _load_locale_config(locale)
-    return config.get("quantitiesSpecial", [])
+    return _load_locale_config(locale).get("quantitiesSpecial", [])
 
 
 def locale_accusative_names(locale):
-    config = _load_locale_config(locale)
-    return config.get("accusativeNames", {})
+    return _load_locale_config(locale).get("accusativeNames", {})
 
 
 def locale_sibilants(locale):
-    config = _load_locale_config(locale)
-    return config.get("sibilants", {"chars": [], "preposition": {"suffix": ""}})
+    return _load_locale_config(locale).get("sibilants",
+                                           {"chars": [], "preposition": {"suffix": ""}})
 
 
 def _ordinal(n, locale="en-us"):
-    config = _load_locale_config(locale)
-    suffix = config.get("ordinalSuffix", "th")
-    if suffix == ".":
-        return f"{n}."
-    last_two = n % 100
-    if last_two in (11, 12, 13):
-        return f"{n}{suffix}"
-    return f"{n}{suffix}"
+    suffix = _load_locale_config(locale).get("ordinalSuffix", "th")
+    return f"{n}." if suffix == "." else f"{n}{suffix}"
 
 
 def exponent_word(exp, locale="en-us", denominator=False):
     """Return the natural-language word for a unit exponent."""
     words = locale_words(locale)
-    if exp == 2:
-        return words.get("squaredSpecial" if denominator else "squared", "squared" if not denominator else words.get("squared", "squared"))
-    if exp == 3:
-        return words.get("cubedSpecial" if denominator else "cubed", "cubed" if not denominator else words.get("cubed", "cubed"))
     if exp == 1:
         return ""
     if exp == -1:
         return words.get("inverse", "inverse")
+    if exp == 2:
+        return words.get("squaredSpecial" if denominator else "squared", "squared")
+    if exp == 3:
+        return words.get("cubedSpecial" if denominator else "cubed", "cubed")
     if exp > 3:
         return f"{words.get('toThe', 'to the')} {_ordinal(exp, locale)}"
     return ""
@@ -437,46 +405,12 @@ def exponent_word(exp, locale="en-us", denominator=False):
 def difficulty_to_stars(difficulty, max_dots=5):
     """Render a difficulty (1-10) as a string of filled + empty stars."""
     filled = min(int(difficulty or 0), max_dots)
-    return "\u2605" * filled + "\u2606" * (max_dots - filled)
+    return "★" * filled + "☆" * (max_dots - filled)
 
 
 # ---------------------------------------------------------------------------
 # LaTeX rendering
 # ---------------------------------------------------------------------------
-
-def _render_with_exponent(exponent, base):
-    """Render a base string with an exponent in LaTeX form."""
-    if exponent is None or exponent == 1:
-        return base
-
-    if exponent == int(exponent):
-        integer_exp = int(exponent)
-        if integer_exp < 0:
-            inner = base
-            if integer_exp != -1:
-                inner += "^{" + format_number(-integer_exp) + "}"
-            return "\\frac{1}{" + inner + "}"
-        return base + "^{" + format_number(integer_exp) + "}"
-
-    try:
-        fraction = Fraction(exponent).limit_denominator(100)
-        num, den = fraction.numerator, fraction.denominator
-    except (ValueError, ZeroDivisionError):
-        return base + "^{" + format_number(exponent) + "}"
-
-    if num == 1:
-        if den == 2:
-            return "\\sqrt{" + base + "}"
-        return "\\sqrt[" + str(den) + "]{" + base + "}"
-    if num == -1:
-        if den == 2:
-            return "\\frac{1}{\\sqrt{" + base + "}}"
-        return "\\frac{1}{\\sqrt[" + str(den) + "]{" + base + "}}"
-    inner = base + "^{" + format_number(num) + "}"
-    if den == 2:
-        return "\\sqrt{" + inner + "}"
-    return "\\sqrt[" + str(den) + "]{" + inner + "}"
-
 
 def render_symbol(symbol):
     if not symbol:
@@ -484,190 +418,236 @@ def render_symbol(symbol):
     s = symbol.strip()
     if not s or "\\" in s:
         return s
-    s = s.replace("_", "\\_")
-    return re.sub(r"[A-Za-z]+", lambda m: f"\\mathrm{{{m.group(0)}}}", s)
+    return re.sub(r"[A-Za-z]+", lambda m: f"\\mathrm{{{m.group(0)}}}", s.replace("_", "\\_"))
 
 
-def render_variable(item, flipped, locale="en-us"):
-    """Render a formula_item variable as LaTeX."""
-    raw_overwrite = item["symbol_overwrite"] or ""
-    var = localise(raw_overwrite, locale) or item["quantity_symbol"] or item["quantity_id"] or "?"
-    prefix = item["latex_prefix"] or ""
-    suffix = item["latex_suffix"] or ""
+def render_formula(conn, formula_id, locale="en-us"):
+    """Render a formula (by id) as a LaTeX string.
 
-    if prefix:
-        # Insert {} between prefix and var if both are alphabetic, so LaTeX
-        # doesn't read the variable as part of the command name.
-        if prefix[-1].isalpha() and var[0].isalpha():
-            var = prefix + "{}" + var
+    Reads ordered formula_token rows for the formula, evaluates them onto a
+    stack to build an expression tree, then renders the tree as LaTeX with
+    the minimum required parentheses.
+    """
+    tokens = conn.execute(
+        "SELECT * FROM formula_token WHERE formula_id = ? ORDER BY position",
+        (formula_id,),
+    ).fetchall()
+    if not tokens:
+        return ""
+    tree = _evaluate_rpn(conn, [dict(t) for t in tokens])
+    if tree is None:
+        return ""
+    return _latex_node(tree, conn, locale)
+
+
+# --- RPN evaluator and LaTeX renderer ---------------------------------------
+
+
+@dataclass
+class _Node:
+    kind: str  # "quantity" | "constant" | "number" | "operator"
+    children: list["_Node"] = field(default_factory=list)
+    # operand metadata
+    quantity_id: Optional[str] = None
+    constant_id: Optional[str] = None
+    value: Optional[float] = None
+    label: Optional[str] = None
+    symbol_overwrite: Optional[str] = None
+    # operator metadata
+    operator_id: Optional[str] = None
+    symbol: Optional[str] = None
+    arity: int = 0
+    precedence: int = 0
+    associativity: str = "left"
+    operator_type: str = "infix"
+
+
+def _fetch(conn, table: str, columns: str, key: str) -> dict:
+    row = conn.execute(
+        f"SELECT {columns} FROM {table} WHERE id = ?", (key,)
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"unknown {table.rstrip('s')}: {key!r}")
+    return dict(row)
+
+
+def _load_operator(conn, operator_id: str) -> dict:
+    return _fetch(conn, "operator",
+                  "id, symbol, arity, precedence, associativity, operator_type",
+                  operator_id)
+
+
+def _load_constant(conn, constant_id: str) -> dict:
+    return _fetch(conn, "constant",
+                  "id, name, symbol, value, default_unit",
+                  constant_id)
+
+
+def _load_quantity(conn, quantity_id: str) -> dict:
+    return _fetch(conn, "quantity",
+                  "id, name, symbol, symbol_overwrite, default_unit",
+                  quantity_id)
+
+
+def _evaluate_rpn(conn, tokens: list[dict]) -> Optional[_Node]:
+    stack: list[_Node] = []
+    for t in tokens:
+        kind = t["token_kind"]
+        if kind == "operator":
+            op = _load_operator(conn, t["operator_id"])
+            if len(stack) < op["arity"]:
+                raise ValueError(
+                    f"RPN underflow at {t['operator_id']}: need {op['arity']}, have {len(stack)}"
+                )
+            args = [stack.pop() for _ in range(op["arity"])][::-1]
+            stack.append(_Node(
+                kind="operator",
+                children=args,
+                operator_id=op["id"],
+                symbol=op["symbol"],
+                arity=op["arity"],
+                precedence=op["precedence"],
+                associativity=op["associativity"],
+                operator_type=op["operator_type"],
+            ))
+        elif kind == "quantity":
+            stack.append(_Node(
+                kind="quantity",
+                quantity_id=t["quantity_id"],
+                label=t["label"],
+                symbol_overwrite=t["symbol_overwrite"],
+            ))
+        elif kind == "constant":
+            stack.append(_Node(kind="constant", constant_id=t["constant_id"]))
+        elif kind == "number":
+            stack.append(_Node(kind="number", value=t["value"]))
         else:
-            var = prefix + var
+            raise ValueError(f"unknown token kind: {kind!r}")
+    if not stack:
+        return None
+    if len(stack) > 1:
+        raise ValueError(f"RPN did not reduce: {len(stack)} items left on stack")
+    return stack[0]
 
-    if suffix:
-        if var[-1].isalpha() and suffix[0].isalpha():
-            var = var + "{}" + suffix
-        else:
-            var = var + suffix
 
-    label = localise(item["label"] or "", locale)
+def _latex_quantity(node: _Node, conn, locale: str) -> str:
+    if not node.quantity_id:
+        return "?"
+    q = _load_quantity(conn, node.quantity_id)
+    var = localise(node.symbol_overwrite or "", locale) or q["symbol"] or node.quantity_id
+    label = localise(node.label or "", locale)
     if label and "_" not in var:
         var += "_{" + label + "}"
-
-    exponent = item["var_exponent"] if item["var_exponent"] is not None else 1
-    if flipped:
-        exponent = -exponent
-
-    return _render_with_exponent(exponent, var)
+    return var
 
 
-def render_coefficient(item, is_first_in_term):
-    """Render a formula_item coefficient as LaTeX. Returns (body, is_negative)."""
-    body = None
-    is_negative = False
-    latex_coef = item["latex_coef"] or None
-    coeff_value = item["coeff_value"]
-    coeff_exponent = item["coeff_exponent"] if item["coeff_exponent"] is not None else 1
-
-    if latex_coef:
-        body = latex_coef
-    elif coeff_value is not None:
-        value = coeff_value
-        if value < 0:
-            is_negative = True
-            value = abs(value)
-        body = format_number(value) if value != 1 else None
-
-    if body is not None:
-        body = _render_with_exponent(coeff_exponent, body)
-        if not latex_coef and body == "1":
-            body = None
-    elif coeff_exponent not in (None, 1):
-        body = _render_with_exponent(coeff_exponent, "1")
-
-    if is_first_in_term and is_negative and body in (None, "", "1"):
-        body = ""
-        is_negative = False
-
-    return (body if body else None), is_negative
+def _latex_constant(node: _Node, conn) -> str:
+    c = _load_constant(conn, node.constant_id)
+    return c["symbol"] or c["id"]
 
 
-def _join_latex_parts(parts):
-    """Join LaTeX parts, inserting {} between a command and a following letter."""
-    result = []
-    for i, p in enumerate(parts):
-        result.append(p)
-        if i < len(parts) - 1:
-            last = result[-1]
-            nxt = parts[i + 1]
-            if nxt and nxt[0].isalpha():
-                j = len(last) - 1
-                while j >= 0 and last[j].isalpha():
-                    j -= 1
-                if j >= 0 and last[j] == "\\" and j < len(last) - 1:
-                    result.append("{}")
-    return "".join(result)
+def _latex_number(node: _Node) -> str:
+    if node.value is None:
+        return "?"
+    v = node.value
+    if v < 0:
+        return "-" + _latex_number(_Node(kind="number", value=-v))
+    if v == int(v):
+        return str(int(v))
+    try:
+        f = Fraction(v).limit_denominator(100)
+    except (ValueError, ZeroDivisionError):
+        return format_number(v)
+    if f.denominator != 1 and f.numerator == 1 and f.denominator < 20:
+        return "\\frac{1}{" + str(f.denominator) + "}"
+    return format_number(v)
 
 
-def _render_items_group(items, flipped, locale="en-us"):
-    """Render a list of items as (numerator_latex, denominator_latex)."""
-    num_parts = []
-    den_parts = []
-    for i, item in enumerate(items):
-        coefficient, is_negative = render_coefficient(item, is_first_in_term=(i == 0))
-
-        if item["quantity_id"]:
-            exponent = item["var_exponent"] if item["var_exponent"] is not None else 1
-            if flipped:
-                exponent = -exponent
-            if is_negative and coefficient:
-                coefficient = "-" + coefficient
-            if exponent < 0:
-                rendered_var = render_variable(
-                    dict(item, var_exponent=abs(exponent)),
-                    flipped=False,
-                    locale=locale,
-                )
-                if coefficient:
-                    den_parts.append(coefficient)
-                den_parts.append(rendered_var)
-            else:
-                rendered_var = render_variable(item, flipped=flipped, locale=locale)
-                if coefficient:
-                    num_parts.append(coefficient)
-                num_parts.append(rendered_var)
-        elif coefficient:
-            if is_negative:
-                den_parts.append(coefficient)
-            else:
-                num_parts.append(coefficient)
-
-    return _join_latex_parts(num_parts), _join_latex_parts(den_parts)
+def _needs_paren(child: _Node, parent: _Node, side: str) -> bool:
+    if child.kind != "operator":
+        return False
+    if child.operator_type == "relational":
+        return True
+    if child.precedence < parent.precedence:
+        return True
+    if child.precedence == parent.precedence:
+        if parent.associativity == "none":
+            return True
+        if parent.associativity == "left" and side == "right":
+            return True
+        if parent.associativity == "right" and side == "left":
+            return True
+    return False
 
 
-def render_formula_items(items, locale="en-us"):
-    """Build a LaTeX string from formula_item rows. Handles fractions for negatives."""
-    by_term = defaultdict(list)
-    for item in items:
-        by_term[item["term"]].append(item)
+def _wrap(child_str: str, child: _Node, parent: _Node, side: str) -> str:
+    if _needs_paren(child, parent, side):
+        return "\\left(" + child_str + "\\right)"
+    return child_str
 
-    left_hand_terms = []
-    right_hand_terms = []
 
-    for term_number in sorted(by_term):
-        term_items = sorted(
-            by_term[term_number],
-            key=lambda x: (not x["is_primary"], x["sort_order"]),
-        )
-        primary = [item for item in term_items if item["is_primary"]]
-        non_primary = [item for item in term_items if not item["is_primary"]]
+def _render_binary(node: _Node, conn, locale: str) -> tuple[str, str]:
+    if node.arity != 2:
+        raise ValueError(f"{node.operator_type} op {node.operator_id} arity {node.arity}")
+    left, right = node.children
+    l = _latex_node(left, conn, locale)
+    r = _latex_node(right, conn, locale)
+    l = _wrap(l, left, node, "left")
+    r = _wrap(r, right, node, "right")
+    return l, r
 
-        num, den = _render_items_group(primary, flipped=True, locale=locale)
-        if num or den:
-            if den:
-                has_neg = num.startswith("-")
-                clean_num = num.lstrip("-")
-                if has_neg:
-                    term_str = f"-\\frac{{{clean_num}}}{{{den}}}"
-                else:
-                    term_str = f"\\frac{{{num}}}{{{den}}}" if num else f"\\frac{{1}}{{{den}}}"
-                if term_str == "\\frac{}{}":
-                    term_str = "\\frac{1}{" + den + "}"
-            else:
-                term_str = num
-            if term_str:
-                left_hand_terms.append(term_str)
 
-        num, den = _render_items_group(non_primary, flipped=False, locale=locale)
-        if num or den:
-            if den:
-                has_neg = num.startswith("-")
-                clean_num = num.lstrip("-")
-                if has_neg:
-                    term_str = f"-\\frac{{{clean_num}}}{{{den}}}"
-                else:
-                    term_str = f"\\frac{{{num}}}{{{den}}}" if num else f"\\frac{{1}}{{{den}}}"
-                if term_str == "\\frac{}{}":
-                    term_str = "\\frac{1}{" + den + "}"
-            else:
-                term_str = num
-            if term_str:
-                sign = "+"
-                for item in non_primary:
-                    coeff = item["coeff_value"]
-                    if coeff is not None and coeff < 0:
-                        sign = "-"
-                        break
-                right_hand_terms.append((sign, term_str))
+def _latex_infix(node: _Node, conn, locale: str) -> str:
+    left, right = node.children
+    if node.operator_id == "frac":
+        return f"\\frac{{{_latex_node(left, conn, locale)}}}{{{_latex_node(right, conn, locale)}}}"
+    l, r = _render_binary(node, conn, locale)
+    if node.operator_id == "pow":
+        return f"{l}^{{{r}}}"
+    if node.symbol:
+        return f"{l} {node.symbol} {r}"
+    if left.kind == "number" and right.kind == "number":
+        return f"{l} \\cdot {r}"
+    if left.kind == "number" or right.kind == "number":
+        return f"{l}{r}"
+    return f"{l} {r}"
 
-    left_hand = " + ".join(left_hand_terms) if left_hand_terms else "1"
-    right_parts = []
-    for i, (sign, term_str) in enumerate(right_hand_terms):
-        if i == 0:
-            right_parts.append(f"- {term_str}" if sign == "-" else term_str)
-        else:
-            right_parts.append(f"{sign} {term_str}")
-    right_hand = " ".join(right_parts)
-    return f"{left_hand} = {right_hand}"
+
+def _latex_prefix(node: _Node, conn, locale: str) -> str:
+    a = _latex_node(node.children[0], conn, locale)
+    a = _wrap(a, node.children[0], node, "child")
+    sym = node.symbol or ""
+    if sym == "-":
+        return f"-{a}"
+    return f"{sym} {a}"
+
+
+def _latex_postfix(node: _Node, conn, locale: str) -> str:
+    a = _latex_node(node.children[0], conn, locale)
+    a = _wrap(a, node.children[0], node, "child")
+    return f"{a}{node.symbol or ''}"
+
+
+def _latex_relational(node: _Node, conn, locale: str) -> str:
+    l, r = _render_binary(node, conn, locale)
+    return f"{l} {node.symbol} {r}"
+
+
+def _latex_node(node: _Node, conn, locale: str = "en-us") -> str:
+    if node.kind == "quantity":
+        return _latex_quantity(node, conn, locale)
+    if node.kind == "constant":
+        return _latex_constant(node, conn)
+    if node.kind == "number":
+        return _latex_number(node)
+    if node.kind == "operator":
+        return {
+            "infix": _latex_infix,
+            "prefix": _latex_prefix,
+            "postfix": _latex_postfix,
+            "relational": _latex_relational,
+        }[node.operator_type](node, conn, locale)
+    raise ValueError(f"cannot render node: {node!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -686,19 +666,6 @@ def fetch_formula(conn, formula_id):
     ).fetchone()
 
 
-def fetch_formula_items(conn, formula_id):
-    return conn.execute(
-        """
-        SELECT fi.*, q.symbol AS quantity_symbol
-        FROM formula_item fi
-        LEFT JOIN quantity q ON q.id = fi.quantity_id
-        WHERE fi.formula_id = ?
-        ORDER BY fi.term, fi.is_primary DESC, fi.sort_order
-        """,
-        (formula_id,),
-    ).fetchall()
-
-
 def fetch_formula_related(conn, formula_id):
     return conn.execute(
         """
@@ -715,92 +682,64 @@ def fetch_formula_related(conn, formula_id):
 
 
 def fetch_formula_detail_items(conn, formula_id):
-    """Return all formula items with quantity info for the detail table.
-
-    Each row includes formula_item fields plus quantity_symbol, default_unit,
-    and quantity_name (en-us).  Only items that have a quantity_id are relevant
-    for the table, but the caller should filter if needed.
-    """
+    """Return all formula_token rows for a formula, joined with quantity metadata."""
     return conn.execute(
         """
-        SELECT fi.*, q.symbol AS quantity_symbol, q.default_unit,
+        SELECT ft.*, q.symbol AS quantity_symbol, q.default_unit,
                json_extract(q.name, '$.en-us') AS quantity_name
-        FROM formula_item fi
-        LEFT JOIN quantity q ON q.id = fi.quantity_id
-        WHERE fi.formula_id = ?
-        ORDER BY fi.term, fi.is_primary DESC, fi.sort_order
+        FROM formula_token ft
+        LEFT JOIN quantity q ON q.id = ft.quantity_id
+        WHERE ft.formula_id = ?
+        ORDER BY ft.position
         """,
         (formula_id,),
     ).fetchall()
 
 
 def render_variable_base(item, locale="en-us"):
-    """Render the base variable symbol (without exponent) for display tables."""
-    raw_overwrite = item.get("symbol_overwrite") or ""
-    var = localise(raw_overwrite, locale) or item.get("quantity_symbol") or item.get("quantity_id") or "?"
-    prefix = item.get("latex_prefix") or ""
-    suffix = item.get("latex_suffix") or ""
+    """Render the base variable symbol (without exponent) for display tables.
 
-    if prefix:
-        if prefix[-1].isalpha() and var[0].isalpha():
-            var = prefix + "{}" + var
-        else:
-            var = prefix + var
-
-    if suffix:
-        if var[-1].isalpha() and suffix[0].isalpha():
-            var = var + "{}" + suffix
-        else:
-            var = var + suffix
-
+    Works with formula_token rows. Prefix operators (e.g. \\Delta, \\sin) are
+    not applied here — this is the base symbol for the detail table.
+    """
+    var = (localise(item.get("symbol_overwrite") or "", locale)
+           or item.get("quantity_symbol")
+           or item.get("quantity_id")
+           or "?")
     label = localise(item.get("label") or "", locale)
     if label and "_" not in var:
         var += "_{" + label + "}"
-
     return var
 
 
 def parse_quantity_name_markers(text):
-    """Replace [quantity_id] or [quantity_id|display_text] markers with <a> links.
-
-    Format: ``[quantity_id]`` or ``[quantity_id|display_text]``
-
-    Examples:
-
-    ``"Initial [velocity]"`` →
-    ``'Initial <a href="/quantity/velocity">velocity</a>'``
-
-    ``"Počáteční [velocity|rychlost]"`` →
-    ``'Počáteční <a href="/quantity/velocity">rychlost</a>'``
-    """
+    """Replace [quantity_id] or [quantity_id|display_text] markers with <a> links."""
     def _repl(m):
         raw = m.group(1)
-        if '|' in raw:
-            qid, display = raw.split('|', 1)
+        if "|" in raw:
+            qid, display = raw.split("|", 1)
         else:
-            qid = raw
-            display = raw
-        qid = qid.lower().replace(' ', '_')
+            qid = display = raw
+        qid = qid.lower().replace(" ", "_")
         return f'<a href="/quantity/{html.escape(qid)}">{html.escape(display)}</a>'
-    return re.sub(r'\[([^\]]+)\]', _repl, text)
+    return re.sub(r"\[([^\]]+)\]", _repl, text)
 
 
 def fetch_formula_quantities(conn, formula_id):
-    dim_cols = DIMENSION_COLUMNS(conn)
     rows = conn.execute(
         f"""
         SELECT DISTINCT q.id, q.name, q.symbol,
                json_extract(q.name, '$.en-us') AS name_en,
-               COALESCE(fi.quantity_name_overwrite, q.name) AS display_name_raw,
+               COALESCE(ft.quantity_name_overwrite, q.name) AS display_name_raw,
                q.default_unit,
-               {', '.join(f'q.{c}' for c in dim_cols)}
-        FROM formula_item fi
-        JOIN quantity q ON q.id = fi.quantity_id
-        WHERE fi.formula_id = ?
+               {', '.join(f'q.{c}' for c in DIMENSION_COLUMNS())}
+        FROM formula_token ft
+        JOIN quantity q ON q.id = ft.quantity_id
+        WHERE ft.formula_id = ?
         """,
         (formula_id,),
     ).fetchall()
-    return sort_quantities_by_dimension(rows, conn)
+    return sort_quantities_by_dimension(rows)
 
 
 def fetch_quantity(conn, quantity_id):
@@ -818,13 +757,24 @@ def fetch_quantity(conn, quantity_id):
 def fetch_quantity_units(conn, quantity_id):
     return conn.execute(
         """
-        SELECT u.*,
-               json_extract(u.name, '$.en-us') AS name_en
+        SELECT u.*, json_extract(u.name, '$.en-us') AS name_en
         FROM unit u WHERE u.quantity_id = ?
         ORDER BY u.default_unit DESC, u.unit_system
         """,
         (quantity_id,),
     ).fetchall()
+
+
+def fetch_quantities_by_ids(conn, quantity_ids):
+    """Return {id: name_json} for the given quantity ids in one query."""
+    if not quantity_ids:
+        return {}
+    placeholders = ",".join("?" for _ in quantity_ids)
+    rows = conn.execute(
+        f"SELECT id, name FROM quantity WHERE id IN ({placeholders})",
+        tuple(quantity_ids),
+    ).fetchall()
+    return {r["id"]: r["name"] for r in rows}
 
 
 def fetch_quantity_formulas(conn, quantity_id):
@@ -833,9 +783,9 @@ def fetch_quantity_formulas(conn, quantity_id):
         SELECT DISTINCT f.id, f.name,
                json_extract(f.name, '$.en-us') AS name_en,
                f.topic AS topic_id, f.difficulty
-        FROM formula_item fi
-        JOIN formula f ON f.id = fi.formula_id
-        WHERE fi.quantity_id = ? AND f.id != 'dimensions'
+        FROM formula_token ft
+        JOIN formula f ON f.id = ft.formula_id
+        WHERE ft.quantity_id = ?
         ORDER BY f.topic, f.difficulty, f.id
         """,
         (quantity_id,),
@@ -843,19 +793,25 @@ def fetch_quantity_formulas(conn, quantity_id):
 
 
 def fetch_quantity_formulas_by_side(conn, quantity_id):
-    """Return (primary_formulas, non_primary_formulas) for a quantity.
+    """Return (primary, non_primary) formulas for a quantity.
 
-    Primary: formula has this quantity on the left (is_primary=1).
-    Non-primary: formula references this quantity but never as left-side primary.
+    Primary: the quantity appears on the LHS of the formula (i.e. before
+    the first `=` operator in the RPN token stream).
     """
     primary = conn.execute(
         """
         SELECT DISTINCT f.id, f.name,
                json_extract(f.name, '$.en-us') AS name_en,
                f.topic AS topic_id, f.difficulty
-        FROM formula_item fi
-        JOIN formula f ON f.id = fi.formula_id
-        WHERE fi.quantity_id = ? AND fi.is_primary = 1 AND f.id != 'dimensions'
+        FROM formula_token ft
+        JOIN formula f ON f.id = ft.formula_id
+        WHERE ft.quantity_id = ?
+          AND ft.token_kind = 'quantity'
+          AND ft.position < COALESCE(
+            (SELECT MIN(position) FROM formula_token
+             WHERE formula_id = ft.formula_id AND operator_id = 'eq'),
+            99999
+          )
         ORDER BY f.topic, f.difficulty, f.id
         """,
         (quantity_id,),
@@ -865,12 +821,18 @@ def fetch_quantity_formulas_by_side(conn, quantity_id):
         SELECT DISTINCT f.id, f.name,
                json_extract(f.name, '$.en-us') AS name_en,
                f.topic AS topic_id, f.difficulty
-        FROM formula_item fi
-        JOIN formula f ON f.id = fi.formula_id
-        WHERE fi.quantity_id = ? AND f.id != 'dimensions'
+        FROM formula_token ft
+        JOIN formula f ON f.id = ft.formula_id
+        WHERE ft.quantity_id = ?
           AND f.id NOT IN (
-            SELECT formula_id FROM formula_item
-            WHERE quantity_id = ? AND is_primary = 1
+            SELECT ft2.formula_id FROM formula_token ft2
+            WHERE ft2.quantity_id = ?
+              AND ft2.token_kind = 'quantity'
+              AND ft2.position < COALESCE(
+                (SELECT MIN(position) FROM formula_token
+                 WHERE formula_id = ft2.formula_id AND operator_id = 'eq'),
+                99999
+              )
           )
         ORDER BY f.topic, f.difficulty, f.id
         """,
@@ -880,42 +842,70 @@ def fetch_quantity_formulas_by_side(conn, quantity_id):
 
 
 def compute_formula_dimensions(conn, formula_id):
-    """Compute dimensions from primary-term quantities."""
-    cols = DIMENSION_COLUMNS(conn)
-    dims = [0.0] * len(cols)
-    if not cols:
-        return []
-    items = conn.execute(
-        f"""
-        SELECT fi.var_exponent, {', '.join(f'q.{c}' for c in cols)}
-        FROM formula_item fi
-        JOIN quantity q ON q.id = fi.quantity_id
-        WHERE fi.formula_id = ? AND fi.is_primary = 1
-        """,
+    """Compute dimensions from the LHS of a formula.
+
+    The LHS is identified by walking the RPN tree and taking the first
+    operand of the topmost `=` operator. We then sum the dimensional
+    exponents of all quantities in that subtree.
+    """
+    tokens = conn.execute(
+        "SELECT * FROM formula_token WHERE formula_id = ? ORDER BY position",
         (formula_id,),
     ).fetchall()
-    for r in items:
-        exp = abs(r["var_exponent"] or 1)
-        for i, column in enumerate(cols):
-            dims[i] += r[column] * exp
-    return [int(d) for d in dims]
+    if not tokens:
+        return []
+    try:
+        tree = _evaluate_rpn(conn, [dict(t) for t in tokens])
+    except Exception:
+        return []
+    if tree is None:
+        return []
+
+    def find_lhs(node):
+        if node.kind == "operator" and node.operator_id == "eq":
+            return find_lhs(node.children[0])
+        return node
+
+    cols = DIMENSION_COLUMNS()
+    qid_to_dims = {
+        r["id"]: [r[c] for c in cols]
+        for r in conn.execute(
+            f"SELECT id, {', '.join(cols)} FROM quantity"
+        ).fetchall()
+    }
+    dims = [0.0] * len(cols)
+
+    def walk(node, sign):
+        if node.kind != "operator":
+            if node.kind == "quantity":
+                for i, v in enumerate(qid_to_dims.get(node.quantity_id, [])):
+                    dims[i] += v * sign
+            return
+        op = node.operator_id
+        if op == "div":
+            walk(node.children[0], sign)
+            walk(node.children[1], -sign)
+        elif op == "pow":
+            base, exp = node.children
+            scale = exp.value if exp.kind == "number" and exp.value is not None else 1
+            walk(base, sign * scale)
+        else:
+            for c in node.children:
+                walk(c, sign)
+
+    walk(find_lhs(tree), 1)
+    return [int(round(d)) for d in dims]
 
 
 def fetch_si_unit_symbol(conn, quantity_id):
-    """Get the SI base unit symbol for a quantity."""
     row = conn.execute(
-        """
-        SELECT u.symbol FROM unit u
-        WHERE u.quantity_id = ? AND u.default_unit = 1
-        LIMIT 1
-        """,
+        "SELECT symbol FROM unit WHERE quantity_id = ? AND default_unit = 1 LIMIT 1",
         (quantity_id,),
     ).fetchone()
     return row["symbol"] if row else ""
 
 
 def fetch_quantity_related_formulas(conn, quantity_id):
-    """Get formulas related via formula_relation that use this quantity."""
     return conn.execute(
         """
         SELECT DISTINCT f.id, f.name,
@@ -923,8 +913,8 @@ def fetch_quantity_related_formulas(conn, quantity_id):
                fr.relation_type
         FROM formula_relation fr
         JOIN formula f ON f.id = fr.related_id
-        JOIN formula_item fi ON fi.formula_id = f.id
-        WHERE fi.quantity_id = ?
+        JOIN formula_token ft ON ft.formula_id = f.id
+        WHERE ft.quantity_id = ?
         ORDER BY fr.relation_type, f.id
         """,
         (quantity_id,),
@@ -945,80 +935,53 @@ def fetch_unit(conn, unit_id):
 
 
 def _unit_name_map(db, locale):
-    rows = db.execute("SELECT id, name FROM unit").fetchall()
-    return {r["id"]: localise(r["name"], locale) for r in rows}
+    return {r["id"]: localise(r["name"], locale)
+            for r in db.execute("SELECT id, name FROM unit").fetchall()}
 
 
 def _unit_quantity_map(db):
-    rows = db.execute("SELECT id, quantity_id FROM unit").fetchall()
-    return {r["id"]: r["quantity_id"] for r in rows}
+    return {r["id"]: r["quantity_id"]
+            for r in db.execute("SELECT id, quantity_id FROM unit").fetchall()}
 
 
 def _unit_symbol_map(db):
-    rows = db.execute("SELECT id, symbol FROM unit").fetchall()
-    return {r["id"]: r["symbol"] for r in rows}
+    return {r["id"]: r["symbol"]
+            for r in db.execute("SELECT id, symbol FROM unit").fetchall()}
 
 
 def build_dimension_symbol_maps(conn):
     """Return (variable_map, unit_map, dim_map) for dimension display."""
-    dimension_qty_ids = dimension_quantity_ids(conn)
+    qty_rows = conn.execute(
+        f"SELECT id, symbol, default_unit FROM quantity "
+        f"WHERE id IN ({','.join('?' * len(_BASE_DIMENSION_QTY_IDS))})",
+        tuple(_BASE_DIMENSION_QTY_IDS.values()),
+    ).fetchall()
+    by_id = {r["id"]: r for r in qty_rows}
     variable_map, unit_map, dim_map = {}, {}, {}
-    for symbol in DIMENSION_SYMBOLS(conn):
-        quantity_id = dimension_qty_ids.get(symbol)
-        if not quantity_id:
-            variable_map[symbol] = symbol
-            unit_map[symbol] = symbol
-            dim_map[symbol] = symbol
-            continue
-        row = conn.execute(
-            "SELECT symbol, symbol_overwrite, default_unit FROM quantity WHERE id=?",
-            (quantity_id,),
-        ).fetchone()
-        variable_map[symbol] = row["symbol"] if row and row["symbol"] else symbol
-
-        unit_symbol = None
+    for symbol, qid in _BASE_DIMENSION_QTY_IDS.items():
+        row = by_id.get(qid)
+        variable_map[symbol] = (row["symbol"] if row and row["symbol"] else symbol)
+        unit_map[symbol] = variable_map[symbol]
         if row and row["default_unit"]:
             try:
-                default_unit = json.loads(row["default_unit"])
-                if isinstance(default_unit, list) and default_unit:
-                    uid = default_unit[0].get("unit", "")
-                    if uid:
-                        unit_row = conn.execute(
-                            "SELECT symbol FROM unit WHERE id=?", (uid,),
-                        ).fetchone()
-                        if unit_row:
-                            unit_symbol = unit_row["symbol"]
-            except (ValueError, TypeError, IndexError):
-                pass
-        if unit_symbol:
-            unit_map[symbol] = f"\\mathrm{{{unit_symbol}}}" if "\\" not in unit_symbol else unit_symbol
-        else:
-            unit_map[symbol] = variable_map[symbol]
-
+                first = json.loads(row["default_unit"])[0]
+                uid = first.get("unit", "")
+            except (ValueError, TypeError, IndexError, KeyError):
+                uid = ""
+            if uid:
+                unit_row = conn.execute(
+                    "SELECT symbol FROM unit WHERE id=?", (uid,),
+                ).fetchone()
+                if unit_row:
+                    sym = unit_row["symbol"]
+                    unit_map[symbol] = (sym if "\\" in sym else f"\\mathrm{{{sym}}}")
         dim_map[symbol] = symbol
-
-    # dimension symbols come from formula_item.symbol_overwrite (merged dimension table)
-    for dim in fetch_dimensions(conn):
-        sym = dim["symbol_overwrite"]
-        if sym:
-            dim_map[sym] = sym
-
     return variable_map, unit_map, dim_map
 
 
-def _base_dimension_order(conn=None):
-    """Return {quantity_id: sort_order} for base dimensions from formula_item."""
-    order = {}
-    for d in conn.execute(
-        "SELECT quantity_id, sort_order FROM formula_item WHERE formula_id = 'dimensions' ORDER BY sort_order"
-    ).fetchall():
-        order[d["quantity_id"]] = d["sort_order"]
-    return order
-
-
-def sort_quantities_by_dimension(quantity_rows, conn=None):
-    """Sort quantities: base dimensions from formula_item first, rest by id."""
-    base_order = _base_dimension_order(conn)
+def sort_quantities_by_dimension(quantity_rows):
+    """Sort quantities: base dimensions first, rest by id."""
+    base_order = _base_dimension_order()
     def key(quantity):
         base_index = base_order.get(quantity["id"], 99)
         return (0 if base_index < 99 else 1, base_index, quantity["id"])
@@ -1027,56 +990,53 @@ def sort_quantities_by_dimension(quantity_rows, conn=None):
 
 def fetch_all_quantities(conn):
     """Return all quantities with default_unit parsed and dimensions."""
-    dim_cols = DIMENSION_COLUMNS(conn)
     rows = conn.execute(
         f"""
         SELECT q.id, q.name, q.symbol,
                json_extract(q.name, '$.en-us') AS name_en,
                q.topic AS topic_id, q.difficulty, q.default_unit,
-               {', '.join(f'q.{c}' for c in dim_cols)}
+               {', '.join(f'q.{c}' for c in DIMENSION_COLUMNS())}
         FROM quantity q
         ORDER BY q.id
         """
     ).fetchall()
-    return sort_quantities_by_dimension(rows, conn)
+    return sort_quantities_by_dimension(rows)
 
 
 def fetch_all_formulas(conn):
-    """Return all formulas (excluding the internal 'dimensions' formula)."""
     return conn.execute(
         """
         SELECT f.id, f.name, json_extract(f.name, '$.en-us') AS name_en,
                f.topic AS topic_id, f.difficulty
         FROM formula f
-        WHERE f.id != 'dimensions'
         ORDER BY f.topic, f.difficulty, f.id
         """
     ).fetchall()
 
 
 def compute_all_formula_dimensions(conn):
-    """Return {formula_id: {dim_M, dim_L, ...}} for all formulas."""
-    cols = DIMENSION_COLUMNS(conn)
-    if not cols:
-        return {}
-    selects = [
-        f"CAST(SUM(ABS(COALESCE(fi.var_exponent, 1)) * q.{c}) AS INTEGER) AS {c}"
-        for c in cols
-    ]
+    """Return {formula_id: {dim_M, dim_L, ...}} for all formulas.
+
+    Uses the LHS of each formula (the quantity tokens before the first
+    `=` operator) to compute the dimension vector.
+    """
+    cols = DIMENSION_COLUMNS()
+    selects = [f"CAST(SUM(q.{c}) AS INTEGER) AS {c}" for c in cols]
     rows = conn.execute(
         f"""
-        SELECT fi.formula_id,
-               {', '.join(selects)}
-        FROM formula_item fi
-        JOIN quantity q ON q.id = fi.quantity_id
-        WHERE fi.is_primary = 1
-        GROUP BY fi.formula_id
+        SELECT ft.formula_id, {', '.join(selects)}
+        FROM formula_token ft
+        JOIN quantity q ON q.id = ft.quantity_id
+        WHERE ft.token_kind = 'quantity'
+          AND ft.position < COALESCE(
+            (SELECT MIN(position) FROM formula_token
+             WHERE formula_id = ft.formula_id AND operator_id = 'eq'),
+            99999
+          )
+        GROUP BY ft.formula_id
         """
     ).fetchall()
-    return {
-        r["formula_id"]: {c: int(r[c] or 0) for c in cols}
-        for r in rows
-    }
+    return {r["formula_id"]: {c: int(r[c] or 0) for c in cols} for r in rows}
 
 
 def fetch_formulas_with_any_quantity(conn, quantity_ids):
@@ -1085,10 +1045,8 @@ def fetch_formulas_with_any_quantity(conn, quantity_ids):
         return None
     placeholders = ",".join("?" for _ in quantity_ids)
     rows = conn.execute(
-        f"""
-        SELECT DISTINCT formula_id FROM formula_item
-        WHERE quantity_id IN ({placeholders})
-        """,
+        f"SELECT DISTINCT formula_id FROM formula_token "
+        f"WHERE token_kind = 'quantity' AND quantity_id IN ({placeholders})",
         quantity_ids,
     ).fetchall()
     return {r["formula_id"] for r in rows}
@@ -1098,17 +1056,13 @@ def fetch_formulas_with_all_quantities(conn, quantity_ids):
     """Return formula_ids that reference ALL of the given quantity IDs (AND)."""
     if not quantity_ids:
         return None
-    n = len(quantity_ids)
     placeholders = ",".join("?" for _ in quantity_ids)
     rows = conn.execute(
-        f"""
-        SELECT formula_id, COUNT(DISTINCT quantity_id) AS match_count
-        FROM formula_item
-        WHERE quantity_id IN ({placeholders})
-        GROUP BY formula_id
-        HAVING match_count = ?
-        """,
-        quantity_ids + [n],
+        f"SELECT formula_id, COUNT(DISTINCT quantity_id) AS match_count "
+        f"FROM formula_token "
+        f"WHERE token_kind = 'quantity' AND quantity_id IN ({placeholders}) "
+        f"GROUP BY formula_id HAVING match_count = ?",
+        quantity_ids + [len(quantity_ids)],
     ).fetchall()
     return {r["formula_id"] for r in rows}
 
@@ -1118,29 +1072,23 @@ def fetch_formulas_with_all_quantities(conn, quantity_ids):
 # ---------------------------------------------------------------------------
 
 EXPORT_TABLE_ORDER = [
-    "formula", "formula_item", "formula_relation",
-    "quantity", "unit",
+    "formula", "formula_token", "formula_relation",
+    "operator", "constant", "quantity", "unit",
 ]
 
 EXPORT_TABLE_COLUMNS = {
-    "formula": [
-        "id", "name", "topic", "difficulty", "description", "links",
+    "formula": ["id", "name", "topic", "difficulty", "description", "links"],
+    "formula_token": [
+        "formula_id", "position", "token_kind",
+        "quantity_id", "constant_id", "operator_id",
+        "value", "label", "symbol_overwrite", "quantity_name_overwrite",
     ],
-    "formula_item": [
-        "formula_id", "term", "is_primary", "sort_order",
-        "coeff_value", "latex_coef", "coeff_exponent",
-        "quantity_id", "var_exponent", "label",
-        "symbol_overwrite", "quantity_name_overwrite",
-        "latex_prefix", "latex_suffix",
-    ],
-    "formula_relation": [
-        "formula_id", "related_id", "relation_type",
-        "description",
-    ],
+    "formula_relation": ["formula_id", "related_id", "relation_type", "description"],
+    "operator": ["id", "symbol", "math", "arity", "precedence", "associativity", "operator_type"],
+    "constant": ["id", "name", "symbol", "value", "default_unit"],
     "quantity": [
         "id", "name", "symbol", "symbol_overwrite", "topic",
         "difficulty", "description", "links", "default_unit",
-        # dim_M, dim_L, ... added dynamically in _each_table
     ],
     "unit": [
         "id", "name", "symbol", "quantity_id", "default_unit", "unit_system",
@@ -1153,10 +1101,9 @@ def _each_table(conn):
     """Yield (table_name, columns, rows) for all tables in export order."""
     for table in EXPORT_TABLE_ORDER:
         columns = list(EXPORT_TABLE_COLUMNS[table])
-        if table == 'quantity':
-            dim_cols = DIMENSION_COLUMNS(conn)
-            # Insert after default_unit (index 8)
-            columns[9:9] = dim_cols
+        if table == "quantity":
+            # Insert dim_* columns after default_unit (index 8).
+            columns[9:9] = DIMENSION_COLUMNS()
         rows = conn.execute(
             f"SELECT {','.join(columns)} FROM {table} ORDER BY rowid"
         ).fetchall()
@@ -1177,10 +1124,10 @@ def export_to_csv(conn):
 
 def export_to_csv_directory(conn, directory):
     """Export each table to a separate CSV file in a directory."""
-    path = Path(directory)
-    path.mkdir(parents=True, exist_ok=True)
+    out_dir = Path(directory)
+    out_dir.mkdir(parents=True, exist_ok=True)
     for table, columns, rows in _each_table(conn):
-        with open(path / f"{table}.csv", "w", newline="") as f:
+        with open(out_dir / f"{table}.csv", "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(columns)
             writer.writerows(rows)
@@ -1220,4 +1167,4 @@ def export_to_ods(conn, output):
                 cell.addElement(P(text=str(value) if value is not None else ""))
                 row.addElement(cell)
             sheet.addElement(row)
-
+    document.save(output)

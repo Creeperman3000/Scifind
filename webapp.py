@@ -26,13 +26,12 @@ if str(_PROJECT_DIR) not in sys.path:
 from scifind_lib import (
     open_database,
     database_path,
-    render_formula_items,
+    render_formula,
     format_dimensions_latex,
     format_default_unit_html,
     format_default_unit_symbol,
     localise,
     fetch_formula,
-    fetch_formula_items,
     fetch_formula_related,
     fetch_formula_detail_items,
     render_variable_base,
@@ -41,6 +40,7 @@ from scifind_lib import (
     fetch_quantity_units,
     fetch_quantity_formulas_by_side,
     fetch_quantity_related_formulas,
+    fetch_quantities_by_ids,
     compute_formula_dimensions,
     compute_all_formula_dimensions,
     fetch_formulas_with_all_quantities,
@@ -61,9 +61,9 @@ from scifind_lib import (
     render_symbol,
     _dimension_matches,
     DIMENSION_SYMBOLS,
-    fetch_dimensions,
     dimension_quantity_ids,
     extract_dimensions_from_row,
+    locale_sibilants,
 )
 
 app = Flask(__name__)
@@ -75,6 +75,7 @@ app.config["MAX_CONTENT_LENGTH"] = (
 MIN_DIFFICULTY = 0
 MAX_DIFFICULTY = 10
 SEARCH_QUERY_MAX_LENGTH = 200
+SUGGEST_QUERY_MAX_LENGTH = 50
 
 logger = logging.getLogger("scifind")
 
@@ -102,7 +103,7 @@ class FilterState:
 
 
 def _safe_int(value, default=None):
-    if value is None or value == "":
+    if not value:
         return default
     try:
         return int(value)
@@ -115,7 +116,7 @@ def _csv_list(value):
     return [part.strip() for part in value.split(",") if part.strip()]
 
 
-def parse_filter_state(args, path="", db=None) -> FilterState:
+def parse_filter_state(args, path="") -> FilterState:
     mode_switched_raw = args.get("mode_switched", "")
     mode_switched = set(_csv_list(mode_switched_raw)) if mode_switched_raw else set()
     is_qty_page = "/quantities" in path or "/quantity/" in path or "/unit/" in path
@@ -131,16 +132,13 @@ def parse_filter_state(args, path="", db=None) -> FilterState:
             quantity_mode = "and"
 
     dimension_filter = {}
-    for symbol in DIMENSION_SYMBOLS(db):
-        val = None
-        op = "eq"
-        for candidate_op in ("eq", "geq", "leq"):
-            v = _safe_int(args.get(f"{symbol}_{candidate_op}"))
+    for symbol in DIMENSION_SYMBOLS():
+        dimension_filter[symbol] = {"op": "eq", "val": None}
+        for op in ("eq", "geq", "leq"):
+            v = _safe_int(args.get(f"{symbol}_{op}"))
             if v is not None:
-                val = v
-                op = candidate_op
+                dimension_filter[symbol] = {"op": op, "val": v}
                 break
-        dimension_filter[symbol] = {"op": op, "val": val}
 
     ids_raw = args.get("ids")
     return FilterState(
@@ -348,69 +346,71 @@ def _join_names(names, locale="en-us", conj_key="heading.and"):
         return f"{names[0]} {conj} {names[1]}"
     return f"{', '.join(names[:-1])} {conj} {names[-1]}"
 
+def _sibilant_prep(word, prep, locale):
+    sibs = locale_sibilants(locale)
+    chars = sibs.get("chars", [])
+    suffix = sibs.get("preposition", {}).get("suffix", "")
+    if chars and suffix and word and word[0].lower() in chars:
+        return prep + suffix
+    return prep
+
+
+def _tree_order(tree):
+    """Depth-first index for each tree node id (used to sort compressed ids)."""
+    order = {}
+    counter = [0]
+    def walk(node):
+        order[node["id"]] = counter[0]
+        counter[0] += 1
+        for c in (node.get("children") or []):
+            walk(c)
+    for root in tree:
+        walk(root)
+    return order
+
+
+def _tree_gen_map(tree):
+    """Map of node id → 'cs-cz-gen' translation (Czech genitive form)."""
+    out = {}
+    def walk(node):
+        g = (node.get("translations") or {}).get("cs-cz-gen")
+        if g:
+            out[node["id"]] = g
+        for c in (node.get("children") or []):
+            walk(c)
+    for root in tree:
+        walk(root)
+    return out
+
 
 def _heading_from_compressed(view_label, compressed, name_map, locale, fs,
                              dim_mode="dim", dimension_caches=None,
-                             active_quantity_names=None, conn=None):
+                             active_quantity_names=None):
     """Render the page heading.
 
     Format: {view_label} from {topics} with {quantity_label} {quantities}
             where difficulty is {difficulty} and {dimensions}
     """
-    from scifind_lib import locale_sibilants
-
     def _loc_ui(key):
         return _ui_lookup(locale, key)
-
-    def _sibilant_prep(word, prep):
-        sibs = locale_sibilants(locale)
-        chars = sibs.get("chars", [])
-        suffix = sibs.get("preposition", {}).get("suffix", "")
-        if chars and suffix and word and word[0].lower() in chars:
-            return prep + suffix
-        return prep
 
     parts = [view_label]
 
     # --- topics ---
     if compressed:
         tree = _sciences_tree()
-        order = {}
-        counter = [0]
-        def _idx(node):
-            order[node["id"]] = counter[0]; counter[0] += 1
-            for c in (node.get("children") or []):
-                _idx(c)
-        for r in tree:
-            _idx(r)
-
-        gen_map = {}
-        def _gen(node):
-            if isinstance(node, dict):
-                if "id" in node and "translations" in node:
-                    g = node["translations"].get("cs-cz-gen")
-                    if g:
-                        gen_map[node["id"]] = g
-                for v in node.values():
-                    if isinstance(v, (dict, list)):
-                        _gen(v)
-            elif isinstance(node, list):
-                for item in node:
-                    _gen(item)
-        for r in tree:
-            _gen(r)
-
+        order = _tree_order(tree)
+        gen_map = _tree_gen_map(tree) if locale == "cs-cz" else {}
         seen = set()
         topic_names = []
         for nid in sorted(compressed, key=lambda x: order.get(x, 9**9)):
-            n = gen_map.get(nid) if locale == "cs-cz" else None
-            if not n:
-                n = name_map.get(nid, nid)
+            n = gen_map.get(nid) or name_map.get(nid, nid)
             if n not in seen:
-                topic_names.append(n); seen.add(n)
+                topic_names.append(n)
+                seen.add(n)
         if topic_names:
             joined = _join_names(topic_names, locale)
-            prep = _sibilant_prep(joined, _loc_ui("heading.from"))
+            prep = _sibilant_prep(joined, _loc_ui("heading.from"), locale)
             parts.append(f"{prep} {joined}")
 
     # --- quantities ---
@@ -419,16 +419,17 @@ def _heading_from_compressed(view_label, compressed, name_map, locale, fs,
         q_label = _loc_ui("heading.quantity") if count == 1 else _loc_ui("heading.quantities")
         q_conj = "heading.or" if fs.quantity_mode == "or" else "heading.and"
         joined = _join_names(active_quantity_names, locale, q_conj)
-        prep = _sibilant_prep(joined, _loc_ui("heading.with"))
+        prep = _sibilant_prep(joined, _loc_ui("heading.with"), locale)
         parts.append(f"{prep} {q_label} {joined}")
 
     # --- difficulty ---
     diff_str = ""
     if fs.diff_min > MIN_DIFFICULTY or fs.diff_max < MAX_DIFFICULTY:
+        where = _loc_ui("heading.where_difficulty_is")
         if fs.diff_min == fs.diff_max:
-            diff_str = f"{_loc_ui('heading.where_difficulty_is')} {fs.diff_min}"
+            diff_str = f"{where} {fs.diff_min}"
         else:
-            diff_str = f"{_loc_ui('heading.where_difficulty_is')} {fs.diff_min}\u2013{fs.diff_max}"
+            diff_str = f"{where} {fs.diff_min}\u2013{fs.diff_max}"
 
     # --- dimensions ---
     caches = dimension_caches or {}
@@ -436,7 +437,7 @@ def _heading_from_compressed(view_label, compressed, name_map, locale, fs,
     y_map = caches.get("unit", {})
     op_syms = {"eq": "=", "geq": "\u2265", "leq": "\u2264"}
     dim_parts = []
-    for symbol in DIMENSION_SYMBOLS(conn):
+    for symbol in DIMENSION_SYMBOLS():
         d = fs.dimension_filter.get(symbol, {})
         value = d.get("val")
         if value is None:
@@ -468,9 +469,13 @@ def _heading_from_compressed(view_label, compressed, name_map, locale, fs,
 # Locale
 # ---------------------------------------------------------------------------
 
-_locale_file_cache = {}
 _available_locales = None
 _lang_to_locale = None
+
+DEFAULT_LOCALE_FALLBACK = {
+    "meta": {"name": "US English", "acceptLanguage": "en-US"},
+    "ui": {},
+}
 
 
 def _scan_locales():
@@ -480,27 +485,22 @@ def _scan_locales():
         return
     _available_locales = {}
     _lang_to_locale = {}
-    if not _LOCALE_DIR.is_dir():
-        _available_locales["en-us"] = {"meta": {"name": "US English", "acceptLanguage": "en-US"}}
-        _lang_to_locale["en-US"] = "en-us"
-        _lang_to_locale["en"] = "en-us"
-        return
-    for path in sorted(_LOCALE_DIR.glob("*.json")):
-        locale = path.stem
-        try:
-            with open(path, encoding="utf-8") as f:
-                data = json.load(f)
-        except (OSError, ValueError):
-            continue
-        meta = data.get("meta", {})
-        _available_locales[locale] = data
-        lang = meta.get("acceptLanguage", locale)
-        _lang_to_locale[lang] = locale
+    if _LOCALE_DIR.is_dir():
+        for path in sorted(_LOCALE_DIR.glob("*.json")):
+            locale = path.stem
+            try:
+                with open(path, encoding="utf-8") as f:
+                    data = json.load(f)
+            except (OSError, ValueError):
+                continue
+            meta = data.get("meta", {})
+            _available_locales[locale] = data
+            lang = meta.get("acceptLanguage", locale)
+            _lang_to_locale[lang] = locale
     if "en-us" not in _available_locales:
-        _available_locales["en-us"] = {
-            "meta": {"name": "US English", "acceptLanguage": "en-US"},
-            "ui": {},
-        }
+        _available_locales["en-us"] = DEFAULT_LOCALE_FALLBACK
+    _lang_to_locale.setdefault("en-US", "en-us")
+    _lang_to_locale.setdefault("en", "en-us")
 
 
 def _resolve_locale_from_header(header):
@@ -598,13 +598,13 @@ def ensure_db_open():
         db = get_db()
     except sqlite3.DatabaseError as exc:
         logger.warning("Database open failed: %s", exc)
-        return _NOT_INITIALISED.format(
-            os.environ.get("SCIFIND_DB", "scifind.db")
-        ), 503
+        return _uninitialised_response()
     if not _database_is_initialised(db):
-        return _NOT_INITIALISED.format(
-            os.environ.get("SCIFIND_DB", "scifind.db")
-        ), 503
+        return _uninitialised_response()
+
+
+def _uninitialised_response():
+    return (_NOT_INITIALISED.format(os.environ.get("SCIFIND_DB", "scifind.db")), 503)
 
 
 # ---------------------------------------------------------------------------
@@ -614,18 +614,14 @@ def ensure_db_open():
 def _ui_lookup(locale, key):
     """Look up a dotted UI key ('category.child') in the nested locale ui dict."""
     _scan_locales()
-    ui = _available_locales.get(locale, {}).get("ui", {})
     parts = key.split(".", 1)
     if len(parts) == 2:
         cat, child = parts
-        val = ui.get(cat, {}).get(child)
-        if val is not None:
-            return val
-    fallback = _available_locales.get("en-us", {}).get("ui", {})
-    if len(parts) == 2:
-        val = fallback.get(parts[0], {}).get(parts[1])
-        if val is not None:
-            return val
+        for ui in (_available_locales.get(locale, {}).get("ui", {}),
+                   _available_locales.get("en-us", {}).get("ui", {})):
+            val = ui.get(cat, {}).get(child)
+            if val is not None:
+                return val
     return key
 
 
@@ -646,14 +642,6 @@ def _(data):
         if result:
             return result
     return _ui_lookup(loc, data)
-
-
-@app.template_global()
-def unit_name(unit_id):
-    names = _get_unit_name_map()
-    if unit_id in names:
-        return Markup(f'<a href="/unit/{html_module.escape(unit_id)}">{html_module.escape(names[unit_id])}</a>')
-    return Markup(html_module.escape(unit_id.replace("_", " ").title()))
 
 
 app.template_global()(render_symbol)
@@ -681,6 +669,14 @@ def _get_unit_symbol_map():
     if 'unit_symbol_map' not in g:
         g.unit_symbol_map = _unit_symbol_map(get_db())
     return g.unit_symbol_map
+
+
+def _unit_name_link(unit_id):
+    """Render a unit id as an HTML link to its detail page, with a localised name."""
+    names = _get_unit_name_map()
+    if unit_id in names:
+        return Markup(f'<a href="/unit/{html_module.escape(unit_id)}">{html_module.escape(names[unit_id])}</a>')
+    return Markup(html_module.escape(unit_id.replace("_", " ").title()))
 
 
 def _render_unit_html(default_unit, locale):
@@ -722,17 +718,16 @@ def inject_globals():
         db = get_db()
     except sqlite3.OperationalError as exc:
         logger.warning("Database unavailable: %s", exc)
-    fs = parse_filter_state(request.args, request.path, db=db)
+    fs = parse_filter_state(request.args, request.path)
     name_map = _tree_name_map(tree, locale)
     compressed = _compress_selection(tree, fs.ids)
     tree_json = _jstree_data(tree, name_map, compressed, fs.exclude_all, ids_provided=fs.ids_provided)
     path = request.path
     current_view = (
         "quantities"
-        if path == "/quantities" or path.startswith("/quantity/") or path.startswith("/unit/")
+        if path == "/quantities" or path.startswith(("/quantity/", "/unit/"))
         else "formulas"
     )
-
     all_quantities_for_filter = []
     dimension_caches = {"var": {}, "unit": {}, "dim": {}}
     if db is not None:
@@ -758,7 +753,6 @@ def inject_globals():
     locale_ui = _available_locales.get(locale, {}).get("ui", {})
 
     return dict(
-        tree=tree,
         tree_json=tree_json,
         diff_min=fs.diff_min,
         diff_max=fs.diff_max,
@@ -768,7 +762,7 @@ def inject_globals():
         qty_mode=fs.quantity_mode,
         all_quantities_for_filter=all_quantities_for_filter,
         dim_symbols=dim_symbols,
-        dimension_symbol_list=DIMENSION_SYMBOLS(db) if db else [],
+        dimension_symbol_list=DIMENSION_SYMBOLS() if db else [],
         available_locales=locale_list,
         locale_ui=locale_ui,
     )
@@ -789,25 +783,9 @@ def base_units_page():
 
 
 def _build_formula_detail_items(db, formula_id, locale):
-    """Build the formula detail table data from formula_items with quantities."""
-
-    rows = fetch_formula_detail_items(db, formula_id)
+    """Build the formula detail table data from formula_token rows."""
     result = []
-
-    # Build a lookup of quantity id → localized name for marker resolution
-    qname_map = {}
-    for item in rows:
-        d = dict(item)
-        qid = d.get("quantity_id")
-        if qid and qid not in qname_map:
-            # Fetch the quantity name in the current locale
-            qty_row = db.execute("SELECT name FROM quantity WHERE id = ?", (qid,)).fetchone()
-            if qty_row:
-                qname_map[qid] = localise(qty_row["name"], locale) or qid.replace("_", " ").title()
-            else:
-                qname_map[qid] = qid.replace("_", " ").title()
-
-    for item in rows:
+    for item in fetch_formula_detail_items(db, formula_id):
         item = dict(item)
         qid = item.get("quantity_id")
         if not qid:
@@ -815,6 +793,7 @@ def _build_formula_detail_items(db, formula_id, locale):
 
         symbol_latex = render_variable_base(item, locale)
 
+        qty_name = item.get("quantity_name") or qid.replace("_", " ").title()
         orig_symbol = (item.get("quantity_symbol") or "").strip()
         overwrite_raw = item.get("symbol_overwrite") or ""
         overwrite = localise(overwrite_raw, locale)
@@ -824,22 +803,17 @@ def _build_formula_detail_items(db, formula_id, locale):
 
         qlink = (
             f'<a href="/quantity/{html_module.escape(qid)}">'
-            f"{html_module.escape(qname_map.get(qid, qid))}</a>"
+            f"{html_module.escape(qty_name)}</a>"
         )
-
-        has_match = bool(
-            qno_raw and any(
-                m.split('|')[0].lower().replace(' ', '_') == qid
-                for m in re.findall(r'\[([^\]]+)\]', qno_raw)
-            )
-        ) if qno_raw else False
 
         paren_parts = []
         if has_overwrite and orig_symbol:
             paren_parts.append(f"${orig_symbol}$")
 
         if qno_raw:
-            if has_match:
+            marker_ids = {m.split('|')[0].lower().replace(' ', '_')
+                          for m in re.findall(r'\[([^\]]+)\]', qno_raw)}
+            if qid in marker_ids:
                 # qno has [quantity_id] marker — resolve links
                 name_html = parse_quantity_name_markers(qno_raw)
             else:
@@ -848,30 +822,17 @@ def _build_formula_detail_items(db, formula_id, locale):
                 if has_overwrite and orig_symbol:
                     paren_parts.append(qlink)
         else:
-            if has_overwrite:
-                # Case 5: so=1 qno=0 — name=qlink, parens has orig_symbol
-                name_html = qlink
-            else:
-                # Case 1: so=0 qno=0 — name=qlink
-                name_html = qlink
+            name_html = qlink
 
         paren_html = f"({' '.join(paren_parts)})" if paren_parts else ""
-
-        default_unit_html = (
-            _render_unit_html(item["default_unit"], locale)
-            if item.get("default_unit") else ""
-        )
-        default_unit_symbol = (
-            _render_unit_symbol(item["default_unit"])
-            if item.get("default_unit") else ""
-        )
+        default_unit = item.get("default_unit")
 
         result.append({
             "symbol_latex": symbol_latex,
             "name_html": Markup(name_html) if name_html else "",
             "paren_html": Markup(paren_html) if paren_html else "",
-            "default_unit_html": Markup(default_unit_html) if default_unit_html else "",
-            "default_unit_symbol_latex": default_unit_symbol,
+            "default_unit_html": Markup(_render_unit_html(default_unit, locale)) if default_unit else "",
+            "default_unit_symbol_latex": _render_unit_symbol(default_unit) if default_unit else "",
         })
 
     return result
@@ -886,20 +847,18 @@ def formula_detail(formula_id):
         return "Formula not found", 404
     row = dict(row)
     _attach_breadcrumbs(row, locale)
-    items = fetch_formula_items(db, formula_id)
-    latex = render_formula_items(items, locale=locale) if items else ""
+    latex = render_formula(db, formula_id, locale=locale)
     related = []
     for r in fetch_formula_related(db, formula_id):
         r = dict(r)
-        items = fetch_formula_items(db, r["related_id"])
-        r["latex"] = render_formula_items(items, locale=locale) if items else ""
+        r["latex"] = render_formula(db, r["related_id"], locale=locale)
         related.append(r)
     detail_items = _build_formula_detail_items(db, formula_id, locale)
 
     dim_caches = _get_dimension_caches()
     dimensions = compute_formula_dimensions(db, formula_id)
     dim_latex = format_dimensions_latex(
-        *dimensions, conn=db,
+        *dimensions,
         variable_symbols=dim_caches["var"],
         unit_symbols=dim_caches["unit"],
         dimension_symbols=dim_caches["dim"],
@@ -925,15 +884,13 @@ def quantity_detail(quantity_id):
     primary_formulas, non_primary_formulas = fetch_quantity_formulas_by_side(db, quantity_id)
     primary_formulas = [dict(f) for f in primary_formulas]
     non_primary_formulas = [dict(f) for f in non_primary_formulas]
-    for f in primary_formulas:
-        f["latex"] = render_formula_items(fetch_formula_items(db, f["id"]), locale=locale) or ""
-    for f in non_primary_formulas:
-        f["latex"] = render_formula_items(fetch_formula_items(db, f["id"]), locale=locale) or ""
+    for formulas in (primary_formulas, non_primary_formulas):
+        for f in formulas:
+            f["latex"] = render_formula(db, f["id"], locale=locale) or ""
     related_formulas = []
     for r in fetch_quantity_related_formulas(db, quantity_id):
         r = dict(r)
-        items = fetch_formula_items(db, r["id"])
-        r["latex"] = render_formula_items(items, locale=locale) if items else ""
+        r["latex"] = render_formula(db, r["id"], locale=locale)
         related_formulas.append(r)
 
     default_unit_html = Markup(
@@ -953,13 +910,16 @@ def quantity_detail(quantity_id):
         except (json.JSONDecodeError, TypeError):
             du = []
         du_ids = {e["unit"] for e in du}
-        unit_system = "SI"
-        for e in du:
-            row = db.execute(
-                "SELECT unit_system FROM unit WHERE id = ?", (e["unit"],)
+        if du:
+            placeholders = ",".join("?" for _ in du)
+            unit_system_row = db.execute(
+                f"SELECT unit_system FROM unit WHERE id IN ({placeholders}) "
+                f"AND unit_system != 'SI' LIMIT 1",
+                tuple(e["unit"] for e in du),
             ).fetchone()
-            if row and row["unit_system"] != "SI":
-                unit_system = row["unit_system"]
+            unit_system = unit_system_row["unit_system"] if unit_system_row else "SI"
+        else:
+            unit_system = "SI"
         units.append({
             "symbol_latex": default_unit_symbol_latex,
             "name_html": default_unit_html,
@@ -973,7 +933,7 @@ def quantity_detail(quantity_id):
     for eu in extra_units:
         units.append({
             "symbol_latex": Markup(render_symbol(eu["symbol"])),
-            "name_html": unit_name(eu["id"]),
+            "name_html": _unit_name_link(eu["id"]),
             "unit_system": eu.get("unit_system") or "any",
             "factor": eu.get("factor", 1),
             "offset": eu.get("offset", 0),
@@ -983,9 +943,9 @@ def quantity_detail(quantity_id):
     show_factor = any(u.get("factor", 1) != 1 for u in units)
 
     dim_caches = _get_dimension_caches()
-    quantity_dims = extract_dimensions_from_row(q, db)
+    quantity_dims = extract_dimensions_from_row(q)
     dim_latex = format_dimensions_latex(
-        *quantity_dims, conn=db,
+        *quantity_dims,
         variable_symbols=dim_caches["var"],
         unit_symbols=dim_caches["unit"],
         dimension_symbols=dim_caches["dim"],
@@ -1013,11 +973,8 @@ def unit_detail(unit_id):
         return "Unit not found", 404
     unit = dict(unit)
     locale = g.locale
-    unit["quantity_name_localized"] = localise(unit.get("name"), locale) if unit.get("name") else unit.get("quantity_id", "")
-    # Use the quantity's own name, not the unit's name
     qty = db.execute("SELECT name FROM quantity WHERE id = ?", (unit["quantity_id"],)).fetchone()
-    if qty:
-        unit["quantity_name_localized"] = localise(qty["name"], locale)
+    unit["quantity_name_localized"] = localise(qty["name"], locale) if qty else unit.get("quantity_id", "")
     _attach_breadcrumbs(unit, locale)
     si_unit_symbol = fetch_si_unit_symbol(db, unit["quantity_id"])
     return render_template("unit.html", unit=unit, si_unit_symbol=si_unit_symbol)
@@ -1032,7 +989,7 @@ def search_page():
 
 @app.route("/api/search-suggestions")
 def search_suggestions():
-    query = request.args.get("q", "").strip()[:50]
+    query = request.args.get("q", "").strip()[:SUGGEST_QUERY_MAX_LENGTH]
     suggestions = suggest_headings(get_db(), query) if query else []
     return {"suggestions": [
         {"id": s[1], "kind": s[2], "heading": s[3]} for s in suggestions
@@ -1043,7 +1000,7 @@ def search_suggestions():
 def all_quantities():
     db = get_db()
     locale = g.locale
-    fs = parse_filter_state(request.args, request.path, db=db)
+    fs = parse_filter_state(request.args, request.path)
     tree = _sciences_tree()
     compressed = _compress_selection(tree, fs.ids)
     if compressed == {r["id"] for r in tree}:
@@ -1058,9 +1015,7 @@ def all_quantities():
 
     raw_quantities = fetch_all_quantities(db)
     topic_filter = _filtered_ids_for_query(tree, fs.ids)
-    dim_qty_ids = None
-    if fs.base_quantity_only:
-        dim_qty_ids = set(dimension_quantity_ids(db).values())
+    dim_qty_ids = set(dimension_quantity_ids().values()) if fs.base_quantity_only else None
     filtered = []
     for q in raw_quantities:
         q = dict(q)
@@ -1068,11 +1023,11 @@ def all_quantities():
 
         if topic_filter and q.get("topic_id") not in topic_filter:
             continue
-        if fs.has_dimension_filter and not _dimension_matches(q, fs.dimension_filter, fs.dim_mode, conn=db):
+        if fs.has_dimension_filter and not _dimension_matches(q, fs.dimension_filter, fs.dim_mode):
             continue
         if fs.quantity_ids and q["id"] not in fs.quantity_ids:
             continue
-        if fs.base_quantity_only and q["id"] not in dim_qty_ids:
+        if dim_qty_ids is not None and q["id"] not in dim_qty_ids:
             continue
 
         q["default_unit_html"] = Markup(
@@ -1085,13 +1040,13 @@ def all_quantities():
     dim_caches = _get_dimension_caches()
     quantity_names = []
     if fs.quantity_ids:
-        for q in raw_quantities:
-            if q["id"] in fs.quantity_ids:
-                quantity_names.append(localise(q["name"], locale))
+        names_by_id = fetch_quantities_by_ids(db, fs.quantity_ids)
+        quantity_names = [localise(names_by_id[qid], locale) for qid in fs.quantity_ids
+                          if qid in names_by_id]
     heading = _heading_from_compressed(
         _("nav.quantities"), compressed, name_map, locale, fs,
         dim_mode=g.get("dim_mode", "dim"), dimension_caches=dim_caches,
-        active_quantity_names=quantity_names, conn=db,
+        active_quantity_names=quantity_names,
     )
     if fs.base_quantity_only:
         heading = _("list.base_quantities")
@@ -1102,7 +1057,7 @@ def all_quantities():
 def all_formulas():
     db = get_db()
     locale = g.locale
-    fs = parse_filter_state(request.args, request.path, db=db)
+    fs = parse_filter_state(request.args, request.path)
     tree = _sciences_tree()
     compressed = _compress_selection(tree, fs.ids)
     if compressed == {r["id"] for r in tree}:
@@ -1128,7 +1083,7 @@ def all_formulas():
         dim_map = compute_all_formula_dimensions(db)
         formulas = [
             f for f in formulas
-            if _dimension_matches(dim_map.get(f["id"], {}), fs.dimension_filter, fs.dim_mode, conn=db)
+            if _dimension_matches(dim_map.get(f["id"], {}), fs.dimension_filter, fs.dim_mode)
         ]
 
     if fs.quantity_ids:
@@ -1143,21 +1098,20 @@ def all_formulas():
 
     for f in formulas:
         _attach_breadcrumbs(f, locale)
-        items = fetch_formula_items(db, f["id"])
-        f["latex"] = render_formula_items(items, locale=locale) if items else ""
+        f["latex"] = render_formula(db, f["id"], locale=locale)
 
     quantity_names = []
     if fs.quantity_ids:
-        for q in fetch_all_quantities(db):
-            if q["id"] in fs.quantity_ids:
-                quantity_names.append(localise(q["name"], locale))
+        names_by_id = fetch_quantities_by_ids(db, fs.quantity_ids)
+        quantity_names = [localise(names_by_id[qid], locale) for qid in fs.quantity_ids
+                          if qid in names_by_id]
 
     name_map = _tree_name_map(tree, locale)
     dim_caches = _get_dimension_caches()
     heading = _heading_from_compressed(
         _("nav.formulas"), compressed, name_map, locale, fs,
         dim_mode=g.get("dim_mode", "dim"), dimension_caches=dim_caches,
-        active_quantity_names=quantity_names, conn=db,
+        active_quantity_names=quantity_names,
     )
     return render_template("formulas.html", formulas=formulas, heading=heading)
 
@@ -1176,17 +1130,20 @@ def export():
         resp.set_cookie("sf_export_format", fmt, max_age=365*24*3600, path="/")
         return resp
 
-    if fmt == "xlsx":
+    def _binary_export(export_fn, mimetype, filename):
         buffer = io.BytesIO()
-        export_to_xlsx(db, buffer)
+        export_fn(db, buffer)
         buffer.seek(0)
-        return _respond(buffer.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "scifind.xlsx")
+        return _respond(buffer.getvalue(), mimetype, filename)
 
+    if fmt == "xlsx":
+        return _binary_export(export_to_xlsx,
+                              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                              "scifind.xlsx")
     if fmt == "ods":
-        buffer = io.BytesIO()
-        export_to_ods(db, buffer)
-        buffer.seek(0)
-        return _respond(buffer.getvalue(), "application/vnd.oasis.opendocument.spreadsheet", "scifind.ods")
+        return _binary_export(export_to_ods,
+                              "application/vnd.oasis.opendocument.spreadsheet",
+                              "scifind.ods")
 
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:

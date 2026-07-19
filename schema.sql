@@ -15,29 +15,88 @@ CREATE TABLE IF NOT EXISTS formula (
 );
 
 -- ============================================================
--- 2. formula_item
+-- 2. operator
 -- ============================================================
-CREATE TABLE IF NOT EXISTS formula_item (
-    formula_id       TEXT NOT NULL REFERENCES formula(id),
-    term             INTEGER NOT NULL,
-    is_primary       INTEGER NOT NULL DEFAULT 0 CHECK (is_primary IN (0,1)),
-    sort_order       INTEGER NOT NULL DEFAULT 0,
-    coeff_value      REAL,
-    latex_coef       TEXT,
-    coeff_exponent   REAL DEFAULT 1,
-    quantity_id      TEXT REFERENCES quantity(id),
-    var_exponent     REAL DEFAULT 1,
-    label            TEXT,
-    symbol_overwrite TEXT,
-    quantity_name_overwrite TEXT,        -- JSON i18n: overrides the quantity name for this formula_item
-    latex_prefix     TEXT,
-    latex_suffix     TEXT,
-
-    PRIMARY KEY (formula_id, term, is_primary, sort_order)
+-- Operators are reusable building blocks. Each has an arity, precedence,
+-- and associativity. symbol is the LaTeX display form (e.g. \cdot, \sin, =).
+-- math is a Python expression template (e.g. "a+b", "math.sin(a)", NULL if
+-- the operator is not numerically computable, e.g. =, \propto).
+--
+-- operator_type:
+--   infix       binary or n-ary: a OP b OP c         (+, -, *, /, =)
+--   prefix      function-style:  OP a                 (\sin, \cos, \sqrt, \Delta)
+--   postfix                       a OP                (n!)
+--   relational  forms an equation: a = b, a ∝ b       (=, \approx, \propto, <, >)
+CREATE TABLE IF NOT EXISTS operator (
+    id            TEXT PRIMARY KEY,
+    symbol        TEXT,               -- LaTeX display; NULL means invisible
+    math          TEXT,               -- Python expression using operand names; NULL if not computable
+    arity         INTEGER NOT NULL CHECK (arity > 0),
+    precedence    INTEGER NOT NULL,
+    associativity TEXT NOT NULL CHECK (associativity IN ('left', 'right', 'none')),
+    operator_type TEXT NOT NULL CHECK (operator_type IN ('infix', 'prefix', 'postfix', 'relational'))
 );
 
 -- ============================================================
--- 3. formula_relation (includes conditions)
+-- 3. constant
+-- ============================================================
+-- Dimensionless or constant-valued symbols like pi, e, Euler's gamma.
+-- default_unit follows the same JSON array shape as quantity.default_unit
+-- (used for dimensional constants like gravitational_constant, gas_constant
+-- which are physical constants rather than pure numbers).
+CREATE TABLE IF NOT EXISTS constant (
+    id           TEXT PRIMARY KEY,
+    name         TEXT NOT NULL,      -- JSON i18n: {"en-us": "Pi"}
+    symbol       TEXT NOT NULL,      -- LaTeX display: \pi
+    value        REAL,               -- numerical value; NULL for symbolic constants
+    default_unit TEXT                -- JSON array: [{"unit":"<id>","exponent":<n>},...]
+);
+
+-- ============================================================
+-- 4. formula_token
+-- ============================================================
+-- An RPN-encoded formula. Tokens are read in `position` order, evaluated
+-- onto a stack: operands push, operators pop their arity-many operands and
+-- push a result. After the last token, the stack should hold a single node
+-- which is the expression tree root.
+--
+-- token_kind:
+--   quantity    operand; quantity_id is set
+--   constant    operand; constant_id is set
+--   number      operand; value is set
+--   operator    arity-many operands are popped, the operator is applied
+--
+-- label is a JSON i18n array used for composite subscripts (e.g. ["1","2"]
+-- -> v_{12}). symbol_overwrite and quantity_name_overwrite override the
+-- referenced quantity's defaults for display only.
+CREATE TABLE IF NOT EXISTS formula_token (
+    formula_id               TEXT NOT NULL REFERENCES formula(id) ON DELETE CASCADE,
+    position                 INTEGER NOT NULL,
+    token_kind               TEXT NOT NULL CHECK (token_kind IN ('quantity', 'constant', 'number', 'operator')),
+    quantity_id              TEXT REFERENCES quantity(id),
+    constant_id              TEXT REFERENCES constant(id),
+    operator_id              TEXT REFERENCES operator(id),
+    value                    REAL,
+    label                    TEXT,        -- JSON i18n array
+    symbol_overwrite         TEXT,        -- JSON i18n, applies to quantity/constant tokens
+    quantity_name_overwrite  TEXT,        -- JSON i18n, applies to quantity tokens
+
+    PRIMARY KEY (formula_id, position),
+
+    CHECK (
+        (token_kind = 'quantity' AND quantity_id IS NOT NULL
+            AND constant_id IS NULL AND operator_id IS NULL AND value IS NULL)
+        OR (token_kind = 'constant' AND constant_id IS NOT NULL
+            AND quantity_id IS NULL AND operator_id IS NULL AND value IS NULL)
+        OR (token_kind = 'number' AND value IS NOT NULL
+            AND quantity_id IS NULL AND constant_id IS NULL AND operator_id IS NULL)
+        OR (token_kind = 'operator' AND operator_id IS NOT NULL
+            AND quantity_id IS NULL AND constant_id IS NULL AND value IS NULL)
+    )
+);
+
+-- ============================================================
+-- 5. formula_relation (includes conditions)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS formula_relation (
     formula_id    TEXT NOT NULL REFERENCES formula(id),
@@ -52,7 +111,7 @@ CREATE TABLE IF NOT EXISTS formula_relation (
 );
 
 -- ============================================================
--- 4. quantity
+-- 6. quantity
 -- ============================================================
 CREATE TABLE IF NOT EXISTS quantity (
     id          TEXT PRIMARY KEY,
@@ -76,7 +135,7 @@ CREATE TABLE IF NOT EXISTS quantity (
 );
 
 -- ============================================================
--- 6. unit
+-- 7. unit
 -- ============================================================
 CREATE TABLE IF NOT EXISTS unit (
     id           TEXT PRIMARY KEY,
@@ -93,9 +152,11 @@ CREATE TABLE IF NOT EXISTS unit (
 -- ============================================================
 -- Indexes
 -- ============================================================
-CREATE INDEX IF NOT EXISTS idx_formula_item_quantity    ON formula_item(quantity_id);
+CREATE INDEX IF NOT EXISTS idx_formula_token_formula  ON formula_token(formula_id);
+CREATE INDEX IF NOT EXISTS idx_formula_token_quantity ON formula_token(quantity_id);
+CREATE INDEX IF NOT EXISTS idx_formula_token_constant ON formula_token(constant_id);
+CREATE INDEX IF NOT EXISTS idx_formula_token_operator ON formula_token(operator_id);
 CREATE INDEX IF NOT EXISTS idx_formula_relation_formula ON formula_relation(formula_id);
 CREATE INDEX IF NOT EXISTS idx_formula_relation_related ON formula_relation(related_id);
 CREATE INDEX IF NOT EXISTS idx_formula_relation_type    ON formula_relation(relation_type);
 CREATE INDEX IF NOT EXISTS idx_unit_quantity            ON unit(quantity_id);
-

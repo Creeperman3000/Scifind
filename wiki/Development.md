@@ -40,6 +40,13 @@ with app.test_client() as c:
         print(f'{route}: {"OK" if r.status_code == 200 else "FAIL"} ({r.status_code})')
 ```
 
+To dump every formula's rendered LaTeX to stdout (useful when diffing
+after a renderer change):
+
+```bash
+python tools/render_all.py
+```
+
 ## I18n
 
 All user-facing text fields (`name`, `description`, `label`,
@@ -55,14 +62,79 @@ locales: `en-us`, `en-uk`, `cs-cz`.
 
 ## Adding a Formula
 
-1. Insert a row into `formula` with a unique `id`, name, topic, and difficulty.
-2. Insert rows into `formula_item` for each variable — LHS items
-   (`is_primary=1`) and RHS items (`is_primary=0`).
-3. If the formula uses a quantity with the same dimensions as another
-   (e.g. rotational energy uses `energy` with a subscript), set `label` and
-   `quantity_name_overwrite` on the LHS item.
-4. Link related formulas via `formula_relation`.
-5. Re-initialise the database: `python scifind_cli.py init --force`.
+Formulas are stored as RPN token streams. The easiest way to add a
+new one is to write the tokens directly, then re-initialise the DB.
+
+1. Insert a row into `formula` with a unique `id`, name, topic, and
+   difficulty.
+2. Insert one or more rows into `formula_token` for the formula, in
+   `position` order. For each token, set:
+   - `token_kind = 'quantity'` and `quantity_id = '…'`
+   - `token_kind = 'constant'` and `constant_id = 'pi'` / `'euler_e'`
+     / `'speed_of_light'` / etc.
+   - `token_kind = 'number'` and `value = 0.5`
+   - `token_kind = 'operator'` and `operator_id = 'add'` / `'mul'` /
+     `'pow'` / `'div'` / `'eq'` / `'sin'` / etc.
+3. The RPN expression for a one-product term with no sum is:
+   ```
+   <operands…> <binary-op> …  <eq>
+   ```
+   For `E_k = ½ m v²`:
+   ```
+   1: quantity energy     (label: "k")
+   2: number 2
+   3: number -1
+   4: operator pow
+   5: quantity mass
+   6: operator mul
+   7: quantity velocity
+   8: number 2
+   9: operator pow
+   10: operator mul
+   11: operator eq
+   ```
+4. Optional decorations: `label` (subscript, JSON i18n array),
+   `symbol_overwrite` (override the quantity symbol, JSON i18n),
+   `quantity_name_overwrite` (override the displayed quantity name).
+5. Link related formulas via `formula_relation`.
+6. Re-initialise the database: `python scifind_cli.py init --force`.
+
+### Adding a New Operator
+
+Add a row to `operators.sql` and re-initialise. For example, to add
+`\arccos` (arity 1, prefix):
+
+```sql
+INSERT OR IGNORE INTO operator (id, symbol, math, arity, precedence, associativity, operator_type)
+VALUES ('arccos', '\\arccos', 'math.acos(a)', 1, 30, 'right', 'prefix');
+```
+
+### Adding a New Constant
+
+Add a row to `constants.sql` and re-initialise. For example, the
+Planck constant:
+
+```sql
+INSERT OR IGNORE INTO constant (id, name, symbol, value, default_unit)
+VALUES ('planck_constant', '{"en-us": "Planck constant"}', 'h', 6.62607015e-34,
+        '[{"unit":"joule","exponent":1},{"unit":"second","exponent":1}]');
+```
+
+### Converting From Legacy `formula_item` Data
+
+If you have a one-off batch of legacy `formula_item` rows, the
+`tools/convert_formulas.py` script will translate them. Run it from
+the project root:
+
+```bash
+python tools/convert_formulas.py --input <legacy_seed.sql> --output <out.sql> --summary
+```
+
+The default `--input` is `../seed.sql.old` and `--output` is
+`../tokens.sql` (relative to the `tools/` directory). The current
+`seed.sql` already contains the converted rows, so the script is
+only needed for re-migration. See the docstring at the top of the
+file for the rules and the data-bug fixups it applies.
 
 ## Adding Seed Data
 
@@ -91,15 +163,15 @@ wrangler deploy
 
 ## Edge Cases
 
-- **LaTeX command-letter collision**: `\pir` → `\pi{}r`. The
-  `_join_latex_parts()` function inserts `{}` between a command and a
-  following letter.
-- **symbol_overwrite empty/null**: Falls back to the quantity's default
-  symbol, then to the quantity ID.
-- **label empty/null**: No subscript is rendered.
-- **quantity_name_overwrite**: Overrides the displayed quantity name in
-  formula detail views; falls back to quantity `name` if not set.
-- **sqlite3.Row vs dict**: Access columns by `item["col"]` using `or ""`
-  fallback (works with both).
-- **WAL on Cloudflare**: SQLite's WAL journal mode is unavailable under
-  Pyodide, so `open_database()` silently falls back.
+- **RPN underflow / over-render**: All formulas are checked for a
+  complete reduction at the end of evaluation; an underflow means
+  the data is malformed and the renderer raises an error.
+- **Common reciprocals**: ½, ⅓, ¼, etc. render as `\frac{1}{N}` when
+  they appear as a bare number.
+- **Power `^(-1)`**: Renders as `\frac{1}{base}` for clean display.
+- **Negation**: `-1 * x` renders as `-x`; `Q + (-W)` renders as
+  `Q - W` (the `+` flips to `-`).
+- **sqlite3.Row vs dict**: Access columns by `item["col"]` using
+  `or ""` fallback (works with both).
+- **WAL on Cloudflare**: SQLite's WAL journal mode is unavailable
+  under Pyodide, so `open_database()` silently falls back.
