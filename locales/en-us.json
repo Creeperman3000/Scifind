@@ -126,6 +126,13 @@
       "copied": "Copied",
       "copy_failed": "Copy failed"
     },
+    "dock": {
+      "formulas": "Formulas",
+      "quantities": "Quantities",
+      "filter": "Filter",
+      "tree": "Tree",
+      "search": "Search"
+    },
     "tooltip": {
       "toggle_sidebar": "Toggle sidebar",
       "search": "Search",

@@ -258,13 +258,16 @@ def _dimension_matches(row_dimensions, dimension_filter, dim_mode="and"):
     active = [(s, df) for s, df in dimension_filter.items() if df["val"] is not None]
     if not active:
         return True
+    def _get(row, key):
+        v = row.get(key)
+        return v if v is not None else 0
     op_map = {"eq": (lambda a, v: a == v),
               "geq": (lambda a, v: a >= v),
               "leq": (lambda a, v: a <= v)}
     if dim_mode == "or":
-        return any(op_map[df["op"]](row_dimensions[sym_to_col[s]], df["val"])
+        return any(op_map[df["op"]](_get(row_dimensions, sym_to_col[s]), df["val"])
                    for s, df in active)
-    return all(op_map[df["op"]](row_dimensions[sym_to_col[s]], df["val"])
+    return all(op_map[df["op"]](_get(row_dimensions, sym_to_col[s]), df["val"])
                for s, df in active)
 
 
@@ -862,7 +865,7 @@ def compute_formula_dimensions(conn, formula_id):
         return []
 
     def find_lhs(node):
-        if node.kind == "operator" and node.operator_id == "eq":
+        if node.kind == "operator" and node.operator_type == "relational":
             return find_lhs(node.children[0])
         return node
 
@@ -882,13 +885,25 @@ def compute_formula_dimensions(conn, formula_id):
                     dims[i] += v * sign
             return
         op = node.operator_id
-        if op == "div":
+        if op in ("div", "frac"):
             walk(node.children[0], sign)
             walk(node.children[1], -sign)
         elif op == "pow":
             base, exp = node.children
             scale = exp.value if exp.kind == "number" and exp.value is not None else 1
             walk(base, sign * scale)
+        elif op in ("add", "sub"):
+            # Addition/subtraction doesn't change dimensions — all
+            # operands must have the same dimension. Walk only one.
+            walk(node.children[0], sign)
+        elif op in ("sin", "cos", "tan"):
+            # Transcendental functions produce dimensionless results.
+            pass
+        elif op == "sqrt":
+            before = list(dims)
+            walk(node.children[0], sign)
+            for i in range(len(dims)):
+                dims[i] = before[i] + (dims[i] - before[i]) * 0.5
         else:
             for c in node.children:
                 walk(c, sign)
@@ -1017,26 +1032,21 @@ def fetch_all_formulas(conn):
 def compute_all_formula_dimensions(conn):
     """Return {formula_id: {dim_M, dim_L, ...}} for all formulas.
 
-    Uses the LHS of each formula (the quantity tokens before the first
-    `=` operator) to compute the dimension vector.
+    Evaluates the RPN tree for each formula to correctly compute
+    LHS dimensions (handles frac, pow, etc.). Formulas without a
+    valid LHS or with no tokens get all-zero dimensions.
     """
     cols = DIMENSION_COLUMNS()
-    selects = [f"CAST(SUM(q.{c}) AS INTEGER) AS {c}" for c in cols]
-    rows = conn.execute(
-        f"""
-        SELECT ft.formula_id, {', '.join(selects)}
-        FROM formula_token ft
-        JOIN quantity q ON q.id = ft.quantity_id
-        WHERE ft.token_kind = 'quantity'
-          AND ft.position < COALESCE(
-            (SELECT MIN(position) FROM formula_token
-             WHERE formula_id = ft.formula_id AND operator_id = 'eq'),
-            99999
-          )
-        GROUP BY ft.formula_id
-        """
-    ).fetchall()
-    return {r["formula_id"]: {c: int(r[c] or 0) for c in cols} for r in rows}
+    all_ids = {r["id"] for r in conn.execute("SELECT id FROM formula").fetchall()}
+    zero_row = {c: 0 for c in cols}
+    result = {}
+    for fid in all_ids:
+        dims = compute_formula_dimensions(conn, fid)
+        if dims:
+            result[fid] = dict(zip(cols, dims))
+        else:
+            result[fid] = dict(zero_row)
+    return result
 
 
 def fetch_formulas_with_any_quantity(conn, quantity_ids):

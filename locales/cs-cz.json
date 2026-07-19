@@ -133,6 +133,13 @@
       "copied": "Zkopírováno",
       "copy_failed": "Kopírování selhalo"
     },
+    "dock": {
+      "formulas": "Vzorce",
+      "quantities": "Veličiny",
+      "filter": "Filtr",
+      "tree": "Strom",
+      "search": "Hledat"
+    },
     "tooltip": {
       "toggle_sidebar": "Přepnout boční panel",
       "search": "Hledat",

@@ -16,7 +16,11 @@
   <script src="{{ url_for('static', filename='js/jstree.min.js') }}"></script>
   <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
   <style>
+    /* ============================================================
+       Reset & Theme
+       ============================================================ */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
     :root {
       --bg: #ffffff;
       --bg-secondary: #f5f5f5;
@@ -26,11 +30,15 @@
       --border: #d0d0d0;
       --accent: #2563eb;
       --accent-hover: #1d4ed8;
-      --sidebar-width: 300px;
+
+      --sidebar-width-left: 200px;
+      --sidebar-width-right: 320px;
       --topbar-height: 52px;
+      --dock-height: 60px;   /* bottom area reserved for dock + fade on mobile */
       --track-height: 6px;
       --font: system-ui, -apple-system, sans-serif;
       --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
       --shadow-sm: 0 2px 8px rgba(0,0,0,0.1);
       --shadow-md: 0 4px 12px rgba(0,0,0,0.1);
       --shadow-lg: 0 4px 12px rgba(0,0,0,0.15);
@@ -58,154 +66,119 @@
       --accent: #3b82f6;
       --accent-hover: #2563eb;
     }
+
     body { font-family: var(--font); background: var(--bg); color: var(--text); height: 100vh; overflow: hidden; }
     a { color: var(--accent); text-decoration: none; }
     a:hover { text-decoration: underline; }
 
-    /* Toast */
-    .toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; }
-    .toast { padding: 12px 20px; border-radius: 8px; font-size: 0.85rem; color: #fff; box-shadow: var(--shadow-xl); animation: toast-in 0.3s ease; }
-    .toast.success { background: #16a34a; }
-    .toast.error { background: #dc2626; }
-    @keyframes toast-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    /* ============================================================
+       Layout
+       PC:     >= 1024  — both sidebars inline
+       TABLET: 768..1023 — left inline, right overlays
+       MOBILE: <  768   — sidebars as bottom sheets, dock on bottom
+       ============================================================ */
 
-    /* Top bar — flex layout, no absolute positioning for search */
+    /* Top bar */
     .topbar { display: flex; align-items: center; padding: 0 12px; border-bottom: 1px solid var(--border); background: var(--bg); height: var(--topbar-height); z-index: 100; flex-shrink: 0; gap: 8px; }
     .topbar-left { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
     .topbar-right { display: flex; align-items: center; gap: 4px; flex-shrink: 0; margin-left: auto; }
     .topbar-btn { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border: none; background: none; cursor: pointer; border-radius: 6px; color: var(--text); flex-shrink: 0; }
-    .topbar-btn svg { display: block; }
     .topbar-btn:hover { background: var(--bg-secondary); }
+    .topbar-btn svg { display: block; }
     .topbar-logo { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 1.1rem; color: var(--text); flex-shrink: 0; }
     .topbar-logo svg { stroke: var(--accent); flex-shrink: 0; }
     .topbar-logo .logo-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    /* Search — flex grow between left and right */
+
+    /* Search (in topbar) */
     .topbar-search { flex: 1 1 0; min-width: 0; display: flex; justify-content: center; }
     .topbar-search form { width: 100%; max-width: 500px; }
     .search-input-wrap { position: relative; display: flex; align-items: center; }
-    .topbar-search input { flex: 1; min-width: 0; padding: 7px 12px 7px 36px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); font-size: 0.9rem; color: var(--text); outline: none; box-sizing: border-box; }
+    .topbar-search input { flex: 1; min-width: 0; padding: 7px 12px 7px 36px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); font-size: 0.9rem; color: var(--text); outline: none; }
     .topbar-search input:focus { border-color: var(--accent); background: var(--bg); }
     .topbar-search .search-icon { position: absolute; left: 10px; top: 0; height: 100%; display: flex; align-items: center; color: var(--text-secondary); pointer-events: none; }
     .topbar-search .search-cancel { position: absolute; right: 8px; top: 0; height: 100%; display: flex; align-items: center; background: none; border: none; cursor: pointer; color: var(--text-secondary); padding: 4px; }
     .search-suggestions { position: absolute; top: 100%; left: 0; right: 0; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; margin-top: 4px; max-height: 300px; overflow-y: auto; z-index: 100; display: none; box-shadow: var(--shadow-lg); }
-    .search-suggestions::-webkit-scrollbar { width: 6px; }
-    .search-suggestions::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
     .search-suggestions.open { display: block; }
     .search-suggestion { padding: 8px 12px; cursor: pointer; font-size: 0.85rem; color: var(--text); display: flex; align-items: center; }
     .search-suggestion:hover, .search-suggestion.highlighted { background: var(--bg-secondary); }
     .search-suggestion .ss-kind { margin-left: auto; padding-left: 12px; font-size: 0.75rem; color: var(--text-secondary); }
-    /* Mobile search toggle */
-    .topbar-search-icon { display: none; }
-    @media (max-width: 480px) {
-      .topbar-search { display: none; }
-      .topbar-search-icon { display: flex; }
-    }
-    /* Expanded search mode on mobile */
-    .topbar.expand-search .topbar-left,
+    /* Expand-search state: topbar-search fills the whole bar on tablet/mobile */
+    .topbar.expand-search .topbar-left { display: none; }
     .topbar.expand-search .topbar-right { display: none; }
-    .topbar.expand-search .topbar-search { display: flex; flex: 1; }
-    .topbar.expand-search .topbar-search-icon { display: none; }
+    .topbar.expand-search .topbar-search { display: flex; }
+    .topbar.expand-search .topbar-search form { flex: 1; max-width: none; }
 
-    /* Settings dropdown */
-    .settings-wrap { position: relative; }
-    .dropdown-menu { display: none; position: absolute; right: 0; background: var(--bg); border: 1px solid var(--border); box-shadow: var(--shadow-md); }
-    .dropdown-menu.open { display: block; }
-    .settings-menu { top: 100%; margin-top: 4px; border-radius: 8px; min-width: 280px; padding: 8px; z-index: 200; }
-    .settings-item { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-radius: 4px; font-size: 0.85rem; gap: 16px; }
-    .settings-item:hover { background: var(--bg-secondary); }
-    .settings-item select { font-size: 0.85rem; padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); min-width: 100px; }
-    .settings-item button { font-size: 0.85rem; padding: 4px 12px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); cursor: pointer; }
-    .settings-item button:hover { background: var(--bg-secondary); }
-    .settings-divider { height: 1px; background: var(--border); margin: 4px 0; }
-
-    /* Filter button rows */
-    .filter-buttons { display: flex; gap: 0; }
-    .filter-btn { padding: 2px; border: none; background: none; color: var(--text); cursor: pointer; line-height: 1; border-radius: 4px; }
-    .filter-btn:hover { background: var(--bg-secondary); }
-    .filter-btn.active { color: var(--accent); }
-    .filter-btn.disabled { opacity: 0.35; pointer-events: none; }
-
-    .filter-btn svg { display: block; }
-
-    /* Section heading with reset button */
-    .section-label-row { display: flex; align-items: center; justify-content: space-between; margin: 12px 0 6px; }
-    .section-label-row .section-label { margin: 0; }
-
-    /* jsTree in right sidebar */
-    #sidebar-right .jstree-node { background: none !important; white-space: normal; display: flex !important; flex-wrap: wrap; align-items: flex-start; }
-    #sidebar-right .jstree-default .jstree-ocl { width: 18px !important; position: relative; flex-shrink: 0; }
-    #sidebar-right .jstree-default .jstree-anchor { font-size: 0.85rem; padding: 2px 8px 2px 24px !important; word-break: break-word; overflow-wrap: break-word; white-space: normal; height: auto !important; position: relative; flex: 1; min-width: 0; line-height: 1.25; }
-    #sidebar-right .jstree-children { width: 100%; }
-    /* Custom checkboxes – match app theme */
-    #sidebar-right .jstree-default .jstree-checkbox { background: none !important; width: 16px !important; height: 16px !important; border: 2px solid var(--border) !important; border-radius: 3px; position: absolute !important; left: 4px; top: 2px; }
-    #sidebar-right .jstree-default .jstree-clicked > .jstree-checkbox,
-    #sidebar-right .jstree-default .jstree-checked > .jstree-checkbox { background: var(--accent) !important; border-color: var(--accent) !important; }
-    #sidebar-right .jstree-default .jstree-clicked > .jstree-checkbox::after,
-    #sidebar-right .jstree-default .jstree-checked > .jstree-checkbox::after { content: ''; position: absolute; left: 4px; top: 2px; width: 4px; height: 7px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
-    #sidebar-right .jstree-default .jstree-anchor > .jstree-undetermined { background: var(--accent) !important; width: 16px !important; height: 16px !important; border: 2px solid var(--accent) !important; border-radius: 3px; position: absolute !important; left: 4px; top: 2px; }
-    #sidebar-right .jstree-default .jstree-anchor > .jstree-undetermined::after { content: ''; position: absolute; left: 2px; top: 5px; width: 8px; height: 2px; background: #fff; border-radius: 1px; border: none; transform: none; }
-    /* Unchecked checkboxes hidden by default, shown on sidebar hover */
-    #sidebar-right .jstree-checkbox { opacity: 0; }
-    #sidebar-right:hover .jstree-checkbox { opacity: 1 !important; }
-    /* Exception: top-level, undetermined, and their direct children always visible */
-    #sidebar-right .jstree-container-ul > .jstree-node > .jstree-anchor > .jstree-checkbox,
-    #sidebar-right .jstree-undetermined,
-    #sidebar-right .jstree-node.jstree-undetermined-parent > .jstree-children > .jstree-node > .jstree-anchor > .jstree-checkbox { opacity: 1 !important; }
-    /* Collapsed caret: filled right-pointing triangle, always visible */
-    #sidebar-right .jstree-default .jstree-closed > .jstree-ocl { background: none !important; }
-    #sidebar-right .jstree-default .jstree-closed > .jstree-ocl::after { content: ''; position: absolute; left: 6px; top: 4px; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 7px solid var(--text); }
-    /* Leaf nodes that were incorrectly closed via toggle_node should not show caret */
-    #sidebar-right .jstree-default .jstree-leaf.jstree-closed > .jstree-ocl { background: none !important; }
-    #sidebar-right .jstree-default .jstree-leaf.jstree-closed > .jstree-ocl::after { content: none !important; }
-    /* Expanded caret hidden by default, shown on node hover, filled down-pointing triangle */
-    #sidebar-right .jstree-default .jstree-open > .jstree-ocl { background: none !important; opacity: 0; }
-    #sidebar-right .jstree-default .jstree-open > .jstree-ocl::after { content: ''; position: absolute; left: 4px; top: 6px; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 7px solid var(--text); }
-    #sidebar-right .jstree-default .jstree-open:hover > .jstree-ocl { opacity: 1; }
-    /* Remove hover highlight on nodes */
-    #sidebar-right .jstree-default .jstree-hovered { background: transparent !important; box-shadow: none !important; }
-    /* Root-level nodes (no parents): bold */
-    #sidebar-right .jstree-container-ul > .jstree-node > .jstree-anchor { font-weight: 600; }
-    /* Leaf nodes (no children): secondary text color */
-    #sidebar-right .jstree-leaf > .jstree-anchor { color: var(--text-secondary); }
-
-    /* Body layout (flex) */
+    /* Body wrap: topbar height minus, horizontal flex for sidebars + main */
     .body-wrap { display: flex; height: calc(100vh - var(--topbar-height)); overflow: hidden; }
 
-    /* Sidebars */
+    /* Sidebars — default (PC) state */
     html.suppress-transitions .sidebar { transition: none !important; }
-    .sidebar { border-right: 1px solid var(--border); background: var(--bg); transition: width 0.3s ease, padding 0.3s ease, border-width 0.3s ease; width: var(--sidebar-width); flex-shrink: 0; position: relative; display: flex; flex-direction: column; }
-    .sidebar.right { border-right: none; border-left: 1px solid var(--border); }
+    .sidebar { border-right: 1px solid var(--border); background: var(--bg); transition: width 0.3s, padding 0.3s, border-width 0.3s; flex-shrink: 0; position: relative; display: flex; flex-direction: column; }
+    .sidebar.left { width: var(--sidebar-width-left); }
+    .sidebar.right { width: var(--sidebar-width-right); border-right: none; border-left: 1px solid var(--border); }
     .sidebar.collapsed { width: 0 !important; padding: 0; border-width: 0; overflow: hidden; }
     .sidebar-scroll { overflow-y: auto; overflow-x: hidden; flex: 1; }
-    .sidebar-inner { width: var(--sidebar-width); padding: 12px; padding-bottom: 35vh; }
+    .sidebar-inner { padding: 12px; padding-bottom: 35vh; }
+    .sidebar.left .sidebar-inner { width: var(--sidebar-width-left); }
+    .sidebar.right .sidebar-inner { width: var(--sidebar-width-right); }
     .sidebar-scroll.no-overflow .sidebar-inner { padding-bottom: 12px; }
-    .main.no-overflow::after { display: none; }
 
-    /* Sidebar resize handle */
     .sidebar-resize { position: absolute; top: 0; bottom: 0; width: 5px; cursor: col-resize; z-index: 1; }
     .sidebar-resize.left-edge { right: -3px; }
     .sidebar-resize.right-edge { left: -3px; }
     .sidebar-resize:hover, .sidebar-resize:active { background: var(--accent); opacity: 0.3; }
 
-    /* Left sidebar */
+    /* Main content */
+    .main { flex: 1; overflow-y: auto; padding: 20px 24px; min-width: 0; display: flex; flex-direction: column; align-items: center; }
+    .main h2 { font-size: 1.3rem; margin-bottom: 16px; }
+    .main-inner { max-width: 800px; width: 100%; }
+    .main table { border-collapse: collapse; font-size: 0.9rem; width: 100%; }
+    .main table th, .main table td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
+    .main table th { background: var(--bg-secondary); font-weight: 600; }
+    .main ul { padding-left: 20px; }
+    .main::after { content: ''; display: block; height: 35vh; flex-shrink: 0; }
+    .main.no-overflow::after { display: none; }
+    @media (max-width: 848px) { .main-inner { max-width: 100%; } }
+
+    /* Pre-KaTeX overlay — blocks main content while math is loading */
+    #main-content { position: relative; }
+    html:not(.katex-ready) #main-content::after {
+      content: ''; position: absolute; inset: 0; background: var(--bg);
+      z-index: 5; pointer-events: auto;
+    }
+
+    /* Backdrop (used by tablet overlay & mobile sheet) */
+    .sidebar-backdrop { display: none; }
+    .sidebar-backdrop.open { display: block; }
+
+    /* ============================================================
+       Left sidebar contents
+       ============================================================ */
     .view-tabs { display: flex; gap: 4px; margin-bottom: 12px; }
-    .view-tab { flex: 1; padding: 6px 8px; text-align: center; border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem; background: var(--bg); color: var(--text); display: block; }
+    .view-tab { flex: 1; padding: 6px 8px; text-align: center; border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem; background: var(--bg); color: var(--text); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+    .view-tab svg { flex-shrink: 0; }
     .view-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
     .section-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary); margin: 12px 0 6px; }
+    .section-label-row { display: flex; align-items: center; justify-content: space-between; margin: 12px 0 6px; }
+    .section-label-row .section-label { margin: 0; }
 
-    /* Dimension filter rows */
+    .filter-buttons { display: flex; gap: 0; }
+    .filter-btn { padding: 2px; border: none; background: none; color: var(--text); cursor: pointer; line-height: 1; border-radius: 4px; }
+    .filter-btn:hover { background: var(--bg-secondary); }
+    .filter-btn.active { color: var(--accent); }
+    .filter-btn.disabled { opacity: 0.35; pointer-events: none; }
+    .filter-btn svg { display: block; }
+
     .filter-dim-row { display: flex; align-items: center; gap: 4px; padding: 2px 0; font-size: 0.82rem; }
     .dim-symbol { width: 36px; font-weight: 600; text-align: center; font-size: 0.85rem; }
     .filter-dim-row select { font-size: 0.78rem; padding: 1px 2px; border: 1px solid var(--border); border-radius: 3px; background: var(--bg); color: var(--text); width: 44px; }
     .filter-dim-row input[type=number] { font-size: 0.78rem; padding: 1px 4px; border: 1px solid var(--border); border-radius: 3px; background: var(--bg); color: var(--text); width: 36px; text-align: center; }
     .filter-dim-row input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
 
-    /* Quantity search filter */
     .filter-qty-search-wrap { margin-bottom: 8px; position: relative; }
-    .qty-search { width: 100%; font-size: 0.82rem; padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); box-sizing: border-box; }
+    .qty-search { width: 100%; font-size: 0.82rem; padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); }
     .qty-search:focus { outline: none; border-color: var(--accent); }
-    .qty-search-wrap { position: relative; }
-    .qty-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; margin-bottom: 6px; }
+    .qty-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
     .qty-chips:empty { display: none; }
     .qty-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px 2px 8px; background: var(--accent); color: #fff; border-radius: 12px; font-size: 0.75rem; cursor: default; }
     .qty-chip-x { cursor: pointer; font-weight: 700; opacity: 0.85; padding: 0 2px; }
@@ -218,7 +191,6 @@
     .qty-result-sym { font-weight: 600; }
     .qty-result-name { color: var(--text-secondary); font-size: 0.78rem; }
 
-    /* Difficulty slider */
     .diff-wrap { margin-top: auto; padding-top: 12px; }
     .diff-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary); margin-bottom: 4px; }
     .diff-sliders { position: relative; height: 24px; margin: 4px 0; }
@@ -229,28 +201,64 @@
     .diff-fill { position: absolute; top: 8px; height: var(--track-height); background: var(--accent); border-radius: 3px; }
     .diff-vals { display: flex; justify-content: space-between; font-size: 0.7rem; color: var(--text-secondary); }
 
-    /* Same-background overlay — main content only (sidebar has simple symbols, raw $...$ is minimal) */
-    html:not(.katex-ready) #main-content::after {
-      content: '';
-      position: absolute;
-      inset: 0;
-      background: var(--bg);
-      z-index: 5;
-      pointer-events: auto;
-    }
-    #main-content { position: relative; }
+    /* ============================================================
+       Right sidebar (jsTree)
+       ============================================================ */
+    #sidebar-right .jstree-node { background: none !important; white-space: normal; display: flex !important; flex-wrap: wrap; align-items: flex-start; }
+    #sidebar-right .jstree-default .jstree-ocl { width: 18px !important; position: relative; flex-shrink: 0; }
+    #sidebar-right .jstree-default .jstree-anchor { font-size: 0.85rem; padding: 2px 8px 2px 24px !important; word-break: break-word; overflow-wrap: break-word; white-space: normal; height: auto !important; position: relative; flex: 1; min-width: 0; line-height: 1.25; }
+    #sidebar-right .jstree-children { width: 100%; }
+    #sidebar-right .jstree-default .jstree-checkbox { background: none !important; width: 16px !important; height: 16px !important; border: 2px solid var(--border) !important; border-radius: 3px; position: absolute !important; left: 4px; top: 2px; }
+    #sidebar-right .jstree-default .jstree-clicked > .jstree-checkbox,
+    #sidebar-right .jstree-default .jstree-checked > .jstree-checkbox { background: var(--accent) !important; border-color: var(--accent) !important; }
+    #sidebar-right .jstree-default .jstree-clicked > .jstree-checkbox::after,
+    #sidebar-right .jstree-default .jstree-checked > .jstree-checkbox::after { content: ''; position: absolute; left: 4px; top: 2px; width: 4px; height: 7px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+    #sidebar-right .jstree-default .jstree-anchor > .jstree-undetermined { background: var(--accent) !important; width: 16px !important; height: 16px !important; border: 2px solid var(--accent) !important; border-radius: 3px; position: absolute !important; left: 4px; top: 2px; }
+    #sidebar-right .jstree-default .jstree-anchor > .jstree-undetermined::after { content: ''; position: absolute; left: 2px; top: 5px; width: 8px; height: 2px; background: #fff; border-radius: 1px; border: none; transform: none; }
+    /* Checkboxes: hidden by default, shown on sidebar hover (top-level + undetermined always visible) */
+    #sidebar-right .jstree-checkbox { opacity: 0; }
+    #sidebar-right:hover .jstree-checkbox { opacity: 1 !important; }
+    #sidebar-right .jstree-container-ul > .jstree-node > .jstree-anchor > .jstree-checkbox,
+    #sidebar-right .jstree-undetermined,
+    #sidebar-right .jstree-node.jstree-undetermined-parent > .jstree-children > .jstree-node > .jstree-anchor > .jstree-checkbox { opacity: 1 !important; }
+    /* Carets: filled triangles, custom for theme */
+    #sidebar-right .jstree-default .jstree-closed > .jstree-ocl { background: none !important; }
+    #sidebar-right .jstree-default .jstree-closed > .jstree-ocl::after { content: ''; position: absolute; left: 6px; top: 4px; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 7px solid var(--text); }
+    #sidebar-right .jstree-default .jstree-leaf.jstree-closed > .jstree-ocl { background: none !important; }
+    #sidebar-right .jstree-default .jstree-leaf.jstree-closed > .jstree-ocl::after { content: none !important; }
+    #sidebar-right .jstree-default .jstree-open > .jstree-ocl { background: none !important; opacity: 0; }
+    #sidebar-right .jstree-default .jstree-open > .jstree-ocl::after { content: ''; position: absolute; left: 4px; top: 6px; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 7px solid var(--text); }
+    #sidebar-right .jstree-default .jstree-open:hover > .jstree-ocl { opacity: 1; }
+    #sidebar-right .jstree-default .jstree-hovered { background: transparent !important; box-shadow: none !important; }
+    #sidebar-right .jstree-container-ul > .jstree-node > .jstree-anchor { font-weight: 600; }
+    #sidebar-right .jstree-leaf > .jstree-anchor { color: var(--text-secondary); }
 
-    .main { flex: 1; overflow-y: auto; padding: 20px 24px; min-width: 0; display: flex; flex-direction: column; align-items: center; }
-    .main h2 { font-size: 1.3rem; margin-bottom: 16px; }
-    .main table { border-collapse: collapse; font-size: 0.9rem; width: 100%; }
-    .main table th, .main table td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
-    .main table th { background: var(--bg-secondary); font-weight: 600; }
-    .main ul { padding-left: 20px; }
-    .main-inner { max-width: 800px; width: 100%; }
-    .main::after { content: ''; display: block; height: 35vh; flex-shrink: 0; }
-    @media (max-width: 848px) { .main-inner { max-width: 100%; } }
+    /* ============================================================
+       Settings dropdown
+       ============================================================ */
+    .settings-wrap { position: relative; }
+    .dropdown-menu { display: none; position: absolute; right: 0; background: var(--bg); border: 1px solid var(--border); box-shadow: var(--shadow-md); }
+    .dropdown-menu.open { display: block; }
+    .settings-menu { top: 100%; margin-top: 4px; border-radius: 8px; min-width: 280px; padding: 8px; z-index: 200; }
+    .settings-item { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-radius: 4px; font-size: 0.85rem; gap: 16px; }
+    .settings-item:hover { background: var(--bg-secondary); }
+    .settings-item select { font-size: 0.85rem; padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); min-width: 100px; }
+    .settings-item button { font-size: 0.85rem; padding: 4px 12px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); cursor: pointer; }
+    .settings-item button:hover { background: var(--bg-secondary); }
+    .settings-divider { height: 1px; background: var(--border); margin: 4px 0; }
 
-    /* Formula grid */
+    /* ============================================================
+       Toast
+       ============================================================ */
+    .toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; }
+    .toast { padding: 12px 20px; border-radius: 8px; font-size: 0.85rem; color: #fff; box-shadow: var(--shadow-xl); animation: toast-in 0.3s ease; }
+    .toast.success { background: #16a34a; }
+    .toast.error { background: #dc2626; }
+    @keyframes toast-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+    /* ============================================================
+       Content (formula grid, detail page, etc.)
+       ============================================================ */
     .formula-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
     .formula-card { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; transition: box-shadow 0.2s; display: flex; flex-direction: column; }
     .formula-card:hover { box-shadow: var(--shadow-sm); }
@@ -260,13 +268,16 @@
     .formula-card .formula-name { font-size: 0.85rem; color: var(--accent); text-align: center; margin-top: auto; }
     .formula-card .formula-relation-label { font-size: 0.75rem; color: var(--text-secondary); text-align: center; margin-top: 4px; }
 
-    /* Detail page */
     .detail-heading { font-size: 1.3rem; margin-bottom: 4px; }
-    .detail-breadcrumbs { font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 12px; }
-    .detail-breadcrumbs a { color: var(--text-secondary); }
-    .detail-breadcrumbs a:hover { color: var(--accent); }
+    .detail-breadcrumbs, .breadcrumb-bar { font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 12px; padding: 6px 0; }
+    .detail-breadcrumbs a, .breadcrumb-bar a { color: var(--text-secondary); }
+    .detail-breadcrumbs a:hover, .breadcrumb-bar a:hover { color: var(--accent); }
     .detail-meta { font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 16px; }
     .detail-meta > span { display: block; margin-bottom: 2px; }
+    .detail-section { margin-bottom: 20px; }
+    .detail-section h3 { font-size: 1rem; margin-bottom: 8px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; }
+    .detail-desc { font-style: italic; color: var(--text-secondary); margin-bottom: 16px; font-size: 0.9rem; }
+
     .formula-box { display: block; position: relative; margin: 12px 0; padding: 20px 40px; background: var(--bg-secondary); border-radius: 8px; font-size: 1.4em; text-align: center; }
     .formula-copy-wrap { position: absolute; top: 8px; right: 8px; z-index: 2; }
     .formula-copy-btn { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border: none; background: var(--bg-tertiary); border-radius: 4px; cursor: pointer; color: var(--text-secondary); }
@@ -275,44 +286,247 @@
     .formula-copy-menu button { display: block; width: 100%; text-align: left; padding: 6px 12px; border: none; background: none; cursor: pointer; font-size: 0.85rem; color: var(--text); border-radius: 3px; }
     .formula-copy-menu button:hover { background: var(--bg-secondary); }
 
-    /* Breadcrumb detail */
-    .breadcrumb-bar { font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 12px; padding: 6px 0; }
-    .breadcrumb-bar a { color: var(--text-secondary); }
-    .breadcrumb-bar a:hover { color: var(--accent); }
-
-    /* Variables table */
-    .var-table { max-width: 700px; }
+    .var-table, .units-table { max-width: 700px; }
     .var-table td:first-child { white-space: nowrap; }
 
-    /* Detail page sections */
-    .detail-section { margin-bottom: 20px; }
-    .detail-section h3 { font-size: 1rem; margin-bottom: 8px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; }
-
-    /* Units table with offset */
-    .units-table { max-width: 700px; }
-
-    /* Detail description */
-    .detail-desc { font-style: italic; color: var(--text-secondary); margin-bottom: 16px; font-size: 0.9rem; }
-
-    /* Scrollbar */
-    .sidebar-scroll::-webkit-scrollbar, .main::-webkit-scrollbar,
+    /* ============================================================
+       Scrollbar (webkit)
+       ============================================================ */
+    .sidebar-scroll::-webkit-scrollbar,
+    .main::-webkit-scrollbar,
     .qty-results::-webkit-scrollbar { width: 6px; }
-    .sidebar-scroll::-webkit-scrollbar-thumb, .main::-webkit-scrollbar-thumb,
+    .sidebar-scroll::-webkit-scrollbar-thumb,
+    .main::-webkit-scrollbar-thumb,
     .qty-results::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
-    /* Narrow screen overlay */
-    .sidebar-backdrop { display: none; }
-    @media (max-width: 768px) {
-      .sidebar { position: fixed; top: var(--topbar-height); bottom: 0; width: 85vw !important; max-width: 320px; z-index: 50; border: none !important; box-shadow: 0 0 20px rgba(0,0,0,0.15); }
-      .sidebar.left { left: 0; transform: translateX(-100%); transition: transform 0.3s ease; }
-      .sidebar.right { right: 0; transform: translateX(100%); transition: transform 0.3s ease; }
-      .sidebar.open { transform: translateX(0) !important; width: 85vw !important; }
-      .sidebar.collapsed { transform: translateX(-100%) !important; width: 85vw !important; }
+    /* ============================================================
+       TABLET (768..1023) — left inline, right overlays
+       ============================================================ */
+    @media (min-width: 768px) and (max-width: 1023px) {
+      .sidebar.right {
+        position: fixed;
+        top: var(--topbar-height);
+        right: 0;
+        bottom: 0;
+        width: 60vw !important;
+        max-width: 420px;
+        z-index: 50;
+        border-left: 1px solid var(--border) !important;
+        box-shadow: 0 0 20px rgba(0,0,0,0.15);
+        transform: translateX(100%);
+        transition: transform 0.3s;
+      }
+      .sidebar.right.open { transform: translateX(0) !important; }
       .sidebar.right.collapsed { transform: translateX(100%) !important; }
-      .sidebar-resize { display: none; }
-      .sidebar-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 49; }
-      .sidebar-backdrop.open { display: block; }
+      .sidebar-resize.right-edge { display: none; }
+      .sidebar-backdrop {
+        position: fixed;
+        top: var(--topbar-height);
+        left: var(--sidebar-width-left);
+        right: 0;
+        bottom: 0;
+        background: rgba(0,0,0,0.3);
+        z-index: 49;
+      }
     }
+
+    /* ============================================================
+       MOBILE (<768) — bottom sheets, dock, fade
+       ============================================================ */
+    @media (max-width: 767px) {
+      /* Topbar: logo + settings only — sidebar toggles & search live in the dock */
+      .topbar [data-action="toggle-sidebar-left"],
+      .topbar [data-action="toggle-sidebar-right"],
+      .topbar-search { display: none; }
+      /* The view-tabs duplicate the dock's formulas/quantities toggle on mobile. */
+      .sidebar.left .view-tabs { display: none; }
+
+      /* Sidebars become bottom sheets (80vh) with a drag handle */
+      .sidebar {
+        position: fixed;
+        top: auto;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        width: 100% !important;
+        max-width: none;
+        height: 80vh;
+        max-height: 80vh;
+        z-index: 60;
+        border: none !important;
+        border-top: 1px solid var(--border) !important;
+        transform: translateY(100%);
+        transition: transform 0.3s;
+      }
+      .sidebar.left.open,
+      .sidebar.right.open { transform: translateY(0) !important; }
+      .sidebar.left.collapsed,
+      .sidebar.right.collapsed { transform: translateY(100%) !important; }
+      .sidebar-resize { display: none; }
+      .sidebar-scroll { flex: 1; min-height: 0; }
+      .sidebar.left .sidebar-inner,
+      .sidebar.right .sidebar-inner { width: 100% !important; }
+      .main::after { display: none; }
+
+      /* Sheet drag handle */
+      .sheet-handle {
+        display: block;
+        width: 100%;
+        height: 18px;
+        flex-shrink: 0;
+        cursor: grab;
+        position: relative;
+        touch-action: none;
+      }
+      .sheet-handle::after {
+        content: '';
+        position: absolute;
+        left: 50%;
+        top: 8px;
+        transform: translateX(-50%);
+        width: 36px;
+        height: 4px;
+        border-radius: 2px;
+        background: var(--border);
+      }
+      .sheet-handle:active { cursor: grabbing; }
+
+      /* Backdrop: gradient fade from opaque at dock to transparent at topbar */
+      .sidebar-backdrop {
+        position: fixed;
+        top: var(--topbar-height);
+        left: 0;
+        right: 0;
+        bottom: var(--dock-height);
+        background: linear-gradient(to top, rgba(0,0,0,0.3), transparent);
+        z-index: 55;
+      }
+
+      /* Gradient under dock: fades from bg to transparent upward, behind dock */
+      .mobile-fade {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: var(--dock-height);
+        background: linear-gradient(to top, var(--bg), transparent);
+        z-index: 65;
+        pointer-events: none;
+      }
+    }
+
+    /* ============================================================
+       Mobile dock — row of individual pills
+       Each pill width = item_w * num_items + padding.
+       ============================================================ */
+    .mobile-dock {
+      --dock-item: 48px;
+      --dock-pad: 20px;
+      position: fixed;
+      left: 50%;
+      transform: translateX(-50%);
+      bottom: 10px;
+      z-index: 70;
+      display: none;
+      align-items: center;
+      gap: 6px;
+    }
+    @media (max-width: 767px) {
+      .mobile-fade { display: block; }
+      .mobile-dock { display: flex; }
+    }
+    .dock-pill {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      width: calc(var(--dock-item) + var(--dock-pad));
+      height: 42px;
+      padding: 3px 6px 1px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text-secondary);
+      cursor: pointer;
+      flex-shrink: 0;
+      -webkit-tap-highlight-color: transparent;
+      gap: 1px;
+    }
+    .dock-pill svg { display: block; flex-shrink: 0; }
+    /* Blue text/icon — open / shown state */
+    .dock-pill.open { color: var(--accent); }
+    .dock-pill.open svg { stroke: var(--accent); }
+    /* Blue background + white — applied / active state */
+    .dock-pill.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .dock-pill.active svg { stroke: #fff; }
+    /* Press feedback — entire pill darkens */
+    .dock-pill:active { background: var(--bg-secondary); }
+    .dock-pill.active:active { background: var(--accent-hover); }
+    .dock-pill-label {
+      font-size: 0.58rem;
+      line-height: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      text-align: center;
+      pointer-events: none;
+    }
+
+    /* Split pill: two halves side-by-side */
+    .dock-split {
+      flex-direction: row;
+      padding: 0;
+      gap: 0;
+      display: inline-flex;
+      flex-wrap: nowrap;
+      width: calc(var(--dock-item) * 2 + var(--dock-pad));
+      position: relative;
+      pointer-events: none;
+    }
+    /* Divider line — hidden when a half has blue background */
+    .dock-split::after {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: 6px;
+      bottom: 6px;
+      width: 1px;
+      background: var(--border);
+      pointer-events: none;
+    }
+    .dock-split:has(.dock-half.active)::after { display: none; }
+    .dock-half {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      flex: 1;
+      height: 100%;
+      padding: 3px 0 1px;
+      border: none;
+      background: var(--bg);
+      color: inherit;
+      cursor: pointer;
+      gap: 1px;
+      pointer-events: auto;
+    }
+    .dock-half:first-child { border-radius: 999px 0 0 999px; }
+    .dock-half:last-child { border-radius: 0 999px 999px 0; }
+    /* Blue text/icon — open / shown state */
+    .dock-half.open { color: var(--accent); }
+    .dock-half.open svg { stroke: var(--accent); }
+    /* Blue background + white — applied / active state */
+    .dock-half.active { background: var(--accent); color: #fff; }
+    .dock-half.active svg { stroke: #fff; }
+    /* Press feedback — individual item darkens */
+    .dock-half:active { background: var(--bg-secondary); }
+    .dock-half.active:active { background: var(--accent-hover); }
+
+    /* Compact mode: hide labels when they don't fit */
+    .mobile-dock.compact { --dock-item: 34px; --dock-pad: 8px; gap: 4px; }
+    .mobile-dock.compact .dock-pill { height: 36px; padding: 4px 6px; }
+    .mobile-dock.compact .dock-half { height: 36px; padding: 4px 2px; }
+    .mobile-dock.compact .dock-pill-label { display: none; }
   </style>
 </head>
 <body>
@@ -346,11 +560,6 @@
       </form>
     </div>
     <div class="topbar-right">
-      <div class="topbar-search-icon">
-        <button class="topbar-btn" data-action="enter-search" title="{{ _('tooltip.search') }}" aria-label="{{ _('tooltip.search') }}">
-          <i data-lucide="search" width="16" height="16"></i>
-        </button>
-      </div>
       <div class="settings-wrap">
         <button class="topbar-btn" data-action="toggle-settings" title="{{ _('tooltip.settings') }}" aria-label="{{ _('tooltip.settings') }}">
           <i data-lucide="settings" width="18" height="18"></i>
@@ -423,10 +632,11 @@
     <div class="sidebar left" id="sidebar-left">
       <div class="sidebar-resize left-edge" id="sidebar-resize-left"></div>
       <div class="sidebar-scroll">
+      <div class="sheet-handle" data-sheet-target="left" aria-label="Drag to dismiss"></div>
       <div class="sidebar-inner" id="sidebar-left-inner">
         <div class="view-tabs">
-          <a class="view-tab {{ 'active' if current_view == 'formulas' }}" href="/formulas{{ '?' + request.query_string.decode() if request.query_string.decode() else '' }}">&#x2211; {{ _('nav.formulas') }}</a>
-          <a class="view-tab {{ 'active' if current_view == 'quantities' }}" href="/quantities{{ '?' + request.query_string.decode() if request.query_string.decode() else '' }}">&#x2113; {{ _('nav.quantities') }}</a>
+          <a class="view-tab {{ 'active' if current_view == 'formulas' }}" href="/formulas{{ '?' + request.query_string.decode() if request.query_string.decode() else '' }}"><i data-lucide="sigma" width="14" height="14"></i> {{ _('nav.formulas') }}</a>
+          <a class="view-tab {{ 'active' if current_view == 'quantities' }}" href="/quantities{{ '?' + request.query_string.decode() if request.query_string.decode() else '' }}"><i data-lucide="weight" width="14" height="14"></i> {{ _('nav.quantities') }}</a>
         </div>
 
         <div id="dim-filter-area">
@@ -504,6 +714,7 @@
     <div class="sidebar right" id="sidebar-right">
       <div class="sidebar-resize right-edge" id="sidebar-resize-right"></div>
       <div class="sidebar-scroll">
+      <div class="sheet-handle" data-sheet-target="right" aria-label="Drag to dismiss"></div>
       <div class="sidebar-inner" id="sidebar-right-inner">
         <div class="section-label-row">
           <div class="section-label">{{ _('filter.topic') }}</div>
@@ -516,6 +727,35 @@
       </div>
       </div>
     </div>
+  </div>
+
+  <!-- Mobile dock (visible only <768) -->
+  <div class="mobile-fade" id="mobile-fade"></div>
+  <div class="mobile-dock" id="mobile-dock">
+    <div class="dock-pill dock-split" role="tablist">
+      <button class="dock-half {{ 'active' if current_view != 'quantities' }}" data-dock-view="formulas" data-action="dock-set-view" type="button" aria-label="{{ _('dock.formulas') }}">
+        <i data-lucide="sigma" width="20" height="20"></i>
+        <span class="dock-pill-label">{{ _('dock.formulas') }}</span>
+      </button>
+      <button class="dock-half {{ 'active' if current_view == 'quantities' }}" data-dock-view="quantities" data-action="dock-set-view" type="button" aria-label="{{ _('dock.quantities') }}">
+        <i data-lucide="weight" width="20" height="20"></i>
+        <span class="dock-pill-label">{{ _('dock.quantities') }}</span>
+      </button>
+    </div>
+    <div class="dock-pill dock-split" role="tablist">
+      <button class="dock-half" data-action="dock-toggle-panel" data-target="left" data-pill="filter" type="button" aria-label="{{ _('dock.filter') }}">
+        <i data-lucide="filter" width="20" height="20"></i>
+        <span class="dock-pill-label">{{ _('dock.filter') }}</span>
+      </button>
+      <button class="dock-half" data-action="dock-toggle-panel" data-target="right" data-pill="tree" type="button" aria-label="{{ _('dock.tree') }}">
+        <i data-lucide="git-fork" width="20" height="20"></i>
+        <span class="dock-pill-label">{{ _('dock.tree') }}</span>
+      </button>
+    </div>
+    <button class="dock-pill" data-action="dock-toggle-search" data-pill="search" type="button" aria-label="{{ _('dock.search') }}">
+      <i data-lucide="search" width="20" height="20"></i>
+      <span class="dock-pill-label">{{ _('dock.search') }}</span>
+    </button>
   </div>
 
   <script>
@@ -1093,34 +1333,90 @@
           renderMathInContent();
           restoreAllFromUrl();
           updateOverflowPadding();
+          syncDockPills();
         })
         .catch(function(err) { if (err.name !== 'AbortError') console.warn('fetchContent error', err); })
         .then(function() { if (_pendingFetch === controller) _pendingFetch = null; });
+      }
+
+    // === Breakpoint detection ===
+    // PC:     >= 1024
+    // TABLET: 768..1023
+    // MOBILE: <  768
+    function currentBreakpoint() {
+      var w = window.innerWidth;
+      if (w >= 1024) return 'pc';
+      if (w >= 768) return 'tablet';
+      return 'mobile';
     }
 
-    // Sidebar collapse
-    function toggleSidebar(side) {
-      const el = document.getElementById('sidebar-' + side);
-      const bp = document.getElementById('sidebar-backdrop');
-      const isNarrow = window.innerWidth <= 768;
+    // === Sidebar show / hide (breakpoint-aware) ===
+    // PC     : .collapsed shrinks the column to 0
+    // TABLET : .right overlays (open/closed); .left is always inline
+    // MOBILE : .open slides the sheet up; otherwise hidden
+    function isSidebarOpen(side) {
+      var el = document.getElementById('sidebar-' + side);
+      if (!el) return false;
+      var bp = currentBreakpoint();
+      if (bp === 'pc') return !el.classList.contains('collapsed');
+      if (bp === 'tablet') return side === 'right' ? el.classList.contains('open') : true;
+      return el.classList.contains('open');
+    }
 
-      if (isNarrow) {
-        el.classList.toggle('open');
-        el.classList.remove('collapsed');
-        bp.classList.toggle('open');
-      } else {
-        el.classList.toggle('collapsed');
+    function openSidebar(side) {
+      var el = document.getElementById('sidebar-' + side);
+      if (!el) return;
+      // Close the other sidebar on mobile so only one sheet is open
+      if (currentBreakpoint() === 'mobile') {
+        var other = side === 'left' ? 'right' : 'left';
+        if (isSidebarOpen(other)) closeSidebar(other);
       }
+      // Close search if it's expanded
+      exitSearch();
+      var bp = currentBreakpoint();
+      if (bp === 'pc') el.classList.remove('collapsed');
+      else el.classList.add('open');
+      syncBackdrop();
       syncSidebarIcon(side);
+      syncDockPills();
+    }
+
+    function closeSidebar(side) {
+      var el = document.getElementById('sidebar-' + side);
+      if (!el) return;
+      var bp = currentBreakpoint();
+      if (bp === 'pc') el.classList.add('collapsed');
+      else el.classList.remove('open');
+      syncBackdrop();
+      syncSidebarIcon(side);
+      syncDockPills();
+    }
+
+    function toggleSidebar(side) {
+      if (isSidebarOpen(side)) closeSidebar(side);
+      else openSidebar(side);
+    }
+
+    function syncBackdrop() {
+      var bp = document.getElementById('sidebar-backdrop');
+      if (!bp) return;
+      var left = document.getElementById('sidebar-left');
+      var right = document.getElementById('sidebar-right');
+      var bpName = currentBreakpoint();
+      var anyOpen = left.classList.contains('open') || right.classList.contains('open');
+      bp.classList.toggle('open', anyOpen);
     }
 
     function syncSidebarIcon(side) {
-      const el = document.getElementById('sidebar-' + side);
-      const iconWrap = document.getElementById(side + '-sidebar-icon');
+      var el = document.getElementById('sidebar-' + side);
+      var iconWrap = document.getElementById(side + '-sidebar-icon');
       if (!el || !iconWrap) return;
-      const isNarrow = window.innerWidth <= 768;
-      const collapsed = isNarrow ? !el.classList.contains('open') : el.classList.contains('collapsed');
-      const icons = {
+      var bp = currentBreakpoint();
+      var collapsed;
+      if (bp === 'pc') collapsed = el.classList.contains('collapsed');
+      else if (bp === 'tablet') collapsed = side === 'right' ? !el.classList.contains('open') : false;
+      else collapsed = !el.classList.contains('open');
+      var icons = {
         left: collapsed ? 'panel-left-open' : 'panel-left-close',
         right: collapsed ? 'panel-right-open' : 'panel-right-close'
       };
@@ -1128,22 +1424,162 @@
       if (typeof lucide !== 'undefined') lucide.createIcons();
     }
 
-    // Search expand
+    function hasActiveFilters() {
+      var dimHasVal = false;
+      document.querySelectorAll('.filter-dim-row .dim-val').forEach(function(input) {
+        if (input.value.trim() !== '') dimHasVal = true;
+      });
+      var qtyHasVal = window._qtySelected && window._qtySelected.length > 0;
+      var diffMin = parseInt(document.getElementById('diff-min').value);
+      var diffMax = parseInt(document.getElementById('diff-max').value);
+      var diffHasVal = diffMin > 0 || diffMax < 10;
+      return dimHasVal || qtyHasVal || diffHasVal;
+    }
+
+    function hasTreeFilter() {
+      if (!window._jstree) return false;
+      var checked = window._jstree.get_checked(true);
+      var allNodes = window._jstree.get_node('#').children_d;
+      return checked.length < allNodes.length;
+    }
+
+    function syncDockPills() {
+      var dock = document.getElementById('mobile-dock');
+      if (!dock) return;
+      var view = isFormulasView() ? 'formulas' : 'quantities';
+      dock.querySelectorAll('[data-dock-view]').forEach(function(btn) {
+        btn.classList.toggle('active', btn.getAttribute('data-dock-view') === view);
+        btn.classList.remove('open');
+      });
+      dock.querySelectorAll('[data-pill="filter"]').forEach(function(btn) {
+        btn.classList.toggle('open', isSidebarOpen('left'));
+        btn.classList.toggle('active', hasActiveFilters());
+      });
+      dock.querySelectorAll('[data-pill="tree"]').forEach(function(btn) {
+        btn.classList.toggle('open', isSidebarOpen('right'));
+        btn.classList.toggle('active', hasTreeFilter());
+      });
+      dock.querySelectorAll('[data-pill="search"]').forEach(function(btn) {
+        var topbar = document.querySelector('.topbar');
+        btn.classList.toggle('open', topbar && topbar.classList.contains('expand-search'));
+        var url = new URL(window.location);
+        btn.classList.toggle('active', url.searchParams.has('q'));
+      });
+      syncDockLabels();
+    }
+
+    function syncDockLabels() {
+      var dock = document.getElementById('mobile-dock');
+      if (!dock) return;
+      dock.classList.toggle('compact', window.innerWidth < 320);
+    }
+
+    // === Dock actions ===
+    function dockSetView(view) {
+      var url = new URL(window.location);
+      var base = view === 'quantities' ? '/quantities' : '/formulas';
+      var qs = url.searchParams.toString();
+      var target = base + (qs ? '?' + qs : '');
+      if (typeof window._navigateTo === 'function') {
+        window._navigateTo(target);
+      } else {
+        window.location.href = target;
+      }
+    }
+
+    function dockTogglePanel(side) {
+      toggleSidebar(side);
+    }
+
+    function dockToggleSearch() {
+      var topbar = document.querySelector('.topbar');
+      if (topbar.classList.contains('expand-search')) {
+        exitSearch();
+      } else {
+        enterSearch();
+      }
+    }
+
+    // === Long-press on dock pills ===
+    (function() {
+      var timer = null;
+      var pressedEl = null;
+      var LONG_PRESS_MS = 500;
+
+      document.addEventListener('pointerdown', function(e) {
+        var pill = e.target.closest('[data-pill]');
+        if (!pill) return;
+        pressedEl = pill;
+        timer = setTimeout(function() {
+          if (!pressedEl) return;
+          pressedEl._longPressed = true;
+          switch (pressedEl.getAttribute('data-pill')) {
+            case 'filter':
+              document.getElementById('dim-reset').click();
+              document.getElementById('qty-reset').click();
+              document.getElementById('diff-reset').click();
+              break;
+            case 'tree':
+              document.getElementById('tree-select-all').click();
+              break;
+            case 'search':
+              var url = new URL(window.location);
+              url.searchParams.delete('q');
+              var target = (isFormulasView() ? '/formulas' : '/quantities') + url.search;
+              fetchContent(target, true);
+              break;
+          }
+        }, LONG_PRESS_MS);
+      });
+
+      document.addEventListener('pointerup', function() {
+        if (timer) { clearTimeout(timer); timer = null; }
+        pressedEl = null;
+      });
+
+      document.addEventListener('pointercancel', function() {
+        if (timer) { clearTimeout(timer); timer = null; }
+        if (pressedEl) pressedEl._longPressed = false;
+        pressedEl = null;
+      });
+
+      document.addEventListener('click', function(e) {
+        var pill = e.target.closest('[data-pill]');
+        if (pill && pill._longPressed) {
+          pill._longPressed = false;
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+        }
+      }, true);
+    })();
+
+    // === Search expand (works on all breakpoints) ===
     function enterSearch() {
-      document.querySelector('.topbar').classList.add('expand-search');
-      document.querySelector('.topbar-search input').focus();
+      // Close any open sidebar so only one overlay is visible
+      closeSidebar('left');
+      closeSidebar('right');
+      var topbar = document.querySelector('.topbar');
+      topbar.classList.add('expand-search');
+      var input = topbar.querySelector('.topbar-search input');
+      if (input) input.focus();
+      syncDockPills();
     }
     function exitSearch() {
-      document.querySelector('.topbar').classList.remove('expand-search');
-      document.querySelector('.topbar-search input').value = '';
-      document.querySelector('.topbar-search input').blur();
+      var topbar = document.querySelector('.topbar');
+      topbar.classList.remove('expand-search');
+      var input = topbar.querySelector('.topbar-search input');
+      if (input) { input.value = ''; input.blur(); }
+      syncDockPills();
     }
 
     function closeAllOverlays() {
-      document.querySelectorAll('.sidebar.open').forEach(s => s.classList.remove('open'));
-      document.getElementById('sidebar-backdrop').classList.remove('open');
+      document.querySelectorAll('.sidebar.open').forEach(function(s) { s.classList.remove('open'); });
+      var bp = document.getElementById('sidebar-backdrop');
+      if (bp) bp.classList.remove('open');
       syncSidebarIcon('left');
       syncSidebarIcon('right');
+      syncDockPills();
     }
 
     // Settings menu
@@ -1170,7 +1606,7 @@
         case 'toggle-sidebar-left': toggleSidebar('left'); break;
         case 'toggle-sidebar-right': toggleSidebar('right'); break;
         case 'exit-search': exitSearch(); break;
-        case 'enter-search': enterSearch(); break;
+        case 'dock-toggle-search': dockToggleSearch(); break;
         case 'toggle-settings': toggleSettings(e); break;
         case 'toggle-copy-menu': toggleCopyMenu(e); break;
         case 'copy-formula-latex': copyFormula('latex'); break;
@@ -1179,6 +1615,8 @@
         case 'remove-qty-chip': removeQtyChip(el.getAttribute('data-qty')); break;
         case 'add-qty-chip': addQtyChip(el.getAttribute('data-qty')); break;
         case 'close-overlays': closeAllOverlays(); break;
+        case 'dock-set-view': dockSetView(el.getAttribute('data-dock-view')); break;
+        case 'dock-toggle-panel': dockTogglePanel(el.getAttribute('data-target')); break;
       }
     });
     document.addEventListener('change', function(e) {
@@ -1343,61 +1781,102 @@
       });
     })();
 
-    // Narrow screen overlay mode + auto-collapse
+    // === Breakpoint transitions ===
+    // Resets sidebar state so the new layout starts clean and icons/dock stay in sync.
     (function() {
-      var mq = window.matchMedia('(max-width: 768px)');
-      function handleNarrow(e) {
+      var mqTabletUp = window.matchMedia('(min-width: 768px)');
+      var mqPcUp = window.matchMedia('(min-width: 1024px)');
+      var mqMobile = window.matchMedia('(max-width: 767px)');
+
+      function syncOnResize() {
         var left = document.getElementById('sidebar-left');
         var right = document.getElementById('sidebar-right');
-        if (e.matches) {
+        if (!left || !right) return;
+        var bp = currentBreakpoint();
+
+        // Suppress transitions while we snap to the new layout — otherwise the
+        // sidebar slides between layouts (e.g. width 300px → 60vw) on resize.
+        document.documentElement.classList.add('suppress-transitions');
+
+        if (bp === 'pc') {
+          left.classList.remove('open');
+          right.classList.remove('open');
+        } else if (bp === 'tablet') {
           left.classList.remove('collapsed');
           right.classList.remove('collapsed');
           left.classList.remove('open');
-          right.classList.remove('open');
-        }
-      }
-      mq.addEventListener('change', handleNarrow);
-      var rightCollapsed = false;
-      var leftCollapsed = false;
-      function checkWidth() {
-        if (window.innerWidth <= 768) return;
-        var left = document.getElementById('sidebar-left');
-        var right = document.getElementById('sidebar-right');
-        var leftW = left.getBoundingClientRect().width;
-        var rightW = right.getBoundingClientRect().width;
-        var mainW = document.getElementById('main-content').getBoundingClientRect().width;
-        var total = leftW + mainW + rightW;
-        var viewportW = window.innerWidth;
-        if (total > viewportW) {
-          if (!right.classList.contains('collapsed')) {
-            right.classList.add('collapsed');
-            rightCollapsed = true;
-            syncSidebarIcon('right');
-          } else if (!left.classList.contains('collapsed')) {
-            left.classList.add('collapsed');
-            leftCollapsed = true;
-            syncSidebarIcon('left');
-          }
         } else {
-          if (leftCollapsed && left.classList.contains('collapsed')) {
-            left.classList.remove('collapsed');
-            leftCollapsed = false;
-            syncSidebarIcon('left');
-          } else if (rightCollapsed && right.classList.contains('collapsed')) {
-            right.classList.remove('collapsed');
-            rightCollapsed = false;
-            syncSidebarIcon('right');
-          }
+          // mobile
+          left.classList.remove('collapsed');
+          right.classList.remove('collapsed');
         }
+
+        syncBackdrop();
+        syncSidebarIcon('left');
+        syncSidebarIcon('right');
+        syncDockPills();
+
+        // Force a reflow then re-enable transitions.
+        void document.documentElement.offsetWidth;
+        document.documentElement.classList.remove('suppress-transitions');
       }
-      var origToggle = toggleSidebar;
-      toggleSidebar = function(side) {
-        if (side === 'right') { rightCollapsed = false; }
-        if (side === 'left') { leftCollapsed = false; }
-        origToggle(side);
-      };
-      window.addEventListener('resize', checkWidth);
-      checkWidth();
+
+      [mqTabletUp, mqPcUp, mqMobile].forEach(function(m) {
+        if (m.addEventListener) m.addEventListener('change', syncOnResize);
+        else m.addListener(syncOnResize);
+      });
+      window.addEventListener('resize', syncOnResize);
+      syncOnResize();
+    })();
+
+    // === Sheet drag-to-dismiss (mobile only) ===
+    (function() {
+      if (!('PointerEvent' in window)) {
+        // Fallback to touch/mouse if needed — but PointerEvent is supported everywhere we care about
+      }
+      var DRAG_THRESHOLD = 80; // px to commit close
+      var startY = 0, currentY = 0, dragging = false, target = null;
+
+      function onDown(e) {
+        if (currentBreakpoint() !== 'mobile') return;
+        if (e.target.closest('.sidebar-scroll') && e.target.closest('.sidebar-scroll').scrollTop > 0) return;
+        var handle = e.currentTarget;
+        var side = handle.getAttribute('data-sheet-target');
+        var sheet = document.getElementById('sidebar-' + side);
+        if (!sheet || !sheet.classList.contains('open')) return;
+        dragging = true;
+        target = sheet;
+        startY = e.clientY || (e.touches && e.touches[0].clientY) || 0;
+        currentY = startY;
+        sheet.style.transition = 'none';
+      }
+      function onMove(e) {
+        if (!dragging || !target) return;
+        var y = e.clientY || (e.touches && e.touches[0].clientY) || 0;
+        currentY = y;
+        var dy = Math.max(0, y - startY);
+        target.style.transform = 'translateY(' + dy + 'px)';
+      }
+      function onUp() {
+        if (!dragging || !target) return;
+        var dy = Math.max(0, currentY - startY);
+        target.style.transform = '';
+        target.style.transition = '';
+        if (dy > DRAG_THRESHOLD) {
+          target.classList.remove('open');
+          syncBackdrop();
+          syncSidebarIcon(target.id === 'sidebar-left' ? 'left' : 'right');
+          syncDockPills();
+        }
+        dragging = false;
+        target = null;
+      }
+      document.querySelectorAll('.sheet-handle').forEach(function(h) {
+        h.addEventListener('pointerdown', onDown);
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+        window.addEventListener('pointercancel', onUp);
+      });
     })();
 
     lucide.createIcons();
@@ -1472,6 +1951,7 @@
     }
     restoreFiltersFromUrl();
     syncFilterStates();
+    syncDockPills();
     updateOverflowPadding();
     window.addEventListener('resize', updateOverflowPadding);
 
@@ -1605,11 +2085,8 @@
           if (!html) return;
           var doc = new DOMParser().parseFromString(html, 'text/html');
           var newContent = doc.getElementById('main-content');
-          var newSidebar = doc.getElementById('sidebar');
           if (!newContent) { window.location.href = url; return; }
           document.getElementById('main-content').innerHTML = newContent.innerHTML;
-          document.getElementById('main-content').scrollTop = 0;
-          if (newSidebar) document.getElementById('sidebar').innerHTML = newSidebar.innerHTML;
           if (!isPop && !(window.history.state && window.history.state.url === url)) history.pushState({url: url}, '', url);
           var isFormulas = url.indexOf('/quantities') === -1 && url.indexOf('/quantity/') === -1 && url.indexOf('/unit/') === -1;
           var isSearch = url.indexOf('/search') !== -1;
@@ -1624,6 +2101,7 @@
           if (typeof lucide !== 'undefined') lucide.createIcons();
           restoreAllFromUrl();
           updateOverflowPadding();
+          syncDockPills();
         }).catch(function() { window.location.href = url; });
       }
       document.body.addEventListener('click', function(e) {
@@ -1633,14 +2111,21 @@
         if (!href || href.startsWith('http') || href.startsWith('//') || href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('javascript:') || link.hasAttribute('download') || link.getAttribute('target') === '_blank') return;
         if (href === '/') { e.preventDefault(); navigateTo('/formulas'); return; }
         e.preventDefault();
-        var base = href.split('?')[0];
+        var parts = href.split('?');
+        var base = parts[0];
         var params = new URLSearchParams(window.location.search);
         params.delete('q');
-        params = params.toString();
-        href = base + (params ? '?' + params : '');
+        if (parts[1]) {
+          var linkParams = new URLSearchParams(parts[1]);
+          linkParams.forEach(function(value, key) { params.set(key, value); });
+        }
+        href = base + (params.toString() ? '?' + params.toString() : '');
         navigateTo(href);
       });
       window.addEventListener('popstate', function() { navigateTo(window.location.href, true); });
+
+      // Expose so dock actions (declared outside this IIFE) can drive SPA nav.
+      window._navigateTo = navigateTo;
     })();
   </script>
 </body>
