@@ -46,7 +46,10 @@
       "dim_mode_dimensions": "Rozměry",
       "dim_mode_quantities": "Veličiny",
       "dim_mode_units": "Jednotky",
-      "export_download": "Stáhnout"
+      "export_download": "Stáhnout",
+      "wait_latex": "Čekat na LaTeX",
+      "found_bug": "Našel jsi chybu?",
+      "report_bug": "Nahlásit"
     },
     "search": {
       "placeholder": "Hledat vzorce, veličiny, jednotky",

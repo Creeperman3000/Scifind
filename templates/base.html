@@ -1,9 +1,12 @@
 <!DOCTYPE html>
-<html>
+<html lang="{{ g.locale or 'en' }}">
 <head>
   <meta charset="utf-8">
+  <meta name="description" content="Find formulas and quantities!">
+  <meta name="keywords" content="find, physics, math, formulas, quantities">
+  <meta http-equiv="refresh" content="30">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <script>(function(){try{var t=localStorage.getItem('sf-theme');if(t)document.documentElement.setAttribute('data-theme',t)}catch(e){}})();</script>
+  <script>(function(){try{var t=localStorage.getItem('sf-theme');if(t)document.documentElement.setAttribute('data-theme',t);var w=localStorage.getItem('sf-wait-latex');if(w!==null)document.documentElement.setAttribute('data-wait-latex',w);else document.documentElement.setAttribute('data-wait-latex','1')}catch(e){}})();</script>
   <title>{% block title %}Scifind{% endblock %}</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.css">
   <script>window._KATEX_MACROS = {};</script>
@@ -14,6 +17,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='css/jstree.min.css') }}">
   <script src="{{ url_for('static', filename='js/jquery.min.js') }}"></script>
   <script src="{{ url_for('static', filename='js/jstree.min.js') }}"></script>
+  <link rel="preconnect" href="https://unpkg.com">
   <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
   <style>
     /* ============================================================
@@ -70,6 +74,7 @@
     body { font-family: var(--font); background: var(--bg); color: var(--text); height: 100vh; overflow: hidden; }
     a { color: var(--accent); text-decoration: none; }
     a:hover { text-decoration: underline; }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 
     /* ============================================================
        Layout
@@ -142,7 +147,7 @@
 
     /* Pre-KaTeX overlay — blocks main content while math is loading */
     #main-content { position: relative; }
-    html:not(.katex-ready) #main-content::after {
+    html[data-wait-latex="1"]:not(.katex-ready) #main-content::after {
       content: ''; position: absolute; inset: 0; background: var(--bg);
       z-index: 5; pointer-events: auto;
     }
@@ -246,6 +251,9 @@
     .settings-item button { font-size: 0.85rem; padding: 4px 12px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); cursor: pointer; }
     .settings-item button:hover { background: var(--bg-secondary); }
     .settings-divider { height: 1px; background: var(--border); margin: 4px 0; }
+    .wait-latex-check { width: 16px; height: 16px; border: 2px solid var(--border); border-radius: 3px; appearance: none; -webkit-appearance: none; background: none; cursor: pointer; flex-shrink: 0; position: relative; }
+    .wait-latex-check:checked { background: var(--accent); border-color: var(--accent); }
+    .wait-latex-check:checked::after { content: ''; position: absolute; left: 4px; top: 2px; width: 4px; height: 7px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
 
     /* ============================================================
        Toast
@@ -366,7 +374,7 @@
       .sidebar-scroll { flex: 1; min-height: 0; }
       .sidebar.left .sidebar-inner,
       .sidebar.right .sidebar-inner { width: 100% !important; }
-      .main::after { display: none; }
+      .main::after { height: calc(var(--dock-height) + 20px); }
 
       /* Sheet drag handle */
       .sheet-handle {
@@ -551,7 +559,7 @@
           <span class="search-icon">
             <i data-lucide="search" width="16" height="16"></i>
           </span>
-          <input type="text" name="q" placeholder="{{ _('search.placeholder') }}" value="{{ request.args.get('q', '') }}" autocomplete="off">
+          <input type="text" name="q" placeholder="{{ _('search.placeholder') }}" value="{{ request.args.get('q', '') }}" autocomplete="off" aria-label="{{ _('search.placeholder') }}">
           <button type="button" class="search-cancel" data-action="exit-search" aria-label="{{ _('tooltip.cancel_search') }}">
             <i data-lucide="x" width="16" height="16"></i>
           </button>
@@ -566,7 +574,7 @@
         </button>
         <div class="dropdown-menu settings-menu" id="settings-menu">
           <div class="settings-item">
-            <span>{{ _('settings.theme') }}</span>
+            <label for="setting-theme">{{ _('settings.theme') }}</label>
             <select id="setting-theme" data-action="switch-theme">
               <option value="system">{{ _('settings.theme_system') }}</option>
               <option value="light">{{ _('settings.theme_light') }}</option>
@@ -574,7 +582,7 @@
             </select>
           </div>
           <div class="settings-item">
-            <span>{{ _('settings.language') }}</span>
+            <label for="setting-lang">{{ _('settings.language') }}</label>
             <select id="setting-lang" data-action="switch-lang">
               {% for loc in available_locales %}
               <option value="{{ loc.code }}" {{ 'selected' if g.locale == loc.code }}>{{ loc.name }}</option>
@@ -583,24 +591,33 @@
           </div>
           <div class="settings-divider"></div>
           <div class="settings-item">
-            <span>{{ _('settings.dimensions') }}</span>
+            <label for="setting-dim">{{ _('settings.dimensions') }}</label>
             <select id="setting-dim" data-action="switch-dim-mode">
               <option value="dim" {{ 'selected' if g.dim_mode == 'dim' }}>{{ _('settings.dim_mode_dimensions') }}</option>
               <option value="var" {{ 'selected' if g.dim_mode == 'var' }}>{{ _('settings.dim_mode_quantities') }}</option>
               <option value="unit" {{ 'selected' if g.dim_mode == 'unit' }}>{{ _('settings.dim_mode_units') }}</option>
             </select>
           </div>
+          <div class="settings-item">
+            <label for="setting-wait-latex">{{ _('settings.wait_latex') }}</label>
+            <input type="checkbox" id="setting-wait-latex" class="wait-latex-check" data-action="switch-wait-latex" checked>
+          </div>
           <div class="settings-divider"></div>
           <div class="settings-item">
             <span>{{ _('settings.export') }}</span>
             <form method="get" action="/export" style="display:flex;gap:8px;">
-              <select name="format" data-action="set-export-format">
+              <label for="export-format" class="sr-only">{{ _('settings.export_format') }}</label>
+              <select id="export-format" name="format" data-action="set-export-format">
                 <option value="csv" {{ 'selected' if request.cookies.get('sf_export_format') == 'csv' }}>CSV</option>
                 <option value="xlsx" {{ 'selected' if request.cookies.get('sf_export_format') == 'xlsx' }}>XLSX</option>
                 <option value="ods" {{ 'selected' if request.cookies.get('sf_export_format') == 'ods' }}>ODS</option>
               </select>
               <button type="submit">{{ _('settings.export_download') }}</button>
             </form>
+          </div>
+          <div class="settings-item">
+            <label for="setting-report">{{ _('settings.found_bug') }}</label>
+            <button onclick="window.open('https://github.com/Creeperman3000/Scifind/issues/new','_blank')">{{ _('settings.report_bug') }}</button>
           </div>
         </div>
       </div>
@@ -632,7 +649,7 @@
     <div class="sidebar left" id="sidebar-left">
       <div class="sidebar-resize left-edge" id="sidebar-resize-left"></div>
       <div class="sidebar-scroll">
-      <div class="sheet-handle" data-sheet-target="left" aria-label="Drag to dismiss"></div>
+      <div class="sheet-handle" data-sheet-target="left" role="button" tabindex="0" aria-label="Drag to dismiss"></div>
       <div class="sidebar-inner" id="sidebar-left-inner">
         <div class="view-tabs">
           <a class="view-tab {{ 'active' if current_view == 'formulas' }}" href="/formulas{{ '?' + request.query_string.decode() if request.query_string.decode() else '' }}"><i data-lucide="sigma" width="14" height="14"></i> {{ _('nav.formulas') }}</a>
@@ -654,12 +671,12 @@
         {% set ds = dim_symbols.get(dsym, dsym) %}
         <div class="filter-dim-row" data-dim="{{ dsym }}">
           <span class="dim-symbol">${{ ds }}$</span>
-          <select class="dim-op" data-action="dim-filter-change">
+          <select class="dim-op" data-action="dim-filter-change" aria-label="{{ dsym }}">
             <option value="eq"{{ ' selected' if df.op == 'eq' }}> =</option>
             <option value="geq"{{ ' selected' if df.op == 'geq' }}> ≥</option>
             <option value="leq"{{ ' selected' if df.op == 'leq' }}> ≤</option>
           </select>
-          <input type="number" class="dim-val" value="{{ df.val if df.val is not none else '' }}" step="1" data-action="dim-filter-change" placeholder="0">
+          <input type="number" class="dim-val" value="{{ df.val if df.val is not none else '' }}" step="1" data-action="dim-filter-change" placeholder="0" aria-label="{{ dsym }}">
         </div>
         {% endfor %}
         </div>
@@ -674,6 +691,7 @@
         </div>
         <div class="filter-qty-search-wrap">
           <div class="qty-search-wrap">
+            <label for="qty-search" class="sr-only">{{ _('filter.search_quantity') }}</label>
             <input type="text" class="qty-search" id="qty-search" placeholder="{{ _('filter.search_quantity') }}" autocomplete="off">
             <div class="qty-results" id="qty-results"></div>
           </div>
@@ -690,7 +708,9 @@
           <div class="diff-sliders">
             <div class="diff-track"></div>
             <div class="diff-fill" id="diff-fill"></div>
+            <label for="diff-min" class="sr-only">{{ _('filter.min_difficulty') }}</label>
             <input type="range" id="diff-min" min="0" max="10" value="{{ diff_min }}" step="1" data-action="sync-diff">
+            <label for="diff-max" class="sr-only">{{ _('filter.max_difficulty') }}</label>
             <input type="range" id="diff-max" min="0" max="10" value="{{ diff_max }}" step="1" data-action="sync-diff">
           </div>
           <div class="diff-vals">
@@ -714,7 +734,7 @@
     <div class="sidebar right" id="sidebar-right">
       <div class="sidebar-resize right-edge" id="sidebar-resize-right"></div>
       <div class="sidebar-scroll">
-      <div class="sheet-handle" data-sheet-target="right" aria-label="Drag to dismiss"></div>
+      <div class="sheet-handle" data-sheet-target="right" role="button" tabindex="0" aria-label="Drag to dismiss"></div>
       <div class="sidebar-inner" id="sidebar-right-inner">
         <div class="section-label-row">
           <div class="section-label">{{ _('filter.topic') }}</div>
@@ -732,7 +752,7 @@
   <!-- Mobile dock (visible only <768) -->
   <div class="mobile-fade" id="mobile-fade"></div>
   <div class="mobile-dock" id="mobile-dock">
-    <div class="dock-pill dock-split" role="tablist">
+    <div class="dock-pill dock-split">
       <button class="dock-half {{ 'active' if current_view != 'quantities' }}" data-dock-view="formulas" data-action="dock-set-view" type="button" aria-label="{{ _('dock.formulas') }}">
         <i data-lucide="sigma" width="20" height="20"></i>
         <span class="dock-pill-label">{{ _('dock.formulas') }}</span>
@@ -742,7 +762,7 @@
         <span class="dock-pill-label">{{ _('dock.quantities') }}</span>
       </button>
     </div>
-    <div class="dock-pill dock-split" role="tablist">
+    <div class="dock-pill dock-split">
       <button class="dock-half" data-action="dock-toggle-panel" data-target="left" data-pill="filter" type="button" aria-label="{{ _('dock.filter') }}">
         <i data-lucide="filter" width="20" height="20"></i>
         <span class="dock-pill-label">{{ _('dock.filter') }}</span>
@@ -1626,6 +1646,7 @@
         case 'switch-theme': switchTheme(el.value); break;
         case 'switch-lang': switchLang(el.value); break;
         case 'switch-dim-mode': switchDimMode(el.value); break;
+        case 'switch-wait-latex': switchWaitLatex(el.checked); break;
         case 'dim-filter-change': dimFilterChange(); break;
         case 'set-export-format': document.cookie = 'sf_export_format=' + el.value + '; path=/; max-age=31536000'; break;
       }
@@ -1641,6 +1662,7 @@
     document.getElementById('setting-theme').addEventListener('change', function() { switchTheme(this.value); });
     document.getElementById('setting-lang').addEventListener('change', function() { switchLang(this.value); });
     document.getElementById('setting-dim').addEventListener('change', function() { switchDimMode(this.value); });
+    document.getElementById('setting-wait-latex').addEventListener('change', function() { switchWaitLatex(this.checked); });
 
     // Theme switch
     function switchTheme(theme) {
@@ -1693,10 +1715,28 @@
       }
     })();
 
+    // Load saved wait-for-latex state
+    (function() {
+      try {
+        var cb = document.getElementById('setting-wait-latex');
+        if (cb) {
+          var val = localStorage.getItem('sf-wait-latex');
+          cb.checked = val !== '0';
+        }
+      } catch(e) {}
+    })();
+
     // Language switch
     function switchLang(locale) {
       document.cookie = 'sf_locale=' + locale + '; path=/; max-age=31536000';
       window.location.reload();
+    }
+
+    // Wait for LaTeX toggle
+    function switchWaitLatex(enabled) {
+      var val = enabled ? '1' : '0';
+      localStorage.setItem('sf-wait-latex', val);
+      document.documentElement.setAttribute('data-wait-latex', val);
     }
 
     // Dimension mode switch
@@ -1879,7 +1919,7 @@
       });
     })();
 
-    lucide.createIcons();
+    if (typeof lucide !== 'undefined') lucide.createIcons();
     syncSidebarIcon('left');
     syncSidebarIcon('right');
     document.documentElement.classList.remove('suppress-transitions');

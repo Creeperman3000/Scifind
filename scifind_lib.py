@@ -218,7 +218,7 @@ def format_dimensions_plain(*values):
             continue
         parts.append(symbol if exponent == 1
                      else f"{symbol}^{format_number(exponent)}")
-    return " · ".join(parts) if parts else "dimensionless"
+    return " · ".join(parts) if parts else "\\varnothing"
 
 
 def format_dimensions_latex(
@@ -244,7 +244,7 @@ def format_dimensions_latex(
         else:
             e = str(int(exponent)) if exponent == int(exponent) else str(exponent)
             parts.append(f"{sym}^{{{e}}}")
-    return " \\cdot ".join(parts) if parts else "\\text{dimensionless}"
+    return " \\cdot ".join(parts) if parts else "\\varnothing"
 
 
 def extract_dimensions_from_row(row):

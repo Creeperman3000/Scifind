@@ -39,7 +39,10 @@
       "dim_mode_dimensions": "Dimensions",
       "dim_mode_quantities": "Quantities",
       "dim_mode_units": "Units",
-      "export_download": "Download"
+      "export_download": "Download",
+      "wait_latex": "Wait for LaTeX",
+      "found_bug": "Found a bug?",
+      "report_bug": "Report"
     },
     "search": {
       "placeholder": "Find formulas, quantities, units",

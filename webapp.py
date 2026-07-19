@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Scifind web app — Flask interface to the formula database."""
 
+import gzip
 import html as html_module
 import io
 import json
@@ -71,6 +72,30 @@ app.secret_key = os.environ.get("SCIFIND_SECRET_KEY") or secrets.token_hex(24)
 app.config["MAX_CONTENT_LENGTH"] = (
     int(os.environ.get("SCIFIND_MAX_UPLOAD_MB", "32")) * 1024 * 1024
 )
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 365 * 86400
+
+
+_GZIP_TYPES = ('text/', 'application/json', 'application/javascript')
+
+
+@app.after_request
+def gzip_response(response):
+    accept = request.headers.get('Accept-Encoding', '')
+    if 'gzip' not in accept:
+        return response
+    ct = response.content_type or ''
+    if not ct.startswith(_GZIP_TYPES):
+        return response
+    response.direct_passthrough = False
+    original = response.get_data()
+    if len(original) < 200:
+        return response
+    compressed = gzip.compress(original)
+    response.set_data(compressed)
+    response.headers['Content-Encoding'] = 'gzip'
+    response.headers['Content-Length'] = len(compressed)
+    return response
+
 
 MIN_DIFFICULTY = 0
 MAX_DIFFICULTY = 10
