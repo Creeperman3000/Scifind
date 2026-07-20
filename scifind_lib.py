@@ -1029,15 +1029,22 @@ def fetch_all_formulas(conn):
     ).fetchall()
 
 
-def compute_all_formula_dimensions(conn):
-    """Return {formula_id: {dim_M, dim_L, ...}} for all formulas.
+def compute_all_formula_dimensions(conn, formula_ids=None):
+    """Return {formula_id: {dim_M, dim_L, ...}} for all or given formulas.
+
+    If *formula_ids* is provided, only those IDs are computed (useful
+    when preceding filters have already narrowed the set). Otherwise
+    every formula in the database is evaluated.
 
     Evaluates the RPN tree for each formula to correctly compute
     LHS dimensions (handles frac, pow, etc.). Formulas without a
     valid LHS or with no tokens get all-zero dimensions.
     """
     cols = DIMENSION_COLUMNS()
-    all_ids = {r["id"] for r in conn.execute("SELECT id FROM formula").fetchall()}
+    if formula_ids is not None:
+        all_ids = formula_ids
+    else:
+        all_ids = {r["id"] for r in conn.execute("SELECT id FROM formula").fetchall()}
     zero_row = {c: 0 for c in cols}
     result = {}
     for fid in all_ids:

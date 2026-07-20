@@ -4,7 +4,6 @@
   <meta charset="utf-8">
   <meta name="description" content="Find formulas and quantities!">
   <meta name="keywords" content="find, physics, math, formulas, quantities">
-  <meta http-equiv="refresh" content="30">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script>(function(){try{var t=localStorage.getItem('sf-theme');if(t)document.documentElement.setAttribute('data-theme',t);var w=localStorage.getItem('sf-wait-latex');if(w!==null)document.documentElement.setAttribute('data-wait-latex',w);else document.documentElement.setAttribute('data-wait-latex','1')}catch(e){}})();</script>
   <title>{% block title %}Scifind{% endblock %}</title>
@@ -19,6 +18,7 @@
   <script src="{{ url_for('static', filename='js/jstree.min.js') }}"></script>
   <link rel="preconnect" href="https://unpkg.com">
   <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+  {% set bp_tablet = 768 %}{% set bp_desktop = 1024 %}{% set bp_content = 849 %}
   <style>
     /* ============================================================
        Reset & Theme
@@ -76,12 +76,10 @@
     a:hover { text-decoration: underline; }
     .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 
-    /* ============================================================
-       Layout
-       PC:     >= 1024  — both sidebars inline
-       TABLET: 768..1023 — left inline, right overlays
-       MOBILE: <  768   — sidebars as bottom sheets, dock on bottom
-       ============================================================ */
+    :root {
+      --bp-tablet: {{ bp_tablet }}px;
+      --bp-desktop: {{ bp_desktop }}px;
+    }
 
     /* Top bar */
     .topbar { display: flex; align-items: center; padding: 0 12px; border-bottom: 1px solid var(--border); background: var(--bg); height: var(--topbar-height); z-index: 100; flex-shrink: 0; gap: 8px; }
@@ -143,7 +141,7 @@
     .main ul { padding-left: 20px; }
     .main::after { content: ''; display: block; height: 35vh; flex-shrink: 0; }
     .main.no-overflow::after { display: none; }
-    @media (max-width: 848px) { .main-inner { max-width: 100%; } }
+    @media (width < {{ bp_content }}px) { .main-inner { max-width: 100%; } }
 
     /* Pre-KaTeX overlay — blocks main content while math is loading */
     #main-content { position: relative; }
@@ -176,6 +174,7 @@
 
     .filter-dim-row { display: flex; align-items: center; gap: 4px; padding: 2px 0; font-size: 0.82rem; }
     .dim-symbol { width: 36px; font-weight: 600; text-align: center; font-size: 0.85rem; }
+    .dim-symbol .katex { font-size: 1em; line-height: 1; vertical-align: middle; }
     .filter-dim-row select { font-size: 0.78rem; padding: 1px 2px; border: 1px solid var(--border); border-radius: 3px; background: var(--bg); color: var(--text); width: 44px; }
     .filter-dim-row input[type=number] { font-size: 0.78rem; padding: 1px 4px; border: 1px solid var(--border); border-radius: 3px; background: var(--bg); color: var(--text); width: 36px; text-align: center; }
     .filter-dim-row input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
@@ -310,7 +309,7 @@
     /* ============================================================
        TABLET (768..1023) — left inline, right overlays
        ============================================================ */
-    @media (min-width: 768px) and (max-width: 1023px) {
+    @media ({{ bp_tablet }}px <= width < {{ bp_desktop }}px) {
       .sidebar.right {
         position: fixed;
         top: var(--topbar-height);
@@ -341,7 +340,7 @@
     /* ============================================================
        MOBILE (<768) — bottom sheets, dock, fade
        ============================================================ */
-    @media (max-width: 767px) {
+    @media (width < {{ bp_tablet }}px) {
       /* Topbar: logo + settings only — sidebar toggles & search live in the dock */
       .topbar [data-action="toggle-sidebar-left"],
       .topbar [data-action="toggle-sidebar-right"],
@@ -439,7 +438,7 @@
       align-items: center;
       gap: 6px;
     }
-    @media (max-width: 767px) {
+    @media (width < {{ bp_tablet }}px) {
       .mobile-fade { display: block; }
       .mobile-dock { display: flex; }
     }
@@ -549,7 +548,13 @@
         <span id="left-sidebar-icon"><i data-lucide="panel-left-close" width="18" height="18"></i></span>
       </button>
       <a href="/" class="topbar-logo">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v12M6 12h12"/></svg>
+        <svg width="32" height="32" viewBox="0 0 8.2 4.76" xmlns="http://www.w3.org/2000/svg" fill="none" stroke=var(--accent) stroke-width="0.529">
+          <g transform="translate(-20.000001,-125)">
+            <path d="m 23.697796,126.32304 v -0.79388 c 0,-0.14612 -0.118459,-0.26458 -0.264583,-0.26458 h -3.042708 c -0.109008,0 -0.171234,0.12445 -0.105834,0.21166 l 1.190625,1.5875 c 0.141111,0.18815 0.141111,0.44685 0,0.635 l -1.190625,1.5875 c -0.06541,0.0872 -0.0032,0.21167 0.105834,0.21167 h 4.703353 c 0.146124,0 0.330686,-0.17742 0.418345,-0.2943 l 0.72975,-0.97301"/>
+            <path d="m 23.043601,126.58736 a 0.23714349,0.2371317 0 0 0 -0.225879,0.1731 l -0.295836,1.07184 a 0.23714349,0.2371317 0 0 0 0.225286,0.29642 h 1.897148 a 0.23714349,0.2371317 0 0 0 0.228251,-0.30116 l -0.299394,-1.06236 a 0.23714349,0.2371317 0 0 0 -0.227658,-0.17784 z"/>
+            <circle cx="26.879168" cy="127.3811" r="1.0583333"/>
+          </g>
+        </svg>
         <span class="logo-text">Scifind</span>
       </a>
     </div>
@@ -709,9 +714,9 @@
             <div class="diff-track"></div>
             <div class="diff-fill" id="diff-fill"></div>
             <label for="diff-min" class="sr-only">{{ _('filter.min_difficulty') }}</label>
-            <input type="range" id="diff-min" min="0" max="10" value="{{ diff_min }}" step="1" data-action="sync-diff">
+            <input type="range" id="diff-min" min="1" max="10" value="{{ diff_min }}" step="1" data-action="sync-diff">
             <label for="diff-max" class="sr-only">{{ _('filter.max_difficulty') }}</label>
-            <input type="range" id="diff-max" min="0" max="10" value="{{ diff_max }}" step="1" data-action="sync-diff">
+            <input type="range" id="diff-max" min="1" max="10" value="{{ diff_max }}" step="1" data-action="sync-diff">
           </div>
           <div class="diff-vals">
             <span id="diff-min-val">{{ diff_min }}</span>
@@ -1015,20 +1020,22 @@
       // Qty mode toggle (AND/OR) — visible when ≥2 quantities selected
       var qtyModeBtn = document.getElementById('qty-mode-toggle');
       if (qtyModeBtn) {
-        var qtyCount = (window._qtySelected || []).length;
-        if (qtyCount >= 2) {
-          qtyModeBtn.style.display = '';
-          var switched = getSwitched(url);
-          var key = isFormulasView() ? 'fml' : 'qty';
-          var isSwitched = switched.indexOf(key) !== -1;
-          qtyModeBtn.classList.toggle('active', isSwitched);
-          qtyModeBtn.classList.remove('inactive');
-          var isAnd = isFormulasView() ? !isSwitched : isSwitched;
-          qtyModeBtn.title = isAnd ? ((window._localeUI.filter && window._localeUI.filter.qty_mode_and) || 'Quantity filter mode: AND') : ((window._localeUI.filter && window._localeUI.filter.qty_mode_or) || 'Quantity filter mode: OR');
-          qtyModeBtn.innerHTML = '<i data-lucide="' + (isAnd ? 'squares-intersect' : 'squares-unite') + '" width="16" height="16"></i>';
-          if (typeof lucide !== 'undefined') lucide.createIcons();
-        } else {
+        if (!isFormulasView()) {
           qtyModeBtn.style.display = 'none';
+        } else {
+          var qtyCount = (window._qtySelected || []).length;
+          if (qtyCount >= 2) {
+            qtyModeBtn.style.display = '';
+            var switched = getSwitched(url);
+            var isSwitched = switched.indexOf('fml') !== -1;
+            qtyModeBtn.classList.toggle('active', isSwitched);
+            qtyModeBtn.classList.remove('inactive');
+            qtyModeBtn.title = isSwitched ? ((window._localeUI.filter && window._localeUI.filter.qty_mode_or) || 'Quantity filter mode: OR') : ((window._localeUI.filter && window._localeUI.filter.qty_mode_and) || 'Quantity filter mode: AND');
+            qtyModeBtn.innerHTML = '<i data-lucide="' + (isSwitched ? 'squares-unite' : 'squares-intersect') + '" width="16" height="16"></i>';
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+          } else {
+            qtyModeBtn.style.display = 'none';
+          }
         }
       }
 
@@ -1043,7 +1050,7 @@
       if (diffReset) {
         var dMin = document.getElementById('diff-min');
         var dMax = document.getElementById('diff-max');
-        var isDefault = dMin && dMax && parseInt(dMin.value) === 0 && parseInt(dMax.value) === 10;
+        var isDefault = dMin && dMax && parseInt(dMin.value) === 1 && parseInt(dMax.value) === 10;
         diffReset.classList.toggle('disabled', isDefault);
       }
     }
@@ -1068,7 +1075,7 @@
       var qtyParam = url.searchParams.get('qty');
       var qtyCount = qtyParam ? qtyParam.split(',').length : 0;
       if (qtyCount < 2) {
-        ['fml','qty'].forEach(function(k) { var idx; while ((idx = parts.indexOf(k)) !== -1) { parts.splice(idx, 1); changed = true; } });
+        ['fml'].forEach(function(k) { var idx; while ((idx = parts.indexOf(k)) !== -1) { parts.splice(idx, 1); changed = true; } });
       }
 
       if (changed) {
@@ -1094,12 +1101,12 @@
     }
 
     document.getElementById('qty-mode-toggle').addEventListener('click', function() {
+      if (!isFormulasView()) return;
       var url = new URL(window.location);
       var switched = (url.searchParams.get('mode_switched') || '').split(',').filter(Boolean);
-      var key = isFormulasView() ? 'fml' : 'qty';
-      var idx = switched.indexOf(key);
+      var idx = switched.indexOf('fml');
       if (idx !== -1) switched.splice(idx, 1);
-      else switched.push(key);
+      else switched.push('fml');
       if (switched.length) url.searchParams.set('mode_switched', switched.join(','));
       else url.searchParams.delete('mode_switched');
       fetchContent(url.pathname + url.search, true);
@@ -1115,7 +1122,7 @@
     });
 
     document.getElementById('diff-reset').addEventListener('click', function() {
-      document.getElementById('diff-min').value = 0;
+      document.getElementById('diff-min').value = 1;
       document.getElementById('diff-max').value = 10;
       syncDiff();
       applyFilters();
@@ -1299,7 +1306,7 @@
 
       var min = parseInt(document.getElementById('diff-min').value);
       var max = parseInt(document.getElementById('diff-max').value);
-      if (min > 0) url.searchParams.set('diff_min', min);
+      if (min > 1) url.searchParams.set('diff_min', min);
       else url.searchParams.delete('diff_min');
       if (max < 10) url.searchParams.set('diff_max', max);
       else url.searchParams.delete('diff_max');
@@ -1354,6 +1361,7 @@
           restoreAllFromUrl();
           updateOverflowPadding();
           syncDockPills();
+          syncViewTabLinks();
         })
         .catch(function(err) { if (err.name !== 'AbortError') console.warn('fetchContent error', err); })
         .then(function() { if (_pendingFetch === controller) _pendingFetch = null; });
@@ -1631,7 +1639,8 @@
         case 'toggle-copy-menu': toggleCopyMenu(e); break;
         case 'copy-formula-latex': copyFormula('latex'); break;
         case 'copy-formula-unicode': copyFormula('unicode'); break;
-        case 'copy-formula-image': copyFormula('image'); break;
+        case 'copy-formula-image-png': copyFormula('png'); break;
+        case 'copy-formula-image-svg': copyFormula('svg'); break;
         case 'remove-qty-chip': removeQtyChip(el.getAttribute('data-qty')); break;
         case 'add-qty-chip': addQtyChip(el.getAttribute('data-qty')); break;
         case 'close-overlays': closeAllOverlays(); break;
@@ -1754,8 +1763,8 @@
       if (v1 > v2) { [v1, v2] = [v2, v1]; min.value = v1; max.value = v2; }
       document.getElementById('diff-min-val').textContent = v1;
       document.getElementById('diff-max-val').textContent = v2;
-      const pct1 = (v1 / 10) * 100;
-      const pct2 = (v2 / 10) * 100;
+      const pct1 = ((v1 - 1) / 9) * 100;
+      const pct2 = ((v2 - 1) / 9) * 100;
       fill.style.left = pct1 + '%';
       fill.style.width = (pct2 - pct1) + '%';
     }
@@ -1826,7 +1835,7 @@
     (function() {
       var mqTabletUp = window.matchMedia('(min-width: 768px)');
       var mqPcUp = window.matchMedia('(min-width: 1024px)');
-      var mqMobile = window.matchMedia('(max-width: 767px)');
+      var mqMobile = window.matchMedia('(width < {{ bp_tablet }}px)');
 
       function syncOnResize() {
         var left = document.getElementById('sidebar-left');
@@ -2009,21 +2018,20 @@
         doCopy = import('https://cdn.jsdelivr.net/npm/unicodeit@0.7.5/+esm').then(function(mod) {
           return navigator.clipboard.writeText(mod.replace(tex));
         });
-      } else if (fmt === 'image') {
-        doCopy = import('https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/+esm').then(function(hti) {
-          return hti.toPng(el, { pixelRatio: 4, backgroundColor: 'transparent' }).then(function(dataUrl) {
-            var parts = dataUrl.split(',');
-            var bstr = atob(parts[1]);
-            var u8arr = new Uint8Array(bstr.length);
-            for (var i = 0; i < bstr.length; i++) u8arr[i] = bstr.charCodeAt(i);
-            var blob = new Blob([u8arr], {type: 'image/png'});
-            return navigator.clipboard.write([new ClipboardItem({'image/png': blob})]);
-          });
+      } else if (fmt === 'png') {
+        var url = 'https://latex.codecogs.com/png.latex?' + encodeURIComponent('\\dpi{3000}' + tex);
+        doCopy = fetch(url).then(function(r) { return r.blob(); }).then(function(blob) {
+          return navigator.clipboard.write([new ClipboardItem({'image/png': blob})]);
+        });
+      } else if (fmt === 'svg') {
+        var url = 'https://latex.codecogs.com/svg.latex?' + encodeURIComponent(tex);
+        doCopy = fetch(url).then(function(r) { return r.blob(); }).then(function(blob) {
+          return navigator.clipboard.write([new ClipboardItem({'image/svg+xml': blob})]);
         });
       }
 
       if (doCopy) {
-        doCopy.then(function() { showToast(((window._localeUI.toast && window._localeUI.toast.copied) || 'Copied') + ' ' + fmt, 'success'); })
+        doCopy.then(function() { var label = (window._localeUI.copy && window._localeUI.copy['image_' + fmt]) || fmt.toUpperCase(); showToast(((window._localeUI.toast && window._localeUI.toast.copied) || 'Copied') + ' ' + label, 'success'); })
               .catch(function(e) { showToast(((window._localeUI.toast && window._localeUI.toast.copy_failed) || 'Copy failed') + ': ' + e.message, 'error'); });
       }
     }
@@ -2127,6 +2135,7 @@
           var newContent = doc.getElementById('main-content');
           if (!newContent) { window.location.href = url; return; }
           document.getElementById('main-content').innerHTML = newContent.innerHTML;
+          document.getElementById('main-content').scrollTop = 0;
           if (!isPop && !(window.history.state && window.history.state.url === url)) history.pushState({url: url}, '', url);
           var isFormulas = url.indexOf('/quantities') === -1 && url.indexOf('/quantity/') === -1 && url.indexOf('/unit/') === -1;
           var isSearch = url.indexOf('/search') !== -1;

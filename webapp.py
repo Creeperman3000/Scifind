@@ -97,7 +97,7 @@ def gzip_response(response):
     return response
 
 
-MIN_DIFFICULTY = 0
+MIN_DIFFICULTY = 1
 MAX_DIFFICULTY = 10
 SEARCH_QUERY_MAX_LENGTH = 200
 SUGGEST_QUERY_MAX_LENGTH = 50
@@ -1026,6 +1026,7 @@ def all_quantities():
     db = get_db()
     locale = g.locale
     fs = parse_filter_state(request.args, request.path)
+    fs.quantity_mode = "or"
     tree = _sciences_tree()
     compressed = _compress_selection(tree, fs.ids)
     if compressed == {r["id"] for r in tree}:
@@ -1047,6 +1048,8 @@ def all_quantities():
         _attach_breadcrumbs(q, locale)
 
         if topic_filter and q.get("topic_id") not in topic_filter:
+            continue
+        if (q.get("difficulty") or 0) < fs.diff_min or (q.get("difficulty") or 0) > fs.diff_max:
             continue
         if fs.has_dimension_filter and not _dimension_matches(q, fs.dimension_filter, fs.dim_mode):
             continue
@@ -1105,7 +1108,8 @@ def all_formulas():
     ]
 
     if fs.has_dimension_filter:
-        dim_map = compute_all_formula_dimensions(db)
+        formula_ids = {f["id"] for f in formulas}
+        dim_map = compute_all_formula_dimensions(db, formula_ids)
         formulas = [
             f for f in formulas
             if _dimension_matches(dim_map.get(f["id"], {}), fs.dimension_filter, fs.dim_mode)

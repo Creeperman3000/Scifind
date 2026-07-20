@@ -123,7 +123,8 @@
     "copy": {
       "latex": "LaTeX",
       "unicode": "Unicode",
-      "image": "Image"
+      "image_png": "PNG",
+      "image_svg": "SVG"
     },
     "toast": {
       "copied": "Copied",
