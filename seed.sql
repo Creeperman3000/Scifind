@@ -143,33 +143,33 @@ INSERT OR IGNORE INTO unit VALUES('weber','{"en-us": "Weber", "cs-cz": "Weber"}'
 -- Precedence is the binding strength; higher = binds tighter.
 -- Special: relational operators use 5, arithmetic uses 10-30.
 
-INSERT OR IGNORE INTO operator (id, symbol, math, arity, precedence, associativity, operator_type) VALUES
+INSERT OR IGNORE INTO operator (id, symbol, syntax, math, arity, precedence, associativity, operator_type) VALUES
   -- Arithmetic (infix)
-  ('add',    '+',       'a+b',                 2, 10, 'left',  'infix'),
-  ('sub',    '-',       'a-b',                 2, 10, 'left',  'infix'),
-  ('mul',    NULL,      'a*b',                 2, 20, 'left',  'infix'),
-  ('cdot',   '\cdot',  'a*b',                 2, 20, 'left',  'infix'),
-  ('times',  '\times', 'a*b',                 2, 20, 'left',  'infix'),
-  ('div',    '/',       'a/b',                 2, 20, 'left',  'infix'),
-  ('frac',   '\frac',  'a/b',                 2, 25, 'left',  'infix'),
-  ('pow',    '^',       'a**b',                2, 30, 'right', 'infix'),
+  ('add',    '+',       '+',      'a+b',                 2, 10, 'left',  'infix'),
+  ('sub',    '-',       '-',      'a-b',                 2, 10, 'left',  'infix'),
+  ('mul',    NULL,      '*',      'a*b',                 2, 20, 'left',  'infix'),
+  ('cdot',   '\cdot',   '\cdot', 'a*b',                 2, 20, 'left',  'infix'),
+  ('times',  '\times',  '\times','a*b',                 2, 20, 'left',  'infix'),
+  ('div',    '/',       '/',      'a/b',                 2, 20, 'left',  'infix'),
+  ('frac',   '\frac',   '/',      'a/b',                 2, 25, 'left',  'infix'),
+  ('pow',    '^',       '^',      'a**b',                2, 30, 'right', 'infix'),
   -- Unary (prefix)
-  ('neg',    '-',       '-a',                  1, 25, 'right', 'prefix'),
+  ('neg',    '-',       '-',      '-a',                  1, 25, 'right', 'prefix'),
   -- Functions (prefix)
-  ('sin',    '\sin',   'math.sin(a)',         1, 30, 'right', 'prefix'),
-  ('cos',    '\cos',   'math.cos(a)',         1, 30, 'right', 'prefix'),
-  ('tan',    '\tan',   'math.tan(a)',         1, 30, 'right', 'prefix'),
-  ('sqrt',   '\sqrt',  'math.sqrt(a)',        1, 30, 'right', 'prefix'),
+  ('sin',    '\sin',   'sin(',   'math.sin(a)',         1, 30, 'right', 'prefix'),
+  ('cos',    '\cos',   'cos(',   'math.cos(a)',         1, 30, 'right', 'prefix'),
+  ('tan',    '\tan',   'tan(',   'math.tan(a)',         1, 30, 'right', 'prefix'),
+  ('sqrt',   '\sqrt',  'sqrt(',  'math.sqrt(a)',        1, 30, 'right', 'prefix'),
   -- Decorators (prefix, no math)
-  ('Delta',  '\Delta', NULL,                  1, 30, 'right', 'prefix'),
-  ('rmd',    '\mathrm{d}', NULL,               1, 30, 'right', 'prefix'),
-  ('overl',  '\overline', NULL,                1, 30, 'right', 'prefix'),
+  ('Delta',  '\Delta', 'Delta(', NULL,                  1, 30, 'right', 'prefix'),
+  ('rmd',    '\mathrm{d}', 'd(', NULL,                  1, 30, 'right', 'prefix'),
+  ('overl',  '\overline', '\overline', NULL,            1, 30, 'right', 'prefix'),
   -- Relational
-  ('eq',     '=',       NULL,                  2,  5, 'none',  'relational'),
-  ('approx', '\approx', NULL,                 2,  5, 'none',  'relational'),
-  ('prop',   '\propto', NULL,                 2,  5, 'none',  'relational'),
-  ('gt',     '>',       NULL,                  2,  5, 'none',  'relational'),
-  ('lt',     '<',       NULL,                  2,  5, 'none',  'relational')
+  ('eq',     '=',       '=',      NULL,                  2,  5, 'none',  'relational'),
+  ('approx', '\approx', '~',      NULL,                  2,  5, 'none',  'relational'),
+  ('prop',   '\propto', 'oo',     NULL,                  2,  5, 'none',  'relational'),
+  ('gt',     '>',       '>',      NULL,                  2,  5, 'none',  'relational'),
+  ('lt',     '<',       '<',      NULL,                  2,  5, 'none',  'relational')
 ;
 
 

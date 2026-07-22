@@ -4,6 +4,8 @@
 
 <h2 class="detail-heading">{% if q.symbol %}${{ q.symbol }}$ {% endif %}{{ _(q.name) }}</h2>
 
+<div class="detail-desc">{{ _('filter.quantity') }}</div>
+
 {% if q.breadcrumbs %}
 <div class="breadcrumb-bar">
 {% for crumb in q.breadcrumbs %}

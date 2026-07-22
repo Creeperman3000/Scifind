@@ -219,6 +219,15 @@
     #sidebar-right .jstree-default .jstree-checked > .jstree-checkbox::after { content: ''; position: absolute; left: 4px; top: 2px; width: 4px; height: 7px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
     #sidebar-right .jstree-default .jstree-anchor > .jstree-undetermined { background: var(--accent) !important; width: 16px !important; height: 16px !important; border: 2px solid var(--accent) !important; border-radius: 3px; position: absolute !important; left: 4px; top: 2px; }
     #sidebar-right .jstree-default .jstree-anchor > .jstree-undetermined::after { content: ''; position: absolute; left: 2px; top: 5px; width: 8px; height: 2px; background: #fff; border-radius: 1px; border: none; transform: none; }
+    /* Radio mode: same overrides as checkbox but circular (toggled by .jstree-radio-mode on #sidebar-right) */
+    #sidebar-right.jstree-radio-mode .jstree-default .jstree-checkbox,
+    #sidebar-right.jstree-radio-mode .jstree-default .jstree-anchor > .jstree-undetermined { border-radius: 50% !important; }
+    #sidebar-right.jstree-radio-mode .jstree-default .jstree-clicked > .jstree-checkbox,
+    #sidebar-right.jstree-radio-mode .jstree-default .jstree-checked > .jstree-checkbox { background: var(--accent) !important; border-color: var(--accent) !important; }
+    #sidebar-right.jstree-radio-mode .jstree-default .jstree-clicked > .jstree-checkbox::after,
+    #sidebar-right.jstree-radio-mode .jstree-default .jstree-checked > .jstree-checkbox::after { content: ''; position: absolute; left: 3px; top: 3px; width: 6px; height: 6px; border-radius: 50%; background: #fff; border: none; transform: none; }
+    #sidebar-right.jstree-radio-mode .jstree-default .jstree-anchor > .jstree-undetermined { background: none !important; border-color: var(--accent) !important; }
+    #sidebar-right.jstree-radio-mode .jstree-default .jstree-anchor > .jstree-undetermined::after { content: ''; position: absolute; left: 5px; top: 5px; width: 4px; height: 4px; border-radius: 50%; background: var(--accent); }
     /* Checkboxes: hidden by default, shown on sidebar hover (top-level + undetermined always visible) */
     #sidebar-right .jstree-checkbox { opacity: 0; }
     #sidebar-right:hover .jstree-checkbox { opacity: 1 !important; }
@@ -275,12 +284,17 @@
     .formula-card .formula-name { font-size: 0.85rem; color: var(--accent); text-align: center; margin-top: auto; }
     .formula-card .formula-relation-label { font-size: 0.75rem; color: var(--text-secondary); text-align: center; margin-top: 4px; }
 
-    .detail-heading { font-size: 1.3rem; margin-bottom: 4px; }
+    .detail-heading { font-size: 1.3rem; font-weight: 700; line-height: 1.2; color: var(--text); margin-bottom: 16px; }
     .detail-breadcrumbs, .breadcrumb-bar { font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 12px; padding: 6px 0; }
     .detail-breadcrumbs a, .breadcrumb-bar a { color: var(--text-secondary); }
     .detail-breadcrumbs a:hover, .breadcrumb-bar a:hover { color: var(--accent); }
     .detail-meta { font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 16px; }
+    .detail-meta input[type="range"] { accent-color: var(--accent); }
     .detail-meta > span { display: block; margin-bottom: 2px; }
+    /* Inline variant — children sit on a single row with gap (used by /create meta) */
+    .detail-meta.inline { display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
+    .detail-meta.inline > span,
+    .detail-meta.inline > div { display: inline-flex; }
     .detail-section { margin-bottom: 20px; }
     .detail-section h3 { font-size: 1rem; margin-bottom: 8px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; }
     .detail-desc { font-style: italic; color: var(--text-secondary); margin-bottom: 16px; font-size: 0.9rem; }
@@ -289,6 +303,8 @@
     .formula-copy-wrap { position: absolute; top: 8px; right: 8px; z-index: 2; }
     .formula-copy-btn { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border: none; background: var(--bg-tertiary); border-radius: 4px; cursor: pointer; color: var(--text-secondary); }
     .formula-copy-btn:hover { background: var(--border); color: var(--text); }
+    .btn-primary { padding: 10px 24px; font-size: 0.95rem; font-weight: 600; background: var(--accent); color: #fff; border: none; border-radius: 8px; cursor: pointer; transition: background 0.15s; }
+    .btn-primary:hover { background: var(--accent-hover); }
     .formula-copy-menu { top: calc(100% + 4px); border-radius: 6px; min-width: 140px; padding: 4px; z-index: 50; }
     .formula-copy-menu button { display: block; width: 100%; text-align: left; padding: 6px 12px; border: none; background: none; cursor: pointer; font-size: 0.85rem; color: var(--text); border-radius: 3px; }
     .formula-copy-menu button:hover { background: var(--bg-secondary); }
@@ -544,9 +560,9 @@
   <!-- Top Bar -->
   <div class="topbar">
     <div class="topbar-left">
-      <button class="topbar-btn" data-action="toggle-sidebar-left" title="{{ _('tooltip.toggle_sidebar') }}" aria-label="{{ _('tooltip.toggle_sidebar') }}">
+{% block sidebar_left_btn %}      <button class="topbar-btn" data-action="toggle-sidebar-left" title="{{ _('tooltip.toggle_sidebar') }}" aria-label="{{ _('tooltip.toggle_sidebar') }}">
         <span id="left-sidebar-icon"><i data-lucide="panel-left-close" width="18" height="18"></i></span>
-      </button>
+      </button>{% endblock %}
       <a href="/" class="topbar-logo">
         <svg width="32" height="32" viewBox="0 0 8.2 4.76" xmlns="http://www.w3.org/2000/svg" fill="none" stroke=var(--accent) stroke-width="0.529">
           <g transform="translate(-20.000001,-125)">
@@ -557,6 +573,7 @@
         </svg>
         <span class="logo-text">Scifind</span>
       </a>
+
     </div>
     <div class="topbar-search">
       <form action="/search" method="get">
@@ -624,11 +641,15 @@
             <label for="setting-report">{{ _('settings.found_bug') }}</label>
             <button onclick="window.open('https://github.com/Creeperman3000/Scifind/issues/new','_blank')">{{ _('settings.report_bug') }}</button>
           </div>
+          <div class="settings-item">
+            <span>{{ _('settings.missing_formula') }}</span>
+            <a href="/create" data-spa-full style="display:inline-block;padding:4px 12px;font-size:0.85rem;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);cursor:pointer;text-decoration:none;">{{ _('nav.create') }}</a>
+          </div>
         </div>
       </div>
-      <button class="topbar-btn" data-action="toggle-sidebar-right" title="{{ _('tooltip.toggle_tree') }}" aria-label="{{ _('tooltip.toggle_tree') }}">
+{% block sidebar_right_btn %}      <button class="topbar-btn" data-action="toggle-sidebar-right" title="{{ _('tooltip.toggle_tree') }}" aria-label="{{ _('tooltip.toggle_tree') }}">
         <span id="right-sidebar-icon"><i data-lucide="panel-right-close" width="18" height="18"></i></span>
-      </button>
+      </button>{% endblock %}
     </div>
   </div>
 
@@ -651,6 +672,7 @@
   <!-- Body -->
   <div class="body-wrap" id="body-wrap">
     <!-- Left sidebar -->
+{% block sidebar_left %}
     <div class="sidebar left" id="sidebar-left">
       <div class="sidebar-resize left-edge" id="sidebar-resize-left"></div>
       <div class="sidebar-scroll">
@@ -727,6 +749,7 @@
       </div>
       </div>
     </div>
+{% endblock %}
 
     <!-- Main content -->
     <div class="main" id="main-content">
@@ -736,6 +759,7 @@
     </div>
 
     <!-- Right sidebar -->
+{% block sidebar_right %}
     <div class="sidebar right" id="sidebar-right">
       <div class="sidebar-resize right-edge" id="sidebar-resize-right"></div>
       <div class="sidebar-scroll">
@@ -752,6 +776,7 @@
       </div>
       </div>
     </div>
+{% endblock %}
   </div>
 
   <!-- Mobile dock (visible only <768) -->
@@ -831,6 +856,7 @@
       } catch (e) {
         treeData = [];
       }
+      window._topicTreeData = treeData;
       var $tree = $('#science-tree');
       if (!$tree.length || typeof $.fn.jstree === 'undefined') return;
       /* disable dblclick toggling — clicking twice on a leaf shouldn't do anything */
@@ -1379,31 +1405,34 @@
     }
 
     // === Sidebar show / hide (breakpoint-aware) ===
-    // PC     : .collapsed shrinks the column to 0
-    // TABLET : .right overlays (open/closed); .left is always inline
-    // MOBILE : .open slides the sheet up; otherwise hidden
-    function isSidebarOpen(side) {
+    // Single source of truth: `data-open` on the sidebar element ("1" = open, "0" = closed).
+    // CSS classes (.collapsed / .open) are derived from this + current breakpoint.
+    function sidebarState(side) {
       var el = document.getElementById('sidebar-' + side);
-      if (!el) return false;
-      var bp = currentBreakpoint();
-      if (bp === 'pc') return !el.classList.contains('collapsed');
-      if (bp === 'tablet') return side === 'right' ? el.classList.contains('open') : true;
-      return el.classList.contains('open');
+      if (!el) return '1'; // default open if element missing
+      var v = el.getAttribute('data-open');
+      return v === '0' ? '0' : '1';
     }
+    function setSidebarState(side, open) {
+      var el = document.getElementById('sidebar-' + side);
+      if (!el) return;
+      el.setAttribute('data-open', open ? '1' : '0');
+      var bp = currentBreakpoint();
+      el.classList.toggle('collapsed', bp === 'pc' && !open);
+      el.classList.toggle('open', bp !== 'pc' && open);
+    }
+    function isSidebarOpen(side) { return sidebarState(side) === '1'; }
 
     function openSidebar(side) {
       var el = document.getElementById('sidebar-' + side);
       if (!el) return;
-      // Close the other sidebar on mobile so only one sheet is open
+      // On mobile, close the other sidebar so only one sheet is open
       if (currentBreakpoint() === 'mobile') {
         var other = side === 'left' ? 'right' : 'left';
         if (isSidebarOpen(other)) closeSidebar(other);
       }
-      // Close search if it's expanded
       exitSearch();
-      var bp = currentBreakpoint();
-      if (bp === 'pc') el.classList.remove('collapsed');
-      else el.classList.add('open');
+      setSidebarState(side, true);
       syncBackdrop();
       syncSidebarIcon(side);
       syncDockPills();
@@ -1412,9 +1441,7 @@
     function closeSidebar(side) {
       var el = document.getElementById('sidebar-' + side);
       if (!el) return;
-      var bp = currentBreakpoint();
-      if (bp === 'pc') el.classList.add('collapsed');
-      else el.classList.remove('open');
+      setSidebarState(side, false);
       syncBackdrop();
       syncSidebarIcon(side);
       syncDockPills();
@@ -1428,25 +1455,21 @@
     function syncBackdrop() {
       var bp = document.getElementById('sidebar-backdrop');
       if (!bp) return;
-      var left = document.getElementById('sidebar-left');
-      var right = document.getElementById('sidebar-right');
-      var bpName = currentBreakpoint();
-      var anyOpen = left.classList.contains('open') || right.classList.contains('open');
-      bp.classList.toggle('open', anyOpen);
+      var anyOpen = isSidebarOpen('left') || isSidebarOpen('right');
+      bp.classList.toggle('open', anyOpen && currentBreakpoint() !== 'pc');
     }
 
     function syncSidebarIcon(side) {
       var el = document.getElementById('sidebar-' + side);
       var iconWrap = document.getElementById(side + '-sidebar-icon');
       if (!el || !iconWrap) return;
+      // On tablet the left sidebar is always visible, so its toggle is a no-op;
+      // the icon stays as the "expanded" state to reflect that.
       var bp = currentBreakpoint();
-      var collapsed;
-      if (bp === 'pc') collapsed = el.classList.contains('collapsed');
-      else if (bp === 'tablet') collapsed = side === 'right' ? !el.classList.contains('open') : false;
-      else collapsed = !el.classList.contains('open');
+      var closed = isSidebarOpen(side) ? false : (bp !== 'tablet' || side === 'right');
       var icons = {
-        left: collapsed ? 'panel-left-open' : 'panel-left-close',
-        right: collapsed ? 'panel-right-open' : 'panel-right-close'
+        left: closed ? 'panel-left-open' : 'panel-left-close',
+        right: closed ? 'panel-right-open' : 'panel-right-close'
       };
       iconWrap.innerHTML = '<i data-lucide="' + icons[side] + '" width="18" height="18"></i>';
       if (typeof lucide !== 'undefined') lucide.createIcons();
@@ -1602,12 +1625,8 @@
     }
 
     function closeAllOverlays() {
-      document.querySelectorAll('.sidebar.open').forEach(function(s) { s.classList.remove('open'); });
-      var bp = document.getElementById('sidebar-backdrop');
-      if (bp) bp.classList.remove('open');
-      syncSidebarIcon('left');
-      syncSidebarIcon('right');
-      syncDockPills();
+      closeSidebar('left');
+      closeSidebar('right');
     }
 
     // Settings menu
@@ -1841,24 +1860,14 @@
         var left = document.getElementById('sidebar-left');
         var right = document.getElementById('sidebar-right');
         if (!left || !right) return;
-        var bp = currentBreakpoint();
 
         // Suppress transitions while we snap to the new layout — otherwise the
         // sidebar slides between layouts (e.g. width 300px → 60vw) on resize.
         document.documentElement.classList.add('suppress-transitions');
 
-        if (bp === 'pc') {
-          left.classList.remove('open');
-          right.classList.remove('open');
-        } else if (bp === 'tablet') {
-          left.classList.remove('collapsed');
-          right.classList.remove('collapsed');
-          left.classList.remove('open');
-        } else {
-          // mobile
-          left.classList.remove('collapsed');
-          right.classList.remove('collapsed');
-        }
+        // Re-apply CSS classes from data-open for the new breakpoint.
+        setSidebarState('left', isSidebarOpen('left'));
+        setSidebarState('right', isSidebarOpen('right'));
 
         syncBackdrop();
         syncSidebarIcon('left');
@@ -1912,9 +1921,10 @@
         target.style.transform = '';
         target.style.transition = '';
         if (dy > DRAG_THRESHOLD) {
-          target.classList.remove('open');
+          var side = target.id === 'sidebar-left' ? 'left' : 'right';
+          setSidebarState(side, false);
           syncBackdrop();
-          syncSidebarIcon(target.id === 'sidebar-left' ? 'left' : 'right');
+          syncSidebarIcon(side);
           syncDockPills();
         }
         dragging = false;
@@ -2135,6 +2145,12 @@
           var newContent = doc.getElementById('main-content');
           if (!newContent) { window.location.href = url; return; }
           document.getElementById('main-content').innerHTML = newContent.innerHTML;
+          Array.from(document.getElementById('main-content').querySelectorAll('script')).forEach(function(oldScript) {
+            var newScript = document.createElement('script');
+            if (oldScript.src) newScript.src = oldScript.src;
+            else newScript.textContent = oldScript.textContent;
+            oldScript.parentNode.replaceChild(newScript, oldScript);
+          });
           document.getElementById('main-content').scrollTop = 0;
           if (!isPop && !(window.history.state && window.history.state.url === url)) history.pushState({url: url}, '', url);
           var isFormulas = url.indexOf('/quantities') === -1 && url.indexOf('/quantity/') === -1 && url.indexOf('/unit/') === -1;

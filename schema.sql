@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS formula (
 CREATE TABLE IF NOT EXISTS operator (
     id            TEXT PRIMARY KEY,
     symbol        TEXT,               -- LaTeX display; NULL means invisible
+    syntax        TEXT NOT NULL DEFAULT '',  -- user-facing infix text typed in the equation editor (e.g. '+', 'sin(', '=')
     math          TEXT,               -- Python expression using operand names; NULL if not computable
     arity         INTEGER NOT NULL CHECK (arity > 0),
     precedence    INTEGER NOT NULL,

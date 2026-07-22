@@ -26,7 +26,8 @@
   "ui": {
     "nav": {
       "formulas": "Formulas",
-      "quantities": "Quantities"
+      "quantities": "Quantities",
+      "create": "Create"
     },
     "settings": {
       "theme": "Theme",
@@ -42,7 +43,8 @@
       "export_download": "Download",
       "wait_latex": "Wait for LaTeX",
       "found_bug": "Found a bug?",
-      "report_bug": "Report"
+      "report_bug": "Report",
+      "missing_formula": "Missing formula?"
     },
     "search": {
       "placeholder": "Find formulas, quantities, units",
@@ -72,6 +74,7 @@
     "detail": {
       "dimensions": "Dimensions",
       "difficulty": "Difficulty",
+      "formula": "Formula",
       "quantities": "Quantities",
       "default_unit": "Default Unit",
       "related": "Related",
@@ -143,6 +146,36 @@
       "settings": "Settings",
       "toggle_tree": "Toggle tree",
       "cancel_search": "Cancel search"
+    },
+    "create": {
+      "title": "Create Formula",
+      "name": "Formula name",
+      "formula_id": "formula_id",
+      "topic": "Select a topic",
+      "dimensions": "Dimensions",
+      "difficulty": "Difficulty",
+      "equation": "force = mass * acceleration",
+      "quantity_overrides": "Quantity Overrides",
+      "type_equation_hint": "Type an equation to see variables...",
+      "continue": "Continue",
+      "formula_insert": "Formula INSERT",
+      "token_inserts": "Token INSERTs",
+      "close": "Close",
+      "search_placeholder": "Filter tokens...",
+      "quantities": "Quantities",
+      "constants": "Constants",
+      "operators": "Operators",
+      "no_results": "No matches.",
+      "column_quantity": "Quantity",
+      "column_symbol_override": "Symbol Override",
+      "column_name_override": "Name Override",
+      "column_label": "Label",
+      "placeholder_symbol": "Symbol",
+      "placeholder_name": "Display name",
+      "placeholder_label": "subscript",
+      "missing_required": "Please fill in name, topic, and equation.",
+      "sql_generated": "SQL generated!",
+      "parse_error": "Parse error!"
     }
   }
 }

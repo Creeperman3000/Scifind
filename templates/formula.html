@@ -4,6 +4,8 @@
 
 <h2 class="detail-heading">{{ _(formula.name) }}</h2>
 
+<div class="detail-desc">{{ _('detail.formula') }}</div>
+
 <div class="breadcrumb-bar">
 {% for crumb in formula.breadcrumbs %}
   {% if not loop.first %} &gt; {% endif %}
@@ -13,7 +15,7 @@
 
 <div class="detail-meta">
   <span>{{ _('detail.dimensions') }}: ${{ dim_latex }}$</span>
-  <span>{{ _('detail.difficulty') }} {{ formula.difficulty }}/10</span>
+  <span>{{ _('detail.difficulty') }}: {{ formula.difficulty }}/10</span>
 </div>
 
 <div class="formula-box">

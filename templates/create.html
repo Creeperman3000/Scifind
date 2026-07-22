@@ -1,0 +1,695 @@
+{% extends "base.html" %}
+{% block title %}{{ _('create.title') }} — Scifind{% endblock %}
+{% block content %}
+<style>
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+    display: none; align-items: center; justify-content: center;
+    z-index: 300; padding: 20px;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal-content {
+    position: relative; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 12px; max-width: 900px; width: 100%;
+    max-height: 85vh; overflow-y: auto; padding: 28px;
+    box-shadow: var(--shadow-xl);
+  }
+  .modal-close { position: absolute; top: 12px; right: 12px; width: 32px; height: 32px; border-radius: 6px; color: var(--text); }
+  .modal-content h2 { font-size: 1.2rem; margin-bottom: 16px; color: var(--text); }
+  .modal-content h3 { font-size: 0.85rem; margin-bottom: 8px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; }
+  .sql-block {
+    background: var(--bg-secondary); border-radius: 8px;
+    position: relative; margin-bottom: 16px;
+  }
+  .sql-block pre {
+    font-family: var(--font-mono); font-size: 0.82rem;
+    white-space: pre-wrap; padding: 16px 56px 16px 16px;
+    margin: 0; min-height: 60px; color: var(--text); overflow-x: auto;
+  }
+  .sql-copy-btn {
+    position: absolute; top: 8px; right: 8px;
+    padding: 4px 12px; font-size: 0.75rem;
+    background: var(--bg-tertiary); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; cursor: pointer;
+  }
+  .sql-copy-btn:hover { background: var(--border); }
+  .token-sidebar { display: flex; flex-direction: column; gap: 12px; margin-top: 4px; }
+  .token-sidebar .filter-qty-search-wrap { margin-bottom: 0; }
+  .token-list { display: flex; flex-direction: column; gap: 4px; }
+  .token-list .qty-result { align-items: center; }
+  .token-empty { display: none; font-size: 0.78rem; color: var(--text-secondary); font-style: italic; padding: 4px 0; }
+  .token-list[data-collapsed="1"] { display: none; }
+  .token-list[data-collapsed="1"] + .token-empty { display: block; }
+  .qty-result .token-syntax {
+    font-family: var(--font-mono); font-size: 0.78rem; font-weight: normal;
+    background: var(--bg-tertiary); color: var(--text);
+    padding: 1px 6px; border-radius: 3px;
+  }
+
+  input.detail-heading { font-family: inherit; display: block; border: none; background: transparent; padding: 0; width: 100%; }
+  input.detail-heading::placeholder { color: var(--text-secondary); }
+  input.detail-desc { font-family: inherit; font-style: italic; color: var(--text); display: block; border: none; background: transparent; padding: 0; width: 100%; }
+  input.detail-desc::placeholder { color: var(--text-secondary); font-style: italic; }
+  .detail-meta #dim-display { font-family: inherit; font-style: inherit; }
+  .detail-meta .diff-row { display: flex; align-items: center; gap: 8px; }
+  .detail-meta .diff-row .diff-sliders { width: 100px; height: auto; margin: 0; }
+  .detail-meta .diff-row .diff-sliders input[type=range],
+  .detail-meta .diff-row .diff-track,
+  .detail-meta .diff-row .diff-fill { margin: 0; top: 50%; transform: translateY(-50%); }
+  .breadcrumb-bar { overflow: visible; }
+  .topic-current { position: relative; display: inline-grid; align-items: center; }
+  .topic-current > * { grid-area: 1 / 1; }
+  .topic-current.has-menu { padding: 0 6px; }
+  .topic-current.has-menu::before { content: attr(data-text); visibility: hidden; display: block; }
+  .topic-current:not(:last-child) { cursor: pointer; }
+  .topic-current:not(:last-child):hover { color: var(--accent); }
+  .topic-dropdown-trigger {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    border: 1px solid var(--border); border-radius: 4px;
+    background: var(--bg-secondary); color: var(--text); font-size: 0.85rem;
+    cursor: pointer; font-family: inherit;
+    outline: none; box-shadow: none; -webkit-tap-highlight-color: transparent;
+  }
+  .topic-dropdown-trigger:focus,
+  .topic-dropdown-trigger:focus-visible { outline: none; box-shadow: none; }
+  .topic-children-menu,
+  .topic-submenu {
+    background: var(--bg); border: 1px solid var(--border);
+    box-shadow: var(--shadow-lg); border-radius: 6px;
+    min-width: 180px; max-height: 300px; overflow-y: auto; padding: 4px;
+  }
+  .topic-children-menu { display: none; position: absolute; top: 100%; left: 0; margin-top: 4px; z-index: 200; }
+  .topic-children-menu.open { display: block; }
+  .topic-submenu { display: none; position: fixed; z-index: 201; }
+  .topic-menu-item {
+    display: flex; align-items: center; justify-content: space-between;
+    width: 100%; text-align: left; padding: 6px 12px;
+    border: none; background: none; cursor: pointer; font-size: 0.85rem;
+    color: var(--text); border-radius: 3px; font-family: inherit; position: relative;
+  }
+  .topic-menu-item:hover { background: var(--bg-secondary); }
+  .topic-menu-item .caret {
+    width: 0; height: 0;
+    border-top: 4px solid transparent; border-bottom: 4px solid transparent;
+    border-left: 5px solid var(--text-secondary); margin-left: 8px; flex-shrink: 0;
+  }
+  .var-table input.qty-search { width: 100%; box-sizing: border-box; }
+
+  /* /create tree: the selected node's radio is always visible; others
+     only appear on hover of the right sidebar. */
+  #sidebar-right.jstree-radio-mode .jstree-anchor > .jstree-checkbox { opacity: 0; }
+  #sidebar-right.jstree-radio-mode:hover .jstree-anchor > .jstree-checkbox { opacity: 1; }
+  #sidebar-right.jstree-radio-mode .jstree-clicked > .jstree-checkbox,
+  #sidebar-right.jstree-radio-mode .jstree-checked > .jstree-checkbox { opacity: 1; }
+
+  /* /create: hide the "deselect all" button. The "reset" button is
+     rewired to clear the topic selection. */
+  #sidebar-right.jstree-radio-mode #tree-deselect-all { display: none; }
+</style>
+
+<form id="create-form" onsubmit="return false">
+  <input id="name_en" class="detail-heading" name="name_en" placeholder="{{ _('create.name') }}" autocomplete="off">
+  <input id="formula_id" class="detail-desc" name="formula_id_display" placeholder="{{ _('create.formula_id') }}" autocomplete="off">
+
+  <div class="breadcrumb-bar" id="topic-bar">
+    <span>{{ _('create.topic') }}</span>
+  </div>
+
+  <div class="detail-meta">
+    <span id="dim-display">{{ _('detail.dimensions') }}: $\varnothing$</span>
+    <div class="diff-row">
+      <span>{{ _('create.difficulty') }}:</span>
+      <div class="diff-sliders">
+        <div class="diff-track"></div>
+        <div class="diff-fill" id="diff-fill-create"></div>
+        <input id="difficulty" name="difficulty" type="range" min="1" max="10" value="2">
+      </div>
+      <span id="diff-display">2/10</span>
+    </div>
+  </div>
+
+  <div class="formula-box">
+    <div id="formula-math">$$F = ma$$</div>
+    <span id="formula-tex" style="display:none">F = ma</span>
+    <div class="formula-copy-wrap">
+      <button class="formula-copy-btn" data-action="toggle-copy-menu" type="button">
+        <i data-lucide="copy" width="16" height="16"></i>
+      </button>
+      <div class="dropdown-menu formula-copy-menu" id="formula-copy-menu">
+        <button data-action="copy-formula-latex" type="button">{{ _('copy.latex') }}</button>
+        <button data-action="copy-formula-unicode" type="button">{{ _('copy.unicode') }}</button>
+        <button data-action="copy-formula-image-png" type="button">{{ _('copy.image_png') }}</button>
+        <button data-action="copy-formula-image-svg" type="button">{{ _('copy.image_svg') }}</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="detail-section">
+    <div id="preview-detail-items"></div>
+  </div>
+
+  <textarea id="equation" name="equation" class="qty-search" style="resize: none; width: 100%; box-sizing: border-box;" rows="3" placeholder="{{ _('create.equation') }}" spellcheck="false"></textarea>
+
+  <div class="detail-section">
+    <h3>{{ _('create.quantity_overrides') }}</h3>
+    <div id="var-overrides"><p class="detail-desc">{{ _('create.type_equation_hint') }}</p></div>
+  </div>
+
+  <div class="detail-section">
+    <button class="btn-primary" id="continue-btn" type="submit" data-action="continue-to-sql">{{ _('create.continue') }}</button>
+  </div>
+</form>
+
+<div class="modal-overlay" id="sql-modal" role="dialog" aria-modal="true">
+  <div class="modal-content">
+    <button class="modal-close formula-copy-btn" type="button" aria-label="{{ _('create.close') }}" data-action="close-modal">
+      <i data-lucide="x" width="16" height="16"></i>
+    </button>
+    <h2>{{ _('create.continue') }}</h2>
+    <h3>{{ _('create.formula_insert') }}</h3>
+    <div id="sql-modal-body"></div>
+  </div>
+</div>
+
+<script>
+(function() {
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s == null ? '' : s)
+    .replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const t = (path, fallback) => {
+    const ui = window._localeUI || {};
+    const parts = path.split('.');
+    let cur = ui;
+    for (const p of parts) { if (cur && typeof cur === 'object' && p in cur) cur = cur[p]; else return fallback; }
+    return cur || fallback;
+  };
+
+  function renderMathIn(el) {
+    if (typeof renderMathInElement !== 'function' || !el) return;
+    try { renderMathInElement(el, {
+      delimiters: [{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],
+      macros: window._KATEX_MACROS || {}
+    }); } catch(e) { console.warn('renderMathInElement error', e); }
+  }
+
+  function setHTML(el, html) {
+    el.innerHTML = typeof html === 'string' ? html : '';
+    if (typeof renderMathInContent === 'function') renderMathInContent();
+    renderMathIn(el);
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+  }
+
+  // ---------- Token sidebar (server-rendered) ----------
+  function loadTokenSidebar() {
+    fetch('/create/token-sidebar')
+      .then((r) => r.text())
+      .then((html) => setHTML($('sidebar-left-inner'), html));
+  }
+
+  function filterTokenSidebar(query) {
+    const q = (query || '').toLowerCase().trim();
+    $('sidebar-left-inner').querySelectorAll('.token-list').forEach((grid) => {
+      let visible = 0;
+      grid.querySelectorAll('.qty-result').forEach((el) => {
+        const match = !q || (el.dataset.search || '').includes(q);
+        el.style.display = match ? '' : 'none';
+        if (match) visible++;
+      });
+      const empty = grid.nextElementSibling;
+      const collapsed = grid.dataset.collapsed === '1';
+      if (empty && empty.classList.contains('token-empty')) {
+        empty.style.display = (visible === 0 && !collapsed) ? 'block' : 'none';
+      }
+    });
+  }
+
+  // ---------- Equation preview (debounced server call) ----------
+  // Two endpoints:
+  //   /api/preview             — equation → {variables, dim_latex, latex}
+  //                              (no overrides; used to seed the override
+  //                               inputs table when the variables change)
+  //   /create/preview-render   — equation + overrides → {latex, dim_latex,
+  //                              detail_items} (used to refresh the live
+  //                              LaTeX + chips as the user types/overrides)
+  let previewSeq = 0, previewTimer = null;
+  let lastVariablesKey = '';
+  function collectOverrides() {
+    const fd = new FormData();
+    document.querySelectorAll('#var-overrides input[name^="override["]').forEach((inp) => {
+      if (inp.value) fd.append(inp.name, inp.value);
+    });
+    return fd;
+  }
+  function variablesKey(vars) {
+    return (vars || []).map((v) => v.id + '|' + (v.alias || '')).join(',');
+  }
+  function renderOverrideTable(vars) {
+    const wrap = $('var-overrides');
+    if (!wrap) return;
+    if (!vars || !vars.length) { wrap.innerHTML = '<p class="detail-desc">' + esc(t('type_equation_hint', '')) + '</p>'; return; }
+    let rows = '';
+    for (const v of vars) {
+      const key = v.id + '|' + (v.alias || '');
+      const name = localiseName(v.name, v.id);
+      const sym = v.symbol || '';
+      const display = (sym ? '$' + esc(sym) + '$' : '') + ' ' + esc(name) + ' ' + esc(v.id) + (v.alias ? '[' + esc(v.alias) + ']' : '');
+      rows += '<tr>'
+        + '<td>' + display + '</td>'
+        + '<td><input data-key="' + esc(key) + '" data-field="symbol" form="create-form" name="override[' + esc(key) + '][symbol]" placeholder="' + esc(t('placeholder_symbol', 'Symbol')) + '" class="qty-search"></td>'
+        + '<td><input data-key="' + esc(key) + '" data-field="name" form="create-form" name="override[' + esc(key) + '][name]" placeholder="' + esc(t('placeholder_name', 'Display name')) + '" class="qty-search"></td>'
+        + '<td><input data-key="' + esc(key) + '" data-field="label" form="create-form" name="override[' + esc(key) + '][label]" placeholder="' + esc(t('placeholder_label', 'subscript')) + '" class="qty-search"></td>'
+        + '</tr>';
+    }
+    const headers = [t('column_quantity', 'Quantity'), t('column_symbol_override', 'Symbol Override'), t('column_name_override', 'Name Override'), t('column_label', 'Label')];
+    let thead = '<tr>';
+    for (const h of headers) thead += '<th>' + esc(h) + '</th>';
+    thead += '</tr>';
+    wrap.innerHTML = '<table class="var-table"><thead>' + thead + '</thead><tbody>' + rows + '</tbody></table>';
+  }
+  function renderDetailItems(items) {
+    const wrap = $('preview-detail-items');
+    if (!wrap) return;
+    if (!items || !items.length) { wrap.innerHTML = ''; return; }
+    const headers = [t('column_quantity', 'Quantity'), t('detail.default_unit', 'Default Unit')];
+    let thead = '<tr>';
+    for (const h of headers) thead += '<th>' + esc(h) + '</th>';
+    thead += '</tr>';
+    let body = '';
+    for (const it of items) {
+      body += '<tr>'
+        + '<td>$' + it.symbol_latex + '$ ' + (it.name_html || '') + ' ' + (it.paren_html || '') + '</td>'
+        + '<td>' + (it.default_unit_symbol_latex ? '$' + it.default_unit_symbol_latex + '$ ' : '') + (it.default_unit_html || '') + '</td>'
+        + '</tr>';
+    }
+    wrap.innerHTML = '<table class="var-table"><thead>' + thead + '</thead><tbody>' + body + '</tbody></table>';
+  }
+  function renderPreviewLaTeX(latex) {
+    const mathEl = $('formula-math');
+    const texEl = $('formula-tex');
+    if (mathEl) mathEl.innerHTML = latex ? '$$' + latex + '$$' : '\( \)';
+    if (texEl) texEl.textContent = latex || '';
+  }
+  function localiseName(value, fallback) {
+    if (!value) return fallback;
+    if (typeof value === 'string') {
+      if (value.trim().startsWith('{')) {
+        try {
+          const obj = JSON.parse(value);
+          const loc = (document.documentElement.lang || 'en-us').toLowerCase();
+          return obj[loc] || obj['en-us'] || fallback;
+        } catch (e) { return value; }
+      }
+      return value;
+    }
+    if (typeof value === 'object') {
+      const loc = (document.documentElement.lang || 'en-us').toLowerCase();
+      return value[loc] || value['en-us'] || fallback;
+    }
+    return fallback;
+  }
+  function updatePreview(eq) {
+    clearTimeout(previewTimer);
+    const seq = ++previewSeq;
+    previewTimer = setTimeout(() => {
+      const dimEl = $('dim-display');
+      const fd = collectOverrides();
+      fd.set('equation', eq);
+      fetch('/create/preview-render', { method: 'POST', body: fd })
+        .then((r) => r.json())
+        .then((data) => {
+          if (seq !== previewSeq) return;
+          if (data.error) {
+            $('formula-math').innerHTML = '<span style="color:var(--text-secondary)">' + esc(data.error) + '</span>';
+            $('formula-tex').textContent = '';
+            dimEl.innerHTML = esc(t('detail.dimensions', 'Dimensions')) + ': <span class="dim-latex">$\\varnothing$</span>';
+            renderDetailItems([]);
+          } else if (data.latex) {
+            renderPreviewLaTeX(data.latex);
+            const dimLatex = data.dim_latex || '\\varnothing';
+            const muted = !eq.trim() || dimLatex === '\\varnothing';
+            dimEl.innerHTML = esc(t('detail.dimensions', 'Dimensions')) + ': <span class="dim-latex"></span>';
+            dimEl.style.opacity = muted ? '0.6' : '';
+            if (typeof katex !== 'undefined') katex.render(dimLatex, dimEl.querySelector('.dim-latex'), { displayMode: false, throwOnError: false });
+            renderDetailItems(data.detail_items || []);
+          } else {
+            renderPreviewLaTeX('');
+            renderDetailItems([]);
+          }
+          // Regenerate the override inputs table only if the variable set changed.
+          const newKey = variablesKey(data.variables);
+          if (newKey !== lastVariablesKey) {
+            lastVariablesKey = newKey;
+            renderOverrideTable(data.variables || []);
+          }
+          if (typeof renderMathInContent === 'function') renderMathInContent();
+        })
+        .catch((err) => {
+          if (seq !== previewSeq) return;
+          console.error('preview failed:', err);
+          showToast('Preview failed: ' + err.message, 'error');
+        });
+    }, 200);
+  }
+
+  // ---------- Click-to-insert at cursor (with smart spacing) ----------
+  function isSep(ch) { return !ch || /\s/.test(ch) || '()[]'.indexOf(ch) !== -1; }
+  function insertAtCursor(text) {
+    const ta = $('equation');
+    const start = ta.selectionStart, end = ta.selectionEnd;
+    const before = ta.value.substring(0, start);
+    const after = ta.value.substring(end);
+    const padL = before.length && !isSep(before[before.length - 1]);
+    const padR = after.length && !isSep(after[0]);
+    const ins = (padL ? ' ' : '') + text + (padR ? ' ' : '');
+    ta.value = before + ins + after;
+    const pos = start + ins.length - (padR ? 1 : 0);
+    ta.selectionStart = ta.selectionEnd = pos;
+    ta.focus();
+    updatePreview(ta.value);
+  }
+
+  // ---------- Topic breadcrumb (server-rendered) ----------
+  // Single source of truth: `selectTopic(id)` updates both the right-sidebar
+  // jstree and the breadcrumb. Both UI paths call into it.
+  let topicSyncing = false;
+  function selectTopic(id) {
+    const hidden = $('topic');
+    if (hidden) hidden.value = id || '';
+    loadBreadcrumb(id);
+    if (window._jstree) {
+      topicSyncing = true;
+      try {
+        window._jstree.uncheck_all();
+        if (id) window._jstree.check_node(id);
+      } finally {
+        topicSyncing = false;
+      }
+    }
+  }
+  function loadBreadcrumb(topic) {
+    const url = '/create/breadcrumb' + (topic ? '?topic=' + encodeURIComponent(topic) : '');
+    fetch(url)
+      .then((r) => r.text())
+      .then((html) => setHTML($('topic-bar'), html));
+  }
+
+  // ---------- Modal ----------
+  function openModal() { $('sql-modal').classList.add('open'); }
+  function closeModal() { $('sql-modal').classList.remove('open'); }
+
+  function copyText(id) {
+    const el = $(id);
+    if (!el) return;
+    const text = el.textContent;
+    if (!text) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(() => showToast('Copied', 'success'));
+      return;
+    }
+    const range = document.createRange(); range.selectNode(el);
+    const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+    try { document.execCommand('copy'); showToast('Copied', 'success'); } catch (e) {}
+    sel.removeAllRanges();
+  }
+
+  function continueToSql() {
+    const form = $('create-form');
+    fetch('/create/build-sql', { method: 'POST', body: new FormData(form) })
+      .then(async (r) => ({ ok: r.ok, html: await r.text() }))
+      .then((out) => {
+        setHTML($('sql-modal-body'), out.html);
+        if (out.ok) openModal();
+        else showToast(($('sql-modal-body').dataset.error) || 'Build failed', 'error');
+      })
+      .catch((err) => showToast('Build failed: ' + err.message, 'error'));
+  }
+
+  // ---------- Event delegation (single listener) ----------
+  // Topbar sidebar toggles: base.html's handler is shared with other pages
+  // and has been observed to no-op on /create after the first click. We
+  // intercept these in the capture phase so we run before base.html's
+  // bubble-phase handler, and we also keep the topbar icon, backdrop, and
+  // dock pills in sync.
+  function currentBreakpoint() {
+    const w = window.innerWidth;
+    if (w >= 1024) return 'pc';
+    if (w >= 768) return 'tablet';
+    return 'mobile';
+  }
+  function isAnySidebarOpen() {
+    return ($('sidebar-left').getAttribute('data-open') !== '0') ||
+           ($('sidebar-right').getAttribute('data-open') !== '0');
+  }
+  function syncSidebarIcon(side, willOpen) {
+    const iconWrap = $(side + '-sidebar-icon');
+    if (!iconWrap) return;
+    const bp = currentBreakpoint();
+    const closed = !willOpen && (bp !== 'tablet' || side === 'right');
+    const icons = {
+      left: closed ? 'panel-left-open' : 'panel-left-close',
+      right: closed ? 'panel-right-open' : 'panel-right-close'
+    };
+    iconWrap.innerHTML = '<i data-lucide="' + icons[side] + '" width="18" height="18"></i>';
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+  }
+  function syncBackdrop() {
+    const bp = document.getElementById('sidebar-backdrop');
+    if (!bp) return;
+    bp.classList.toggle('open', isAnySidebarOpen() && currentBreakpoint() !== 'pc');
+  }
+  function syncDockPills() {
+    document.querySelectorAll('.dock-pill[data-dock-pill="filter"]').forEach((p) => p.classList.toggle('open', $('sidebar-left').getAttribute('data-open') === '1'));
+    document.querySelectorAll('.dock-pill[data-dock-pill="tree"]').forEach((p) => p.classList.toggle('open', $('sidebar-right').getAttribute('data-open') === '1'));
+  }
+  document.addEventListener('click', (e) => {
+    const toggleEl = e.target.closest('[data-action="toggle-sidebar-left"], [data-action="toggle-sidebar-right"]');
+    if (toggleEl) {
+      e.stopImmediatePropagation();
+      const side = toggleEl.dataset.action === 'toggle-sidebar-left' ? 'left' : 'right';
+      const el = $('sidebar-' + side);
+      if (el) {
+        const currentlyOpen = el.getAttribute('data-open') !== '0';
+        const willOpen = !currentlyOpen;
+        el.setAttribute('data-open', willOpen ? '1' : '0');
+        const bp = currentBreakpoint();
+        el.classList.toggle('collapsed', bp === 'pc' && !willOpen);
+        el.classList.toggle('open', bp !== 'pc' && willOpen);
+        syncSidebarIcon(side, willOpen);
+        syncBackdrop();
+        syncDockPills();
+      }
+      return;
+    }
+  }, true);
+
+  // Tree reset button (the rotate-ccw icon). On /create it clears the
+  // topic selection instead of restoring the "all topics selected" state.
+  document.getElementById('tree-select-all').addEventListener('click', (e) => {
+    e.stopImmediatePropagation();
+    e.preventDefault();
+    selectTopic(null);
+  }, true);
+
+  document.addEventListener('click', (e) => {
+    const tokenItem = e.target.closest('.qty-result[data-insert]');
+    if (tokenItem) { insertAtCursor(tokenItem.dataset.insert); return; }
+
+    const topicItem = e.target.closest('.topic-menu-item[data-id]');
+    if (topicItem) {
+      e.preventDefault(); e.stopPropagation();
+      closeAllMenus();
+      selectTopic(topicItem.dataset.id);
+      return;
+    }
+
+    const crumbNode = e.target.closest('.topic-current[data-id]');
+    if (crumbNode && !crumbNode.classList.contains('has-menu')) {
+      const bar = $('topic-bar');
+      const parents = [...bar.querySelectorAll('.topic-current[data-id]')];
+      const idx = parents.indexOf(crumbNode);
+      const parent = parents[idx - 1];
+      selectTopic(parent ? parent.dataset.id : '');
+      return;
+    }
+
+    const trigger = e.target.closest('.topic-dropdown-trigger');
+    if (trigger) {
+      e.preventDefault(); e.stopPropagation();
+      const menu = trigger.nextElementSibling;
+      if (!menu) return;
+      const wasOpen = menu.classList.contains('open');
+      closeAllMenus();
+      if (!wasOpen) menu.classList.add('open');
+      return;
+    }
+
+    const action = e.target.closest('[data-action]');
+    if (!action) return;
+    switch (action.dataset.action) {
+      case 'close-modal': closeModal(); break;
+      case 'copy-formula-sql': copyText('formula-sql'); break;
+      case 'copy-token-sql': copyText('token-sql'); break;
+      case 'continue-to-sql': continueToSql(); break;
+      case 'toggle-token-section': {
+        const list = $(action.dataset.target);
+        if (!list) break;
+        const collapsed = list.dataset.collapsed === '1';
+        list.dataset.collapsed = collapsed ? '0' : '1';
+        list.style.display = collapsed ? '' : 'none';
+        const icon = action.querySelector('.token-section-icon');
+        if (icon) {
+          icon.innerHTML = '<i data-lucide="' + (collapsed ? 'chevron-up' : 'chevron-down') + '" width="16" height="16"></i>';
+          if (typeof lucide !== 'undefined') lucide.createIcons();
+        }
+        break;
+      }
+    }
+  });
+
+  $('sidebar-left-inner').addEventListener('input', (e) => {
+    if (e.target.id === 'token-search') filterTokenSidebar(e.target.value);
+  });
+
+  // Override inputs live in #var-overrides; on change, re-render the live
+  // LaTeX + chips (without re-rendering the override table itself, which
+  // would steal focus from the input the user is typing in).
+  $('var-overrides').addEventListener('input', (e) => {
+    if (e.target.name && e.target.name.startsWith('override[')) {
+      updatePreview($('equation').value);
+    }
+  });
+
+  // Hover-open submenus. At most one submenu is visible at a time; opening a
+  // new one closes the previous one immediately. A short delay before
+  // opening prevents flicker, and a short delay before closing lets the
+  // cursor travel from the trigger onto the (position:fixed) submenu.
+  let openSub = null, openItem = null, openTimer = 0, closeTimer = 0;
+  function openSubmenuNow(item, sub) {
+    closeSubmenuNow();
+    const rect = item.getBoundingClientRect();
+    sub.style.top = rect.top + 'px';
+    sub.style.left = rect.right + 'px';
+    sub.style.display = 'block';
+    const sr = sub.getBoundingClientRect();
+    if (sr.right > window.innerWidth) sub.style.left = (rect.left - sr.width) + 'px';
+    if (sr.bottom > window.innerHeight) sub.style.top = (window.innerHeight - sr.height - 4) + 'px';
+    openSub = sub; openItem = item;
+  }
+  function closeSubmenuNow() {
+    if (openSub) openSub.style.display = '';
+    openSub = openItem = null;
+  }
+  function scheduleOpen(item, sub) {
+    clearTimeout(openTimer); clearTimeout(closeTimer);
+    openItem = item; openSub = sub;
+    openTimer = setTimeout(() => { if (openSub === sub) openSubmenuNow(item, sub); }, 150);
+  }
+  function scheduleClose() {
+    clearTimeout(closeTimer);
+    closeTimer = setTimeout(closeSubmenuNow, 250);
+  }
+  // Triggers: live inside #topic-bar. mouseover/mouseout (bubble) are good
+  // enough because we always check the topmost element.
+  $('topic-bar').addEventListener('mouseover', (e) => {
+    const item = e.target.closest('.topic-menu-item');
+    if (!item) return;
+    const sub = item.querySelector(':scope > .topic-submenu');
+    if (!sub) return;
+    if (openItem === item) { clearTimeout(closeTimer); return; }
+    scheduleOpen(item, sub);
+  });
+  $('topic-bar').addEventListener('mouseout', (e) => {
+    const item = e.target.closest('.topic-menu-item');
+    if (!item) return;
+    if (!item.querySelector(':scope > .topic-submenu')) return;
+    // relatedTarget tells us where the cursor went. If it stayed inside the
+    // trigger or the open submenu, don't schedule a close.
+    const to = e.relatedTarget;
+    if (to && (item.contains(to) || (openSub && openSub.contains(to)))) return;
+    clearTimeout(openTimer);
+    scheduleClose();
+  });
+  // Submenu is position:fixed, outside #topic-bar — track hover on document.
+  document.addEventListener('mouseover', (e) => {
+    const sub = e.target.closest('.topic-submenu');
+    if (!sub || sub !== openSub) return;
+    clearTimeout(closeTimer);
+  });
+  document.addEventListener('mouseout', (e) => {
+    if (!openSub) return;
+    if (!openSub.contains(e.target)) return;
+    const to = e.relatedTarget;
+    if (to && openSub.contains(to)) return;
+    if (to && openItem && openItem.contains(to)) return;
+    scheduleClose();
+  });
+
+  function closeAllMenus() {
+    const bar = $('topic-bar');
+    bar.querySelectorAll('.topic-children-menu').forEach((m) => m.classList.remove('open'));
+    bar.querySelectorAll('.topic-submenu').forEach((m) => m.style.display = '');
+  }
+  document.addEventListener('click', (e) => {
+    if (!$('topic-bar').contains(e.target)) closeAllMenus();
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeAllMenus(); closeModal(); } });
+
+  // ---------- Name → slug + difficulty slider ----------
+  const slugify = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+  const nameInput = $('name_en'), idInput = $('formula_id');
+  nameInput.addEventListener('input', () => { if (!idInput.dataset.manual) idInput.value = slugify(nameInput.value); });
+  idInput.addEventListener('input', () => { idInput.dataset.manual = idInput.value !== slugify(nameInput.value); });
+
+  const diffInput = $('difficulty'), diffFill = $('diff-fill-create'), diffDisplay = $('diff-display');
+  function updateDiffFill() {
+    const pct = ((diffInput.value - diffInput.min) / (diffInput.max - diffInput.min)) * 100;
+    diffFill.style.width = pct + '%';
+  }
+  diffInput.addEventListener('input', () => { diffDisplay.textContent = diffInput.value + '/10'; updateDiffFill(); });
+  updateDiffFill();
+
+  // ---------- Right-sidebar jstree: detach base.html's filter handlers and
+  // reinitialise in radio mode so picking a topic doesn't navigate away.
+  function reinitTree() {
+    const $tree = window.jQuery && window.jQuery('#science-tree');
+    if (!$tree || !$tree.length || !window.jQuery.fn.jstree) {
+      setTimeout(reinitTree, 50);
+      return;
+    }
+    const oldTree = $tree.jstree(true);
+    if (!oldTree) { setTimeout(reinitTree, 50); return; }
+    const data = window._topicTreeData || (oldTree.settings && oldTree.settings.core && oldTree.settings.core.data) || [];
+    $tree.off('changed.jstree check_node.jstree uncheck_node.jstree');
+    try { oldTree.destroy(); } catch (e) {}
+    $tree.jstree({
+      core: { data, themes: { icons: false, dots: false }, dblclick_toggle: false, multiple: false },
+      checkbox: { keep_selected_style: false, three_state: false, cascade: '' },
+      plugins: ['checkbox']
+    });
+    window._jstree = $tree.jstree(true);
+    $tree.on('changed.jstree', () => {
+      if (topicSyncing) return;
+      const checked = window._jstree.get_checked(true);
+      selectTopic(checked.length ? checked[0].id : null);
+    });
+    const sidebarRight = $('sidebar-right');
+    if (sidebarRight) sidebarRight.classList.add('jstree-radio-mode');
+  }
+
+  // ---------- Init ----------
+  function init() {
+    loadTokenSidebar();
+    loadBreadcrumb('');
+    reinitTree();
+    $('equation').addEventListener('input', (e) => updatePreview(e.target.value));
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+</script>
+{% endblock %}

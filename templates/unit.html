@@ -4,6 +4,8 @@
 
 <h2 class="detail-heading">{% if unit.symbol %}${{ render_symbol(unit.symbol) }}$ {% endif %}{{ _(unit.name) or unit.id }}</h2>
 
+<div class="detail-desc">{{ _('unit.unit') }}</div>
+
 {% if unit.quantity_id %}
 <div class="breadcrumb-bar">
   {% if unit.breadcrumbs %}
@@ -16,10 +18,6 @@
   <a href="/quantity/{{ unit.quantity_id }}">{{ unit.quantity_name_localized }}</a>
 </div>
 {% endif %}
-
-<div class="detail-meta">
-  <span>{{ _('unit.unit') }}</span>
-</div>
 
 <div class="detail-section">
 {% if unit.default_unit == 1 %}

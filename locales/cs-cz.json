@@ -33,7 +33,8 @@
   "ui": {
     "nav": {
       "formulas": "Vzorce",
-      "quantities": "Veličiny"
+      "quantities": "Veličiny",
+      "create": "Vytvořit"
     },
     "settings": {
       "theme": "Motiv",
@@ -49,7 +50,8 @@
       "export_download": "Stáhnout",
       "wait_latex": "Čekat na LaTeX",
       "found_bug": "Našel jsi chybu?",
-      "report_bug": "Nahlásit"
+      "report_bug": "Nahlásit",
+      "missing_formula": "Chybí vzorec?"
     },
     "search": {
       "placeholder": "Hledat vzorce, veličiny, jednotky",
@@ -79,6 +81,7 @@
     "detail": {
       "dimensions": "Rozměry",
       "difficulty": "Obtížnost",
+      "formula": "Vzorec",
       "quantities": "Veličiny",
       "default_unit": "Základní jednotka",
       "related": "Související",
@@ -150,6 +153,36 @@
       "settings": "Nastavení",
       "toggle_tree": "Přepnout strom",
       "cancel_search": "Zrušit hledání"
+    },
+    "create": {
+      "title": "Vytvořit vzorec",
+      "name": "Název vzorce",
+      "formula_id": "id_vzorce",
+      "topic": "Vyberte téma",
+      "dimensions": "Rozměry",
+      "difficulty": "Obtížnost",
+      "equation": "sila = hmotnost * zrychleni",
+      "quantity_overrides": "Přepisy veličin",
+      "type_equation_hint": "Zadejte rovnici pro zobrazení proměnných...",
+      "continue": "Pokračovat",
+      "formula_insert": "INSERT vzorce",
+      "token_inserts": "INSERTy tokenů",
+      "close": "Zavřít",
+      "search_placeholder": "Filtrovat tokeny...",
+      "quantities": "Veličiny",
+      "constants": "Konstanty",
+      "operators": "Operátory",
+      "no_results": "Žádné výsledky.",
+      "column_quantity": "Veličina",
+      "column_symbol_override": "Přepis značky",
+      "column_name_override": "Přepis názvu",
+      "column_label": "Popisek",
+      "placeholder_symbol": "Značka",
+      "placeholder_name": "Zobrazovaný název",
+      "placeholder_label": "dolní index",
+      "missing_required": "Vyplňte prosím název, téma a rovnici.",
+      "sql_generated": "SQL vygenerováno!",
+      "parse_error": "Chyba parsování!"
     }
   }
 }

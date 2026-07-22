@@ -492,6 +492,384 @@ def _load_quantity(conn, quantity_id: str) -> dict:
                   quantity_id)
 
 
+_PARSER_CACHE = {}
+
+
+def _id_set_from(conn, table, cache_key):
+    if cache_key in _PARSER_CACHE:
+        return _PARSER_CACHE[cache_key]
+    rows = conn.execute(f"SELECT id FROM {table}").fetchall()
+    s = {r["id"] if isinstance(r, dict) else r[0] for r in rows}
+    _PARSER_CACHE[cache_key] = s
+    return s
+
+
+def _operator_lookup(conn):
+    """Cache of {operator_id: operator_row} and syntax/operator-id lookups.
+
+    `fetch_all_operators` returns tuples unless the connection has a dict
+    row_factory installed, so this helper is agnostic and rebuilds dicts
+    from the known column order.
+    """
+    if "operators" in _PARSER_CACHE:
+        return _PARSER_CACHE["operators"]
+    rows = fetch_all_operators(conn)
+    keys = ("id", "symbol", "syntax", "math", "arity", "precedence",
+            "associativity", "operator_type")
+    by_id = {}
+    syntax_to_id = {}
+    for r in rows:
+        d = dict(zip(keys, r)) if isinstance(r, tuple) else dict(r)
+        by_id[d["id"]] = d
+        if d["syntax"]:
+            syntax_to_id[d["syntax"]] = d["id"]
+    _PARSER_CACHE["operators"] = (by_id, syntax_to_id)
+    return by_id, syntax_to_id
+
+
+def _quantity_id_set(conn):
+    return _id_set_from(conn, "quantity", "qty_ids")
+
+
+def _constant_id_set(conn):
+    return _id_set_from(conn, "constant", "const_ids")
+
+
+
+
+
+def parse_equation(conn, equation):
+    """Tokenize an infix equation string and convert to RPN (Shunting-yard).
+
+    Returns a list of token dicts in the same shape as formula_token rows:
+    {token_kind, position is implicit, quantity_id|constant_id|operator_id|value}.
+
+    Raises ValueError on a parse error. Operator matching is driven by the
+    `operator` table: an identifier like 'sin' is treated as the operator
+    'sin' if one exists in the table, otherwise as a quantity/constant id.
+    """
+    op_by_id, syntax_to_id = _operator_lookup(conn)
+    qty_ids = _quantity_id_set(conn)
+    const_ids = _constant_id_set(conn)
+
+    # Try matching a multi-char operator first, then a single-char one.
+    # Doing this before identifier-scanning means `oo` and `~=` are
+    # treated as operator syntax even though they look like identifiers,
+    # and `sin(`, `sqrt(`, `cos(` are matched by syntax rather than by
+    # operator id.
+    def match_operator():
+        for length in (4, 3, 2, 1):
+            if i + length > n:
+                continue
+            piece = s[i:i + length]
+            op_id = syntax_to_id.get(piece)
+            if op_id is None:
+                continue
+            return op_id, length
+        return None, 0
+
+    if not equation or not equation.strip():
+        return []
+
+    s = equation
+    i, n = 0, len(s)
+    tokens = []
+
+    while i < n:
+        ch = s[i]
+        if ch.isspace():
+            i += 1
+            continue
+        if ch.isdigit() or (ch == "." and i + 1 < n and s[i + 1].isdigit()):
+            j = i
+            seen_dot = False
+            seen_exp = False
+            while j < n:
+                c = s[j]
+                if c.isdigit():
+                    j += 1
+                elif c == "." and not seen_dot and not seen_exp:
+                    seen_dot = True
+                    j += 1
+                elif c in ("e", "E") and not seen_exp:
+                    seen_exp = True
+                    j += 1
+                    if j < n and s[j] in "+-":
+                        j += 1
+                else:
+                    break
+            num_str = s[i:j]
+            try:
+                value = float(num_str)
+            except ValueError as e:
+                raise ValueError(f"bad number: {num_str!r}") from e
+            tokens.append({"token_kind": "number", "value": value})
+            i = j
+            continue
+        if ch.isalpha() or ch == "_":
+            op_id, op_len = match_operator()
+            if op_id is not None:
+                tokens.append({"token_kind": "operator", "operator_id": op_id})
+                i += op_len
+                continue
+            j = i
+            while j < n and (s[j].isalnum() or s[j] == "_"):
+                j += 1
+            ident = s[i:j]
+            alias = None
+            if j < n and s[j] == "[":
+                k = s.find("]", j + 1)
+                if k == -1:
+                    raise ValueError(f"unterminated alias for {ident!r}")
+                alias = s[j + 1:k] or None
+                j = k + 1
+            if ident in op_by_id:
+                tok = {"token_kind": "operator", "operator_id": ident}
+                if alias is not None:
+                    raise ValueError(f"operator {ident} cannot have an alias")
+                tokens.append(tok)
+            else:
+                if ident in qty_ids:
+                    tok = {"token_kind": "quantity", "quantity_id": ident}
+                elif ident in const_ids:
+                    tok = {"token_kind": "constant", "constant_id": ident}
+                else:
+                    raise ValueError(f"unknown identifier: {ident!r}")
+                if alias is not None:
+                    tok["label"] = alias
+                tokens.append(tok)
+            i = j
+            continue
+        if ch == "(":
+            tokens.append({"token_kind": "operator", "operator_id": "paren_open"})
+            i += 1
+            continue
+        if ch == ")":
+            tokens.append({"token_kind": "operator", "operator_id": "paren_close"})
+            i += 1
+            continue
+        op_id, op_len = match_operator()
+        if op_id is not None:
+            tokens.append({"token_kind": "operator", "operator_id": op_id})
+            i += op_len
+            continue
+        raise ValueError(f"unexpected character: {ch!r} at position {i}")
+
+    return _shunting_yard_to_rpn(tokens, op_by_id)
+
+
+def _shunting_yard_to_rpn(tokens, op_by_id):
+    """Convert a flat token list (already in infix order) to RPN.
+
+    Implements the shunting-yard algorithm with the operator precedence and
+    associativity from the operator table. Prefix operators are pushed
+    directly onto the operator stack; relational operators (which form
+    equations) terminate the LHS at the first one we encounter.
+    """
+    output = []
+    stack = []
+    for tok in tokens:
+        kind = tok["token_kind"]
+        if kind in ("number", "quantity", "constant"):
+            output.append(tok)
+            continue
+        op_id = tok["operator_id"]
+        if op_id == "paren_open":
+            stack.append(tok)
+            continue
+        if op_id == "paren_close":
+            while stack and stack[-1]["operator_id"] != "paren_open":
+                output.append(stack.pop())
+            if not stack:
+                raise ValueError("unmatched ')'")
+            stack.pop()
+            continue
+        op = op_by_id.get(op_id)
+        if op is None:
+            raise ValueError(f"unknown operator: {op_id!r}")
+        op_type = op["operator_type"]
+        prec = op["precedence"]
+        assoc = op["associativity"]
+        if op_type in ("prefix", "postfix"):
+            stack.append(tok)
+            continue
+        if assoc == "none" and op_type == "relational":
+            while stack and stack[-1]["operator_id"] != "paren_open":
+                top_id = stack[-1]["operator_id"]
+                top = op_by_id.get(top_id)
+                if top and top["operator_type"] not in ("prefix", "postfix"):
+                    break
+                output.append(stack.pop())
+            stack.append(tok)
+            continue
+        while stack:
+            top_id = stack[-1]["operator_id"]
+            if top_id == "paren_open":
+                break
+            top = op_by_id.get(top_id)
+            if top is None or top["operator_type"] in ("prefix", "postfix"):
+                break
+            if top["precedence"] > prec or (
+                top["precedence"] == prec and assoc == "left"
+            ):
+                output.append(stack.pop())
+            else:
+                break
+        stack.append(tok)
+
+    while stack:
+        top = stack.pop()
+        if top["operator_id"] in ("paren_open", "paren_close"):
+            raise ValueError("unmatched parenthesis")
+        output.append(top)
+
+    return output
+
+
+def preview_equation(conn, equation, locale="en-us", dim_caches=None, overrides=None):
+    """Parse an equation and return a preview dict (no DB writes).
+
+    `overrides` is an optional mapping keyed by "quantity_id|alias" with
+    {symbol, name, label} values. When provided they are applied to the
+    quantity tokens before rendering, so the LaTeX and the variables list
+    reflect what the user is currently typing in the /create override inputs.
+
+    Returns {tokens, latex, dim_latex, variables, error}.
+    On parse error returns {error: str} and tokens=[].
+    """
+    if not equation or not equation.strip():
+        return {"tokens": [], "latex": "", "dim_latex": "",
+                "variables": [], "error": ""}
+    try:
+        tokens = parse_equation(conn, equation)
+    except ValueError as e:
+        return {"tokens": [], "latex": "", "dim_latex": "",
+                "variables": [], "error": str(e)}
+    if not tokens:
+        return {"tokens": [], "latex": "", "dim_latex": "",
+                "variables": [], "error": ""}
+
+    if overrides:
+        for tok in tokens:
+            if tok["token_kind"] != "quantity":
+                continue
+            key = tok["quantity_id"] + "|" + (tok.get("label") or "")
+            ov = overrides.get(key) or {}
+            if ov.get("symbol"):
+                tok["symbol_overwrite"] = ov["symbol"]
+            if ov.get("label"):
+                tok["label"] = ov["label"]
+
+    try:
+        tree = _evaluate_rpn(conn, tokens)
+    except ValueError as e:
+        return {"tokens": tokens, "latex": "", "dim_latex": "",
+                "variables": [], "error": str(e)}
+
+    latex = _latex_node(tree, conn, locale)
+
+    dims = compute_rpn_dimensions(conn, tokens)
+    if dim_caches is None:
+        var_map, unit_map, dim_map = build_dimension_symbol_maps(conn)
+    else:
+        var_map = dim_caches.get("var", {})
+        unit_map = dim_caches.get("unit", {})
+        dim_map = dim_caches.get("dim", {})
+    dim_latex = format_dimensions_latex(
+        *dims,
+        variable_symbols=var_map,
+        unit_symbols=unit_map,
+        dimension_symbols=dim_map,
+        mode="var",
+    )
+
+    seen = []
+    seen_set = set()
+    for tok in tokens:
+        if tok["token_kind"] != "quantity":
+            continue
+        key = tok["quantity_id"] + "|" + (tok.get("label") or "")
+        if key in seen_set:
+            continue
+        seen_set.add(key)
+        qid = tok["quantity_id"]
+        qrow = _load_quantity(conn, qid)
+        ov = (overrides or {}).get(key) or {}
+        seen.append({
+            "id": qid,
+            "alias": tok.get("label") or "",
+            "symbol": qrow["symbol"],
+            "name": qrow["name"],
+            "symbol_overwrite": ov.get("symbol", ""),
+            "name_overwrite": ov.get("name", ""),
+        })
+
+    return {
+        "tokens": tokens,
+        "latex": latex,
+        "dim_latex": dim_latex,
+        "variables": seen,
+        "error": "",
+    }
+
+
+def compute_rpn_dimensions(conn, tokens):
+    """Like compute_formula_dimensions, but works on an in-memory RPN token list."""
+    cols = DIMENSION_COLUMNS()
+    qid_to_dims = {
+        r["id"]: [r[c] for c in cols]
+        for r in conn.execute(
+            f"SELECT id, {', '.join(cols)} FROM quantity"
+        ).fetchall()
+    }
+    if not tokens:
+        return [0.0] * len(cols)
+
+    try:
+        tree = _evaluate_rpn(conn, tokens)
+    except Exception:
+        return [0.0] * len(cols)
+    if tree is None:
+        return [0.0] * len(cols)
+
+    def find_lhs(node):
+        if node.kind == "operator" and node.operator_type == "relational":
+            return find_lhs(node.children[0])
+        return node
+
+    dims = [0.0] * len(cols)
+
+    def walk(node, sign):
+        if node.kind != "operator":
+            if node.kind == "quantity":
+                for i, v in enumerate(qid_to_dims.get(node.quantity_id, [])):
+                    dims[i] += v * sign
+            return
+        op = node.operator_id
+        if op in ("div", "frac"):
+            walk(node.children[0], sign)
+            walk(node.children[1], -sign)
+        elif op == "pow":
+            base, exp = node.children
+            scale = exp.value if exp.kind == "number" and exp.value is not None else 1
+            walk(base, sign * scale)
+        elif op in ("add", "sub"):
+            walk(node.children[0], sign)
+        elif op in ("sin", "cos", "tan"):
+            pass
+        elif op == "sqrt":
+            before = list(dims)
+            walk(node.children[0], sign)
+            for i in range(len(dims)):
+                dims[i] = before[i] + (dims[i] - before[i]) * 0.5
+        else:
+            for c in node.children:
+                walk(c, sign)
+
+    walk(find_lhs(tree), 1)
+    return [int(round(d)) for d in dims]
+
+
 def _evaluate_rpn(conn, tokens: list[dict]) -> Optional[_Node]:
     stack: list[_Node] = []
     for t in tokens:
@@ -517,8 +895,8 @@ def _evaluate_rpn(conn, tokens: list[dict]) -> Optional[_Node]:
             stack.append(_Node(
                 kind="quantity",
                 quantity_id=t["quantity_id"],
-                label=t["label"],
-                symbol_overwrite=t["symbol_overwrite"],
+                label=t.get("label"),
+                symbol_overwrite=t.get("symbol_overwrite"),
             ))
         elif kind == "constant":
             stack.append(_Node(kind="constant", constant_id=t["constant_id"]))
@@ -1018,6 +1396,29 @@ def fetch_all_quantities(conn):
     return sort_quantities_by_dimension(rows)
 
 
+def fetch_all_constants(conn):
+    """Return all constants with id, name, and symbol."""
+    return conn.execute(
+        """
+        SELECT id, name, symbol, value,
+               json_extract(name, '$.en-us') AS name_en
+        FROM constant
+        ORDER BY id
+        """
+    ).fetchall()
+
+
+def fetch_all_operators(conn):
+    """Return all operators with id, symbol, syntax, arity, precedence, etc."""
+    return conn.execute(
+        """
+        SELECT id, symbol, syntax, math, arity, precedence, associativity, operator_type
+        FROM operator
+        ORDER BY operator_type, precedence DESC, id
+        """
+    ).fetchall()
+
+
 def fetch_all_formulas(conn):
     return conn.execute(
         """
@@ -1054,6 +1455,98 @@ def compute_all_formula_dimensions(conn, formula_ids=None):
         else:
             result[fid] = dict(zero_row)
     return result
+
+
+def build_create_sql(conn, name_en, topic, difficulty, equation, overrides=None):
+    """Build the two INSERT SQL strings for a brand-new formula.
+
+    `overrides` is a mapping keyed by "quantity_id|alias" (matching what the
+    /create page uses) and containing {symbol, name, label} strings which
+    are stored as JSON i18n blobs.
+
+    Returns (formula_sql, token_sql) on success. Raises ValueError with a
+    user-friendly message if name/topic/equation are missing or the
+    equation fails to parse.
+    """
+    if not name_en or not name_en.strip():
+        raise ValueError("name is required")
+    if not topic or not topic.strip():
+        raise ValueError("topic is required")
+    if not equation or not equation.strip():
+        raise ValueError("equation is required")
+    difficulty = int(difficulty) if difficulty not in (None, "") else 2
+    if difficulty < 1 or difficulty > 10:
+        raise ValueError("difficulty must be 1..10")
+
+    formula_id = re.sub(r"[^a-z0-9]+", "_", name_en.strip().lower()).strip("_")
+    if not formula_id:
+        raise ValueError("name must contain at least one alphanumeric character")
+
+    tokens = parse_equation(conn, equation)
+
+    overrides = overrides or {}
+
+    def sql_lit(s):
+        if s is None:
+            return "NULL"
+        return "'" + str(s).replace("'", "''") + "'"
+
+    def sql_i18n(val):
+        if not val:
+            return "NULL"
+        return sql_lit(json.dumps({"en-us": val}, ensure_ascii=False))
+
+    formula_sql = (
+        "INSERT OR IGNORE INTO formula (id, name, topic, difficulty) VALUES\n"
+        f"({sql_lit(formula_id)}, {sql_i18n(name_en.strip())}, "
+        f"{sql_lit(topic)}, {difficulty});"
+    )
+
+    rows = []
+    for pos, tok in enumerate(tokens, start=1):
+        if tok["token_kind"] == "number":
+            value = tok["value"]
+            ov_key = None
+            label = sym_ow = name_ow = "NULL"
+            rows.append(
+                f"({sql_lit(formula_id)}, {pos}, 'number', "
+                f"NULL, NULL, NULL, {value}, {label}, {sym_ow}, {name_ow})"
+            )
+        elif tok["token_kind"] == "quantity":
+            qid = tok["quantity_id"]
+            alias = tok.get("label") or ""
+            ov = overrides.get(qid + "|" + alias, {})
+            label = sql_i18n(ov.get("label"))
+            sym_ow = sql_i18n(ov.get("symbol"))
+            name_ow = sql_i18n(ov.get("name"))
+            rows.append(
+                f"({sql_lit(formula_id)}, {pos}, 'quantity', "
+                f"{sql_lit(qid)}, NULL, NULL, NULL, {label}, {sym_ow}, {name_ow})"
+            )
+        elif tok["token_kind"] == "constant":
+            cid = tok["constant_id"]
+            rows.append(
+                f"({sql_lit(formula_id)}, {pos}, 'constant', "
+                f"NULL, {sql_lit(cid)}, NULL, NULL, NULL, NULL, NULL)"
+            )
+        else:
+            op_id = tok["operator_id"]
+            if op_id in ("paren_open", "paren_close"):
+                raise ValueError("unbalanced parentheses")
+            rows.append(
+                f"({sql_lit(formula_id)}, {pos}, 'operator', "
+                f"NULL, NULL, {sql_lit(op_id)}, NULL, NULL, NULL, NULL)"
+            )
+
+    token_sql = (
+        "INSERT OR IGNORE INTO formula_token\n"
+        "  (formula_id, position, token_kind, quantity_id, constant_id,\n"
+        "   operator_id, value, label, symbol_overwrite, quantity_name_overwrite)\n"
+        "VALUES\n"
+        + ",\n".join(rows)
+        + ";"
+    )
+    return formula_sql, token_sql
 
 
 def fetch_formulas_with_any_quantity(conn, quantity_ids):

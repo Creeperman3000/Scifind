@@ -50,12 +50,16 @@ from scifind_lib import (
     fetch_unit,
     build_dimension_symbol_maps,
     fetch_all_quantities,
+    fetch_all_constants,
+    fetch_all_operators,
     fetch_all_formulas,
     search_headings,
     suggest_headings,
     export_to_csv_directory,
     export_to_xlsx,
     export_to_ods,
+    preview_equation,
+    build_create_sql,
     _unit_name_map,
     _unit_symbol_map,
     _unit_quantity_map,
@@ -807,6 +811,11 @@ def base_units_page():
     return redirect("/quantities?is_dim=1")
 
 
+@app.route("/create")
+def create_formula():
+    return render_template("create.html")
+
+
 def _build_formula_detail_items(db, formula_id, locale):
     """Build the formula detail table data from formula_token rows."""
     result = []
@@ -860,6 +869,71 @@ def _build_formula_detail_items(db, formula_id, locale):
             "default_unit_symbol_latex": _render_unit_symbol(default_unit) if default_unit else "",
         })
 
+    return result
+
+
+def _build_formula_detail_items_from_tokens(db, tokens, overrides, locale):
+    """Same shape as :func:`_build_formula_detail_items` but for in-memory
+    tokens produced by ``parse_equation``. The ``overrides`` arg is accepted
+    for symmetry but unused here — the caller is expected to have already
+    applied the overrides to the tokens (which is what ``preview_equation``
+    does when ``overrides`` is passed in).
+    """
+    result = []
+    for tok in tokens:
+        if tok.get("token_kind") != "quantity":
+            continue
+        qid = tok["quantity_id"]
+        qrow = db.execute(
+            "SELECT id, name, symbol, default_unit FROM quantity WHERE id=?",
+            (qid,),
+        ).fetchone()
+        if not qrow:
+            continue
+        qty_name = (json.loads(qrow["name"]).get("en-us") if qrow["name"] else None) or qid.replace("_", " ").title()
+        item = {
+            "quantity_id": qid,
+            "quantity_symbol": qrow["symbol"],
+            "quantity_name": qty_name,
+            "symbol_overwrite": tok.get("symbol_overwrite") or "",
+            "quantity_name_overwrite": tok.get("quantity_name_overwrite") or "",
+            "label": tok.get("label") or "",
+            "default_unit": qrow["default_unit"],
+        }
+
+        symbol_latex = render_variable_base(item, locale)
+        orig_symbol = (item["quantity_symbol"] or "").strip()
+        overwrite = localise(item["symbol_overwrite"], locale)
+        has_overwrite = bool(overwrite and orig_symbol and overwrite != orig_symbol)
+        qno_raw = localise(item["quantity_name_overwrite"], locale)
+
+        qlink = (
+            f'<a href="/quantity/{html_module.escape(qid)}">'
+            f"{html_module.escape(qty_name)}</a>"
+        )
+        paren_parts = []
+        if has_overwrite and orig_symbol:
+            paren_parts.append(f"${orig_symbol}$")
+        if qno_raw:
+            marker_ids = {m.split('|')[0].lower().replace(' ', '_')
+                          for m in re.findall(r'\[([^\]]+)\]', qno_raw)}
+            if qid in marker_ids:
+                name_html = parse_quantity_name_markers(qno_raw)
+            else:
+                name_html = html_module.escape(qno_raw)
+                if has_overwrite and orig_symbol:
+                    paren_parts.append(qlink)
+        else:
+            name_html = qlink
+        paren_html = f"({' '.join(paren_parts)})" if paren_parts else ""
+        default_unit = item["default_unit"]
+        result.append({
+            "symbol_latex": symbol_latex,
+            "name_html": Markup(name_html) if name_html else "",
+            "paren_html": Markup(paren_html) if paren_html else "",
+            "default_unit_html": Markup(_render_unit_html(default_unit, locale)) if default_unit else "",
+            "default_unit_symbol_latex": _render_unit_symbol(default_unit) if default_unit else "",
+        })
     return result
 
 
@@ -1019,6 +1093,354 @@ def search_suggestions():
     return {"suggestions": [
         {"id": s[1], "kind": s[2], "heading": s[3]} for s in suggestions
     ]}
+
+
+@app.route("/api/token-dictionary")
+def token_dictionary():
+    """All quantities, constants, and operators — used by the formula
+    builder UI for autocomplete, validation, and rendering."""
+    db = get_db()
+    from scifind_lib import DIMENSION_COLUMNS
+    dim_cols = DIMENSION_COLUMNS()
+    quantities = [
+        {
+            "id": r["id"],
+            "name": r["name"],
+            "symbol": r["symbol"],
+            **{c: r[c] for c in dim_cols},
+        }
+        for r in fetch_all_quantities(db)
+    ]
+    constants = [
+        {"id": r["id"], "name": r["name"], "symbol": r["symbol"]}
+        for r in fetch_all_constants(db)
+    ]
+    operators = [
+        {
+            "id": r["id"],
+            "symbol": r["symbol"],
+            "syntax": r["syntax"],
+            "math": r["math"],
+            "arity": r["arity"],
+            "precedence": r["precedence"],
+            "associativity": r["associativity"],
+            "operator_type": r["operator_type"],
+        }
+        for r in fetch_all_operators(db)
+    ]
+    return {
+        "quantities": quantities,
+        "constants": constants,
+        "operators": operators,
+    }
+
+
+@app.route("/api/preview")
+def preview_equation_api():
+    """Parse an equation and return preview data (LaTeX, dims, variables).
+
+    Used by the /create page to render the live preview and dimensions as
+    the user types. Returns 200 even on parse error so the client can show
+    a friendly message; the `error` field is non-empty in that case.
+    """
+    db = get_db()
+    equation = (request.args.get("equation") or "").strip()
+    locale = g.locale
+    caches = _get_dimension_caches()
+    result = preview_equation(db, equation, locale=locale, dim_caches=caches)
+    return result
+
+
+def _parse_override_form_keys():
+    """Walk ``request.form`` and return a dict keyed by
+    ``"<quantity_id>|<alias>"`` with ``{symbol, name, label}`` entries,
+    matching the keys the /create page uses for its override inputs.
+    """
+    overrides = {}
+    for key, values in request.form.lists():
+        if not key.startswith("override[") or not key.endswith("]"):
+            continue
+        body = key[len("override["):-1]
+        sep = "]["
+        if sep not in body:
+            continue
+        ov_key, field = body.rsplit(sep, 1)
+        if field not in ("symbol", "name", "label"):
+            continue
+        value = next((v for v in reversed(values) if v.strip()), "")
+        if not value:
+            continue
+        overrides.setdefault(ov_key, {})[field] = value
+    return overrides
+
+
+@app.route("/create/preview-render", methods=["POST"])
+def create_preview_render():
+    """Form-POST version of ``/api/preview`` that also accepts per-quantity
+    overrides and returns the rendered ``detail_items`` HTML (the same shape
+    used by /formula). Used by the /create page to keep the live preview
+    and the "Quantity Overrides" table in sync with whatever the user is
+    typing.
+    """
+    db = get_db()
+    locale = g.locale
+    equation = (request.form.get("equation") or "").strip()
+    overrides = _parse_override_form_keys()
+    caches = _get_dimension_caches()
+    result = preview_equation(db, equation, locale=locale, dim_caches=caches, overrides=overrides)
+    if result.get("error") or not result.get("latex"):
+        return result
+    items = _build_formula_detail_items_from_tokens(db, result["tokens"], overrides, locale)
+    result["detail_items"] = items
+    return result
+
+
+@app.route("/api/build-sql", methods=["POST"])
+def build_sql_api():
+    """Generate the INSERT SQL strings for a new formula.
+
+    Accepts JSON: {name_en, topic, difficulty, equation, overrides?}.
+    Returns {formula_sql, token_sql} on success or {error: str} on failure.
+    """
+    db = get_db()
+    payload = request.get_json(silent=True) or {}
+    try:
+        formula_sql, token_sql = build_create_sql(
+            db,
+            name_en=payload.get("name_en", ""),
+            topic=payload.get("topic", ""),
+            difficulty=payload.get("difficulty", 2),
+            equation=payload.get("equation", ""),
+            overrides=payload.get("overrides") or {},
+        )
+    except ValueError as e:
+        return {"error": str(e)}, 400
+    return {"formula_sql": formula_sql, "token_sql": token_sql}
+
+
+# ---------------------------------------------------------------------------
+# /create page server-rendered fragments
+#
+# The create page used to ship ~500 lines of client JS that re-rendered the
+# token sidebar, the variable override table, and the topic breadcrumb on
+# every keystroke. Each of those concerns now has a dedicated endpoint that
+# returns ready-to-insert HTML; the page just sets innerHTML and wires a
+# handful of delegated listeners.
+# ---------------------------------------------------------------------------
+
+
+def _row_dict(row):
+    """sqlite3.Row → dict (supports `.get`)."""
+    return dict(row) if row is not None else {}
+
+
+def _render_token_item(item, kind, locale):
+    """One <div class="qty-result"> for the token sidebar."""
+    item = _row_dict(item)
+    if kind == "op":
+        syntax = item.get("syntax") or item.get("symbol") or item["id"]
+        return (
+            f'<div class="qty-result" data-kind="op" data-insert="{html_module.escape(syntax)}"'
+            f' data-search="{html_module.escape(syntax.lower())}">'
+            f'<span class="qty-result-sym token-syntax">{html_module.escape(syntax)}</span>'
+            f'<span class="qty-result-name">{html_module.escape(item["id"])}</span>'
+            f'</div>'
+        )
+    name = localise(item.get("name") or "", locale, default="en-us") or item["id"]
+    symbol = item.get("symbol") or ""
+    sym_html = (
+        f'<span class="qty-result-sym">${html_module.escape(symbol)}$</span>'
+        if symbol else ""
+    )
+    haystack = " ".join([
+        item["id"], symbol, str(item.get("name") or ""), str(item.get("syntax") or ""),
+    ]).lower()
+    return (
+        f'<div class="qty-result" data-kind="{kind}" data-insert="{html_module.escape(item["id"])}"'
+        f' data-search="{html_module.escape(haystack)}">'
+        f'{sym_html}'
+        f'<span class="qty-result-name">{html_module.escape(name)}</span>'
+        f'</div>'
+    )
+
+
+def _render_token_section(label, target_id, items, kind, locale, no_match_label):
+    """One labelled <section> of token items with a collapse toggle."""
+    body = "".join(_render_token_item(it, kind, locale) for it in items)
+    return (
+        f'<div class="section-label-row">'
+        f'<div class="section-label">{html_module.escape(label)}</div>'
+        f'<div class="filter-buttons">'
+        f'<button class="filter-btn" data-action="toggle-token-section" data-target="{target_id}" type="button">'
+        f'<span class="token-section-icon"><i data-lucide="chevron-up" width="16" height="16"></i></span>'
+        f'</button>'
+        f'</div></div>'
+        f'<div class="token-list" id="{target_id}">{body}</div>'
+        f'<div class="token-empty">{html_module.escape(no_match_label)}</div>'
+    )
+
+
+@app.route("/create/token-sidebar")
+def create_token_sidebar():
+    """Server-rendered Q/C/O token sidebar for the /create page."""
+    db = get_db()
+    locale = g.locale
+    quantities = fetch_all_quantities(db)
+    constants = fetch_all_constants(db)
+    operators = fetch_all_operators(db)
+
+    sections = [
+        _render_token_section(
+            _("create.quantities"), "token-qty", quantities, "qty", locale,
+            _("create.no_matches"),
+        ),
+        _render_token_section(
+            _("create.constants"), "token-const", constants, "const", locale,
+            _("create.no_matches"),
+        ),
+        _render_token_section(
+            _("create.operators"), "token-op", operators, "op", locale,
+            _("create.no_matches"),
+        ),
+    ]
+
+    return Markup(
+        '<div class="filter-qty-search-wrap">'
+        f'<div class="qty-search-wrap"><input type="text" class="qty-search" id="token-search" placeholder="{html_module.escape(_("create.search_placeholder"))}" autocomplete="off"></div>'
+        '</div>'
+        f'<div class="token-sidebar">{"".join(sections)}</div>'
+    )
+
+
+def _render_breadcrumb(selected_id, tree, name_map):
+    """Server-rendered topic breadcrumb (root > ... > selected > child trigger)."""
+    selected_node = _find_node(tree, selected_id) if selected_id else None
+    if selected_node is not None:
+        current_kids = [c["id"] for c in (selected_node.get("children") or [])]
+        path = _topic_path(tree, selected_id) or [selected_id]
+    else:
+        current_kids = [r["id"] for r in tree]
+        path = None
+
+    parts = []
+    if path:
+        for i, tid in enumerate(path):
+            if i > 0:
+                parts.append(' <span class="breadcrumb-sep">&gt;</span> ')
+            parts.append(
+                f'<span class="topic-current"'
+                f' data-id="{html_module.escape(tid)}">'
+                f'{html_module.escape(name_map.get(tid, tid))}</span>'
+            )
+
+    if current_kids:
+        if parts:
+            parts.append(' <span class="breadcrumb-sep">&gt;</span> ')
+        trigger_label = _("create.topic")
+        menu_items = "".join(
+            _render_menu_item(cid, tree, name_map) for cid in current_kids
+        )
+        parts.append(
+            f'<span class="topic-current has-menu" data-text="{html_module.escape(trigger_label)}">'
+            f'<button class="topic-dropdown-trigger" type="button">'
+            f'{html_module.escape(trigger_label)}</button>'
+            f'<div class="topic-children-menu">{menu_items}</div>'
+            f'</span>'
+        )
+
+    parts.append(
+        f'<input type="hidden" id="topic" name="topic" form="create-form"'
+        f' value="{html_module.escape(selected_id or "")}">'
+    )
+    return Markup("".join(parts))
+
+
+def _find_node(tree, node_id):
+    for root in tree:
+        if root["id"] == node_id:
+            return root
+        found = _find_node(root.get("children") or [], node_id)
+        if found is not None:
+            return found
+    return None
+
+
+def _render_menu_item(node_id, tree, name_map):
+    node = _find_node(tree, node_id)
+    name = name_map.get(node_id, node_id) if node else node_id
+    kids = (node.get("children") or []) if node else []
+    if kids:
+        sub = "".join(_render_menu_item(c["id"], tree, name_map) for c in kids)
+        return (
+            f'<div class="topic-menu-item" data-id="{html_module.escape(node_id)}">'
+            f'<span>{html_module.escape(name)}</span>'
+            f'<span class="caret"></span>'
+            f'<div class="topic-submenu">{sub}</div>'
+            f'</div>'
+        )
+    return (
+        f'<button type="button" class="topic-menu-item" data-id="{html_module.escape(node_id)}">'
+        f'<span>{html_module.escape(name)}</span>'
+        f'</button>'
+    )
+
+
+@app.route("/create/breadcrumb")
+def create_breadcrumb():
+    """Return the server-rendered breadcrumb for the given topic id."""
+    topic = (request.args.get("topic") or "").strip() or None
+    tree = _sciences_tree()
+    name_map = _tree_name_map(tree, g.locale)
+    return _render_breadcrumb(topic, tree, name_map)
+
+
+@app.route("/create/build-sql", methods=["POST"])
+def create_build_sql():
+    """Form-POST equivalent of /api/build-sql.
+
+    Accepts the same fields as the create form, including `override[<key>]`
+    arrays for variable overrides. Returns the rendered modal HTML on
+    success and a JSON `{error}` with 400 on failure.
+    """
+    db = get_db()
+
+    def _scalar(name):
+        return (request.form.get(name) or "").strip()
+
+    name_en = _scalar("name_en")
+    topic = _scalar("topic")
+    difficulty = _scalar("difficulty") or "2"
+    equation = (request.form.get("equation") or "")
+
+    overrides = _parse_override_form_keys()
+
+    try:
+        formula_sql, token_sql = build_create_sql(
+            db,
+            name_en=name_en,
+            topic=topic,
+            difficulty=difficulty,
+            equation=equation,
+            overrides=overrides,
+        )
+    except ValueError as e:
+        body = (
+            f'<p class="detail-desc" data-error="{html_module.escape(str(e))}">'
+            f'{html_module.escape(str(e))}</p>'
+        )
+        return Markup(body), 400
+
+    return Markup(
+        '<div class="sql-block">'
+        f'<button class="sql-copy-btn" type="button" data-action="copy-formula-sql">{html_module.escape(_("copy.latex"))}</button>'
+        f'<pre id="formula-sql">{html_module.escape(formula_sql)}</pre>'
+        f'</div>'
+        '<h3>' + html_module.escape(_("create.token_inserts")) + '</h3>'
+        '<div class="sql-block">'
+        f'<button class="sql-copy-btn" type="button" data-action="copy-token-sql">{html_module.escape(_("copy.latex"))}</button>'
+        f'<pre id="token-sql">{html_module.escape(token_sql)}</pre>'
+        f'</div>'
+    )
 
 
 @app.route("/quantities")
