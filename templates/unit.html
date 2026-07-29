@@ -2,9 +2,9 @@
 {% block title %}{{ _(unit.name) or unit.id }}{% endblock %}
 {% block content %}
 
-<h2 class="detail-heading">{% if unit.symbol %}${{ render_symbol(unit.symbol) }}$ {% endif %}{{ _(unit.name) or unit.id }}</h2>
+<h2>{% if unit.symbol %}${{ render_symbol(unit.symbol) }}$ {% endif %}{{ _(unit.name) or unit.id }}</h2>
 
-<div class="detail-desc">{{ _('unit.unit') }}</div>
+<div class="detail-desc">{{ _('list.unit') }}</div>
 
 {% if unit.quantity_id %}
 <div class="breadcrumb-bar">
@@ -24,10 +24,10 @@
   <div>{{ _('unit.si_base_unit') }} <a href="/quantity/{{ unit.quantity_id }}">{{ unit.quantity_name_localized }}</a>.</div>
   <div><b>{{ _('unit.symbol') }}:</b> ${{ render_symbol(unit.symbol) }}$</div>
 {% else %}
-  <div><b>{{ _('unit.quantity') }}:</b> <a href="/quantity/{{ unit.quantity_id }}">{{ unit.quantity_name_localized }}</a></div>
+  <div><b>{{ _('list.quantity') }}:</b> <a href="/quantity/{{ unit.quantity_id }}">{{ unit.quantity_name_localized }}</a></div>
   <div><b>{{ _('detail.system') }}:</b> {{ unit.unit_system or _('unit.system_any') }}</div>
-  <div><b>{{ _('unit.factor_to') }} ${{ render_symbol(si_unit_symbol) }}$:</b> {% if unit.latex_factor %}${{ unit.latex_factor }}${% else %}${{ unit.factor }}${% endif %}</div>
-  {% if unit.offset %}<div><b>{{ _('unit.offset_from') }} ${{ render_symbol(si_unit_symbol) }}$:</b> ${{ unit.offset }}$</div>{% endif %}
+  <div><b>{{ _('detail.factor_to') }} ${{ render_symbol(si_unit_symbol) }}$:</b> {% if unit.latex_factor %}${{ unit.latex_factor }}${% else %}${{ unit.factor }}${% endif %}</div>
+  {% if unit.offset %}<div><b>{{ _('detail.offset_from') }} ${{ render_symbol(si_unit_symbol) }}$:</b> ${{ unit.offset }}$</div>{% endif %}
 {% endif %}
 </div>
 

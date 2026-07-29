@@ -30,12 +30,21 @@ CREATE TABLE IF NOT EXISTS formula (
 CREATE TABLE IF NOT EXISTS operator (
     id            TEXT PRIMARY KEY,
     symbol        TEXT,               -- LaTeX display; NULL means invisible
-    syntax        TEXT NOT NULL DEFAULT '',  -- user-facing infix text typed in the equation editor (e.g. '+', 'sin(', '=')
     math          TEXT,               -- Python expression using operand names; NULL if not computable
     arity         INTEGER NOT NULL CHECK (arity > 0),
     precedence    INTEGER NOT NULL,
     associativity TEXT NOT NULL CHECK (associativity IN ('left', 'right', 'none')),
-    operator_type TEXT NOT NULL CHECK (operator_type IN ('infix', 'prefix', 'postfix', 'relational'))
+    operator_type TEXT NOT NULL CHECK (operator_type IN ('infix', 'prefix', 'postfix', 'relational')),
+    -- Whether the operator's LaTeX syntax self-delimits its child(ren)
+    -- so no \left( ... \right) wrapper is needed for disambiguation.
+    -- True (default) is for prefix functions like \sin, \tan, \neg whose
+    -- macro argument is a bare group and would otherwise read
+    -- ambiguously against the surrounding context (e.g. -a+b vs -(a+b)).
+    -- False is for operators whose macro syntax already groups their
+    -- children: \sqrt{x}, \frac{x}{y}, x^{y} — the braces/brackets in
+    -- the macro argument are enough to scope the children, so wrapping
+    -- them in extra parens would be redundant noise.
+    parened_arg   INTEGER NOT NULL DEFAULT 1 CHECK (parened_arg IN (0, 1))
 );
 
 -- ============================================================

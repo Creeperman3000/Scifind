@@ -1,8 +1,9 @@
 {% extends "base.html" %}
+{% import "_macros.html" as ui %}
 {% block title %}{{ _(formula.name) }}{% endblock %}
 {% block content %}
 
-<h2 class="detail-heading">{{ _(formula.name) }}</h2>
+<h2>{{ _(formula.name) }}</h2>
 
 <div class="detail-desc">{{ _('detail.formula') }}</div>
 
@@ -20,16 +21,16 @@
 
 <div class="formula-box">
   <div id="formula-math">$${{ latex }}$$</div>
-  <span id="formula-tex" style="display:none">{{ latex }}</span>
+  <span id="formula-tex" class="hidden">{{ latex }}</span>
   <div class="formula-copy-wrap">
     <button class="formula-copy-btn" data-action="toggle-copy-menu">
       <i data-lucide="copy" width="16" height="16"></i>
     </button>
     <div class="dropdown-menu formula-copy-menu" id="formula-copy-menu">
-      <button data-action="copy-formula-latex">{{ _('copy.latex') }}</button>
-      <button data-action="copy-formula-unicode">{{ _('copy.unicode') }}</button>
-      <button data-action="copy-formula-image-png">{{ _('copy.image_png') }}</button>
-      <button data-action="copy-formula-image-svg">{{ _('copy.image_svg') }}</button>
+      <button data-action="copy-formula-latex">LaTeX</button>
+      <button data-action="copy-formula-unicode">Unicode</button>
+      <button data-action="copy-formula-image-png">PNG</button>
+      <button data-action="copy-formula-image-svg">SVG</button>
     </div>
   </div>
 </div>
@@ -44,7 +45,7 @@
   <table class="var-table">
     <thead>
       <tr>
-        <th>{{ _('detail.quantities') }}</th>
+        <th>{{ _('detail.quantity') }}</th>
         <th>{{ _('detail.default_unit') }}</th>
       </tr>
     </thead>
@@ -65,13 +66,7 @@
   <h3>{{ _('detail.related') }}</h3>
   <div class="formula-grid">
   {% for r in relations %}
-    <div class="formula-card">
-      <a href="/formula/{{ r.related_id }}">
-        <div class="formula-eqn">$${{ r.latex }}$$</div>
-        <div class="formula-name">{{ _(r.name) }}</div>
-        <div class="formula-relation-label">{{ _('relation.' ~ r.relation_type) }}</div>
-      </a>
-    </div>
+    {{ ui.formula_card('/formula/' ~ r.related_id, r.latex, _(r.name), relation=_('relation.' ~ r.relation_type)) }}
   {% endfor %}
   </div>
 </div>

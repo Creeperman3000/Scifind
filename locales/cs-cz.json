@@ -2,6 +2,7 @@
   "meta": {
     "name": "Čeština",
     "acceptLanguage": "cs",
+    "fallback": "en-us",
     "ordinalSuffix": ".",
     "unitWords": {
       "squared": "čtvereční",
@@ -33,13 +34,14 @@
   "ui": {
     "nav": {
       "formulas": "Vzorce",
-      "quantities": "Veličiny",
-      "create": "Vytvořit"
+      "operators": "Operátory",
+      "constants": "Konstanty",
+      "filter": "Filtr",
+      "tree": "Strom"
     },
     "settings": {
       "theme": "Motiv",
       "language": "Jazyk",
-      "dimensions": "Rozměry",
       "export": "Export",
       "theme_system": "Systémový",
       "theme_light": "Světlý",
@@ -51,7 +53,8 @@
       "wait_latex": "Čekat na LaTeX",
       "found_bug": "Našel jsi chybu?",
       "report_bug": "Nahlásit",
-      "missing_formula": "Chybí vzorec?"
+      "missing_formula": "Chybí vzorec?",
+      "create": "Vytvořit"
     },
     "search": {
       "placeholder": "Hledat vzorce, veličiny, jednotky",
@@ -62,13 +65,9 @@
     },
     "filter": {
       "dimension": "Rozměr",
-      "quantity": "Veličina",
-      "difficulty": "Obtížnost",
-      "topic": "Filtr",
       "search_quantity": "Hledat veličinu...",
       "dim_mode_and": "Režim filtru rozměrů: A",
       "dim_mode_or": "Režim filtru rozměrů: NEBO",
-      "base_quantities": "Základní veličiny",
       "fill_zeros": "Nastavit prázdné rozměrové hodnoty na 0",
       "clear_dims": "Vymazat všechny rozměrové filtry",
       "qty_mode_and": "Režim filtru veličin: A",
@@ -91,15 +90,16 @@
       "offset_from": "Posun od",
       "primary_formulas": "Hlavní vzorce",
       "also_appears_in": "Také se vyskytuje v",
-      "related_formulas": "Související vzorce"
+      "related_formulas": "Související vzorce",
+      "formulas_no_results": "Nenalezeny žádné vzorce odpovídající zvoleným filtrům.",
+      "quantities_no_results": "Nenalezeny žádné veličiny odpovídající zvoleným filtrům.",
+      "quantity": "Veličina",
+      "unit": "Jednotka",
+      "base_quantities": "Základní veličiny"
     },
     "unit": {
-      "unit": "Jednotka",
       "si_base_unit": "Toto je základní jednotka SI veličiny",
       "symbol": "Značka",
-      "quantity": "Veličina",
-      "factor_to": "Přepočet na",
-      "offset_from": "Posun od",
       "system_any": "libovolný"
     },
     "relation": {
@@ -109,15 +109,6 @@
       "generalization": "Obecnění",
       "condition": "Podmínka",
       "assumption": "Předpoklad"
-    },
-    "list": {
-      "formulas_no_results": "Nenalezeny žádné vzorce odpovídající zvoleným filtrům.",
-      "quantities_no_results": "Nenalezeny žádné veličiny odpovídající zvoleným filtrům.",
-      "quantity": "Veličina",
-      "unit": "Jednotka",
-      "all_formulas": "Všechny vzorce",
-      "all_quantities": "Všechny veličiny",
-      "base_quantities": "Základní veličiny"
     },
     "heading": {
       "from": "z",
@@ -130,26 +121,12 @@
       "where_dimensions_are": "kde rozměry jsou",
       "all": "Všechny"
     },
-    "copy": {
-      "latex": "LaTeX",
-      "unicode": "Unicode",
-      "image_png": "PNG",
-      "image_svg": "SVG"
-    },
     "toast": {
       "copied": "Zkopírováno",
       "copy_failed": "Kopírování selhalo"
     },
-    "dock": {
-      "formulas": "Vzorce",
-      "quantities": "Veličiny",
-      "filter": "Filtr",
-      "tree": "Strom",
-      "search": "Hledat"
-    },
     "tooltip": {
       "toggle_sidebar": "Přepnout boční panel",
-      "search": "Hledat",
       "settings": "Nastavení",
       "toggle_tree": "Přepnout strom",
       "cancel_search": "Zrušit hledání"
@@ -157,32 +134,29 @@
     "create": {
       "title": "Vytvořit vzorec",
       "name": "Název vzorce",
-      "formula_id": "id_vzorce",
-      "topic": "Vyberte téma",
-      "dimensions": "Rozměry",
-      "difficulty": "Obtížnost",
-      "equation": "sila = hmotnost * zrychleni",
-      "quantity_overrides": "Přepisy veličin",
       "type_equation_hint": "Zadejte rovnici pro zobrazení proměnných...",
+      "description": "Popis",
+      "links": "Odkazy (jeden na řádek)",
+      "equation": "Rovnice",
+      "formula_id": "id_vzorce",
+      "topic": "Téma",
       "continue": "Pokračovat",
+      "back": "Zpět",
       "formula_insert": "INSERT vzorce",
       "token_inserts": "INSERTy tokenů",
-      "close": "Zavřít",
       "search_placeholder": "Filtrovat tokeny...",
-      "quantities": "Veličiny",
-      "constants": "Konstanty",
-      "operators": "Operátory",
       "no_results": "Žádné výsledky.",
-      "column_quantity": "Veličina",
       "column_symbol_override": "Přepis značky",
       "column_name_override": "Přepis názvu",
       "column_label": "Popisek",
-      "placeholder_symbol": "Značka",
       "placeholder_name": "Zobrazovaný název",
       "placeholder_label": "dolní index",
-      "missing_required": "Vyplňte prosím název, téma a rovnici.",
-      "sql_generated": "SQL vygenerováno!",
-      "parse_error": "Chyba parsování!"
+      "missing_required": "Chyba: chybí",
+      "parse_error": "Chyba parsování!",
+      "pick_languages_heading": "Vyberte jazyky na překlad",
+      "pick_languages_hint": "en-us je vždy zahrnuto",
+      "translate_heading": "Přeložit do {lang}",
+      "translate_open_issue": "Otevřít GitHub issue"
     }
   }
 }

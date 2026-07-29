@@ -1,7 +1,8 @@
 {
   "meta": {
     "name": "UK English",
-    "acceptLanguage": "en-GB"
+    "acceptLanguage": "en-GB",
+    "fallback": "en-us"
   },
   "ui": {}
 }

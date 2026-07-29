@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_macros.html" as ui %}
 {% block title %}{{ heading }}{% endblock %}
 {% block content %}
 
@@ -7,12 +8,7 @@
 {% if formulas %}
 <div class="formula-grid">
 {% for f in formulas %}
-  <div class="formula-card">
-    <a href="/formula/{{ f.id }}">
-      <div class="formula-eqn">$${{ f.latex }}$$</div>
-      <div class="formula-name">{{ _(f.name) }}</div>
-    </a>
-  </div>
+  {{ ui.formula_card('/formula/' ~ f.id, f.latex, _(f.name)) }}
 {% endfor %}
 </div>
 {% else %}

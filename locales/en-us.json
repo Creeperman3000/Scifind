@@ -26,13 +26,14 @@
   "ui": {
     "nav": {
       "formulas": "Formulas",
-      "quantities": "Quantities",
-      "create": "Create"
+      "operators": "Operators",
+      "constants": "Constants",
+      "filter": "Filter",
+      "tree": "Tree"
     },
     "settings": {
       "theme": "Theme",
       "language": "Language",
-      "dimensions": "Dimensions",
       "export": "Export",
       "theme_system": "System",
       "theme_light": "Light",
@@ -44,7 +45,8 @@
       "wait_latex": "Wait for LaTeX",
       "found_bug": "Found a bug?",
       "report_bug": "Report",
-      "missing_formula": "Missing formula?"
+      "missing_formula": "Missing formula?",
+      "create": "Create"
     },
     "search": {
       "placeholder": "Find formulas, quantities, units",
@@ -55,13 +57,9 @@
     },
     "filter": {
       "dimension": "Dimension",
-      "quantity": "Quantity",
-      "difficulty": "Difficulty",
-      "topic": "Filter",
       "search_quantity": "Search quantity...",
       "dim_mode_and": "Dimension filter mode: AND",
       "dim_mode_or": "Dimension filter mode: OR",
-      "base_quantities": "Base quantities",
       "fill_zeros": "Set empty dimension fields to 0",
       "clear_dims": "Clear all dimension filters",
       "qty_mode_and": "Quantity filter mode: AND",
@@ -84,15 +82,16 @@
       "offset_from": "Offset from",
       "primary_formulas": "Primary formulas",
       "also_appears_in": "Also appears in",
-      "related_formulas": "Related formulas"
+      "related_formulas": "Related formulas",
+      "formulas_no_results": "No formulas found matching the selected filters.",
+      "quantities_no_results": "No quantities found matching the selected filters.",
+      "quantity": "Quantity",
+      "unit": "Unit",
+      "base_quantities": "Base quantities"
     },
     "unit": {
-      "unit": "Unit",
       "si_base_unit": "This is the SI base unit of",
       "symbol": "Symbol",
-      "quantity": "Quantity",
-      "factor_to": "Factor to",
-      "offset_from": "Offset from",
       "system_any": "any"
     },
     "relation": {
@@ -102,15 +101,6 @@
       "generalization": "Generalization",
       "condition": "Condition",
       "assumption": "Assumption"
-    },
-    "list": {
-      "formulas_no_results": "No formulas found matching the selected filters.",
-      "quantities_no_results": "No quantities found matching the selected filters.",
-      "quantity": "Quantity",
-      "unit": "Unit",
-      "all_formulas": "All Formulas",
-      "all_quantities": "All Quantities",
-      "base_quantities": "Base quantities"
     },
     "heading": {
       "from": "from",
@@ -123,26 +113,12 @@
       "where_dimensions_are": "where dimensions are",
       "all": "All"
     },
-    "copy": {
-      "latex": "LaTeX",
-      "unicode": "Unicode",
-      "image_png": "PNG",
-      "image_svg": "SVG"
-    },
     "toast": {
       "copied": "Copied",
       "copy_failed": "Copy failed"
     },
-    "dock": {
-      "formulas": "Formulas",
-      "quantities": "Quantities",
-      "filter": "Filter",
-      "tree": "Tree",
-      "search": "Search"
-    },
     "tooltip": {
       "toggle_sidebar": "Toggle sidebar",
-      "search": "Search",
       "settings": "Settings",
       "toggle_tree": "Toggle tree",
       "cancel_search": "Cancel search"
@@ -151,31 +127,28 @@
       "title": "Create Formula",
       "name": "Formula name",
       "formula_id": "formula_id",
-      "topic": "Select a topic",
-      "dimensions": "Dimensions",
-      "difficulty": "Difficulty",
-      "equation": "force = mass * acceleration",
-      "quantity_overrides": "Quantity Overrides",
+      "topic": "Topic",
       "type_equation_hint": "Type an equation to see variables...",
+      "description": "Description",
+      "links": "Links (one per line)",
+      "equation": "Equation",
       "continue": "Continue",
+      "back": "Back",
       "formula_insert": "Formula INSERT",
       "token_inserts": "Token INSERTs",
-      "close": "Close",
       "search_placeholder": "Filter tokens...",
-      "quantities": "Quantities",
-      "constants": "Constants",
-      "operators": "Operators",
       "no_results": "No matches.",
-      "column_quantity": "Quantity",
       "column_symbol_override": "Symbol Override",
       "column_name_override": "Name Override",
       "column_label": "Label",
-      "placeholder_symbol": "Symbol",
       "placeholder_name": "Display name",
       "placeholder_label": "subscript",
-      "missing_required": "Please fill in name, topic, and equation.",
-      "sql_generated": "SQL generated!",
-      "parse_error": "Parse error!"
+      "missing_required": "Error: no",
+      "parse_error": "Parse error!",
+      "pick_languages_heading": "Pick languages for translation",
+      "pick_languages_hint": "en-us is always included",
+      "translate_heading": "Translate to {lang}",
+      "translate_open_issue": "Open GitHub issue"
     }
   }
 }

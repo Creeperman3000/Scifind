@@ -4,3 +4,4 @@ __pycache__/
 instance/
 .env
 check_formula.py
+_macros.html

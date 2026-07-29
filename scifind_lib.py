@@ -463,6 +463,7 @@ class _Node:
     precedence: int = 0
     associativity: str = "left"
     operator_type: str = "infix"
+    parened_arg: bool = True  # True: child may need \left(...\right); False: never
 
 
 def _fetch(conn, table: str, columns: str, key: str) -> dict:
@@ -476,7 +477,7 @@ def _fetch(conn, table: str, columns: str, key: str) -> dict:
 
 def _load_operator(conn, operator_id: str) -> dict:
     return _fetch(conn, "operator",
-                  "id, symbol, arity, precedence, associativity, operator_type",
+                  "id, symbol, arity, precedence, associativity, operator_type, parened_arg",
                   operator_id)
 
 
@@ -505,26 +506,32 @@ def _id_set_from(conn, table, cache_key):
 
 
 def _operator_lookup(conn):
-    """Cache of {operator_id: operator_row} and syntax/operator-id lookups.
+    """Cache of {operator_id: operator_row} and symbol/operator-id lookups.
 
     `fetch_all_operators` returns tuples unless the connection has a dict
     row_factory installed, so this helper is agnostic and rebuilds dicts
-    from the known column order.
+    from the known column order. The parser matches user-typed text
+    against the LaTeX `symbol` column: e.g. typing `+` matches `add`
+    (whose symbol is `+`), typing `=` matches `eq`. Prefix operators
+    like `\\sin` aren't matched by a multi-char string (the parser tries
+    4/3/2/1 chars) but fall through to identifier matching on the next
+    scan, which checks `op_by_id` directly.
     """
     if "operators" in _PARSER_CACHE:
         return _PARSER_CACHE["operators"]
     rows = fetch_all_operators(conn)
-    keys = ("id", "symbol", "syntax", "math", "arity", "precedence",
+    keys = ("id", "symbol", "math", "arity", "precedence",
             "associativity", "operator_type")
     by_id = {}
-    syntax_to_id = {}
+    symbol_to_id = {}
     for r in rows:
         d = dict(zip(keys, r)) if isinstance(r, tuple) else dict(r)
         by_id[d["id"]] = d
-        if d["syntax"]:
-            syntax_to_id[d["syntax"]] = d["id"]
-    _PARSER_CACHE["operators"] = (by_id, syntax_to_id)
-    return by_id, syntax_to_id
+        key = d.get("symbol")
+        if key:
+            symbol_to_id[key] = d["id"]
+    _PARSER_CACHE["operators"] = (by_id, symbol_to_id)
+    return by_id, symbol_to_id
 
 
 def _quantity_id_set(conn):
@@ -548,21 +555,16 @@ def parse_equation(conn, equation):
     `operator` table: an identifier like 'sin' is treated as the operator
     'sin' if one exists in the table, otherwise as a quantity/constant id.
     """
-    op_by_id, syntax_to_id = _operator_lookup(conn)
+    op_by_id, symbol_to_id = _operator_lookup(conn)
     qty_ids = _quantity_id_set(conn)
     const_ids = _constant_id_set(conn)
 
-    # Try matching a multi-char operator first, then a single-char one.
-    # Doing this before identifier-scanning means `oo` and `~=` are
-    # treated as operator syntax even though they look like identifiers,
-    # and `sin(`, `sqrt(`, `cos(` are matched by syntax rather than by
-    # operator id.
     def match_operator():
         for length in (4, 3, 2, 1):
             if i + length > n:
                 continue
             piece = s[i:i + length]
-            op_id = syntax_to_id.get(piece)
+            op_id = symbol_to_id.get(piece)
             if op_id is None:
                 continue
             return op_id, length
@@ -672,6 +674,11 @@ def _shunting_yard_to_rpn(tokens, op_by_id):
         kind = tok["token_kind"]
         if kind in ("number", "quantity", "constant"):
             output.append(tok)
+            while stack and stack[-1]["operator_id"] in op_by_id:
+                top = op_by_id[stack[-1]["operator_id"]]
+                if top["operator_type"] not in ("prefix", "postfix"):
+                    break
+                output.append(stack.pop())
             continue
         op_id = tok["operator_id"]
         if op_id == "paren_open":
@@ -683,6 +690,18 @@ def _shunting_yard_to_rpn(tokens, op_by_id):
             if not stack:
                 raise ValueError("unmatched ')'")
             stack.pop()
+            # A prefix (function) operator pushed just before the '(' has
+            # now consumed its parenthesized argument and must be applied
+            # before any following infix/relational operator. Without this
+            # step, "sqrt(2) + 1" would parse as "sqrt(2 + 1)".
+            while stack:
+                top_id = stack[-1]["operator_id"]
+                if top_id == "paren_open":
+                    break
+                top_op = op_by_id.get(top_id)
+                if top_op is None or top_op["operator_type"] != "prefix":
+                    break
+                output.append(stack.pop())
             continue
         op = op_by_id.get(op_id)
         if op is None:
@@ -697,7 +716,7 @@ def _shunting_yard_to_rpn(tokens, op_by_id):
             while stack and stack[-1]["operator_id"] != "paren_open":
                 top_id = stack[-1]["operator_id"]
                 top = op_by_id.get(top_id)
-                if top and top["operator_type"] not in ("prefix", "postfix"):
+                if top and top["operator_type"] == "relational":
                     break
                 output.append(stack.pop())
             stack.append(tok)
@@ -726,7 +745,7 @@ def _shunting_yard_to_rpn(tokens, op_by_id):
     return output
 
 
-def preview_equation(conn, equation, locale="en-us", dim_caches=None, overrides=None):
+def preview_equation(conn, equation, locale="en-us", dim_caches=None, overrides=None, dim_mode="dim"):
     """Parse an equation and return a preview dict (no DB writes).
 
     `overrides` is an optional mapping keyed by "quantity_id|alias" with
@@ -749,11 +768,12 @@ def preview_equation(conn, equation, locale="en-us", dim_caches=None, overrides=
         return {"tokens": [], "latex": "", "dim_latex": "",
                 "variables": [], "error": ""}
 
-    if overrides:
-        for tok in tokens:
-            if tok["token_kind"] != "quantity":
-                continue
-            key = tok["quantity_id"] + "|" + (tok.get("label") or "")
+    for pos, tok in enumerate(tokens, start=1):
+        if tok["token_kind"] != "quantity":
+            continue
+        tok["pos"] = pos
+        key = tok["quantity_id"] + "|" + (tok.get("label") or "") + "|" + str(pos)
+        if overrides:
             ov = overrides.get(key) or {}
             if ov.get("symbol"):
                 tok["symbol_overwrite"] = ov["symbol"]
@@ -780,24 +800,23 @@ def preview_equation(conn, equation, locale="en-us", dim_caches=None, overrides=
         variable_symbols=var_map,
         unit_symbols=unit_map,
         dimension_symbols=dim_map,
-        mode="var",
+        mode=dim_mode,
     )
 
     seen = []
-    seen_set = set()
     for tok in tokens:
         if tok["token_kind"] != "quantity":
             continue
-        key = tok["quantity_id"] + "|" + (tok.get("label") or "")
-        if key in seen_set:
-            continue
-        seen_set.add(key)
+        pos = tok["pos"]
         qid = tok["quantity_id"]
         qrow = _load_quantity(conn, qid)
+        key = qid + "|" + (tok.get("label") or "") + "|" + str(pos)
         ov = (overrides or {}).get(key) or {}
         seen.append({
             "id": qid,
             "alias": tok.get("label") or "",
+            "pos": pos,
+            "key": key,
             "symbol": qrow["symbol"],
             "name": qrow["name"],
             "symbol_overwrite": ov.get("symbol", ""),
@@ -890,6 +909,7 @@ def _evaluate_rpn(conn, tokens: list[dict]) -> Optional[_Node]:
                 precedence=op["precedence"],
                 associativity=op["associativity"],
                 operator_type=op["operator_type"],
+                parened_arg=bool(op.get("parened_arg", 1)),
             ))
         elif kind == "quantity":
             stack.append(_Node(
@@ -949,6 +969,16 @@ def _needs_paren(child: _Node, parent: _Node, side: str) -> bool:
         return False
     if child.operator_type == "relational":
         return True
+    # Prefix operators with parened_arg=False (e.g. \sqrt, whose macro is
+    # \sqrt{...}) already scope their argument via the macro's own braces,
+    # so no extra \left(...\right) wrapper is needed. Other prefix operators
+    # (\sin, \cos, \tan, \neg, ...) set parened_arg=True and wrap a
+    # binary-infix child for unambiguous reading: neg(add(a,b)) must be
+    # -(a+b), not -a+b.
+    if parent.operator_type in ("prefix", "postfix"):
+        if not parent.parened_arg:
+            return False
+        return child.operator_type == "infix"
     if child.precedence < parent.precedence:
         return True
     if child.precedence == parent.precedence:
@@ -980,11 +1010,14 @@ def _render_binary(node: _Node, conn, locale: str) -> tuple[str, str]:
 
 def _latex_infix(node: _Node, conn, locale: str) -> str:
     left, right = node.children
+    # frac and pow self-delimit via macro syntax (\frac{a}{b}, a^{b}) —
+    # their child arguments are already scoped by braces/superscript, so
+    # no extra \left(...\right) wrapper is needed around either operand.
     if node.operator_id == "frac":
         return f"\\frac{{{_latex_node(left, conn, locale)}}}{{{_latex_node(right, conn, locale)}}}"
-    l, r = _render_binary(node, conn, locale)
     if node.operator_id == "pow":
-        return f"{l}^{{{r}}}"
+        return f"{_latex_node(left, conn, locale)}^{{{_latex_node(right, conn, locale)}}}"
+    l, r = _render_binary(node, conn, locale)
     if node.symbol:
         return f"{l} {node.symbol} {r}"
     if left.kind == "number" and right.kind == "number":
@@ -1000,7 +1033,14 @@ def _latex_prefix(node: _Node, conn, locale: str) -> str:
     sym = node.symbol or ""
     if sym == "-":
         return f"-{a}"
-    return f"{sym} {a}"
+    # All non-`neg` prefix operators in the seed (\sqrt, \sin, \cos, \Delta,
+    # \mathrm{d}, \overline, \ln, ...) are LaTeX macros whose argument is the
+    # next token (single char or `{...}`). Without braces, `\sqrt \left(a+b\right)`
+    # would greedily grab `\left` and leave the real argument dangling outside
+    # the sqrt's scope. Wrap the argument in `{...}` so the macro always sees
+    # the correct scope. Redundant braces (when the argument is already a
+    # single token like `\sin a`) are stripped by TeX at render time.
+    return f"{sym} {{{a}}}"
 
 
 def _latex_postfix(node: _Node, conn, locale: str) -> str:
@@ -1400,8 +1440,7 @@ def fetch_all_constants(conn):
     """Return all constants with id, name, and symbol."""
     return conn.execute(
         """
-        SELECT id, name, symbol, value,
-               json_extract(name, '$.en-us') AS name_en
+        SELECT id, name, symbol, value
         FROM constant
         ORDER BY id
         """
@@ -1409,10 +1448,10 @@ def fetch_all_constants(conn):
 
 
 def fetch_all_operators(conn):
-    """Return all operators with id, symbol, syntax, arity, precedence, etc."""
+    """Return all operators with id, symbol, arity, precedence, etc."""
     return conn.execute(
         """
-        SELECT id, symbol, syntax, math, arity, precedence, associativity, operator_type
+        SELECT id, symbol, math, arity, precedence, associativity, operator_type
         FROM operator
         ORDER BY operator_type, precedence DESC, id
         """
@@ -1457,12 +1496,20 @@ def compute_all_formula_dimensions(conn, formula_ids=None):
     return result
 
 
-def build_create_sql(conn, name_en, topic, difficulty, equation, overrides=None):
+def build_create_sql(conn, name_en, topic, difficulty, equation, overrides=None, description=None, links=None, translations=None):
     """Build the two INSERT SQL strings for a brand-new formula.
 
     `overrides` is a mapping keyed by "quantity_id|alias" (matching what the
     /create page uses) and containing {symbol, name, label} strings which
     are stored as JSON i18n blobs.
+
+    `translations` is an optional mapping of locale code → {
+        name, description, links, overrides
+    }. Each entry's non-empty fields are merged into the per-row i18n
+    blobs so the stored JSON looks like {"en-us": ..., "<locale>": ...}.
+    The English (en-us) values are always sourced from the top-level
+    `name_en`/`description`/`links`/`overrides` arguments and are not
+    re-overwritten by a translations["en-us"] entry.
 
     Returns (formula_sql, token_sql) on success. Raises ValueError with a
     user-friendly message if name/topic/equation are missing or the
@@ -1485,28 +1532,123 @@ def build_create_sql(conn, name_en, topic, difficulty, equation, overrides=None)
     tokens = parse_equation(conn, equation)
 
     overrides = overrides or {}
+    translations = translations or {}
 
     def sql_lit(s):
         if s is None:
             return "NULL"
         return "'" + str(s).replace("'", "''") + "'"
 
-    def sql_i18n(val):
+    def sql_i18n(val, locale="en-us"):
         if not val:
             return "NULL"
-        return sql_lit(json.dumps({"en-us": val}, ensure_ascii=False))
+        return sql_lit(json.dumps({locale: val}, ensure_ascii=False))
+
+    def merge_i18n(existing_json, val, locale):
+        """Merge a per-locale value into a JSON i18n blob string.
+
+        `existing_json` may be a JSON string, a dict already, or None.
+        Returns a JSON string with `{locale: val}` added under `locale`.
+        """
+        obj = {}
+        if existing_json:
+            try:
+                parsed = json.loads(existing_json)
+                if isinstance(parsed, dict):
+                    obj = parsed
+            except (ValueError, TypeError):
+                obj = {}
+        obj[locale] = val
+        return json.dumps(obj, ensure_ascii=False)
+
+    def merge_i18n_from_blob(existing_json, extra_obj):
+        """Merge a {locale: value} dict into an i18n blob string."""
+        if not extra_obj:
+            return existing_json
+        obj = {}
+        if existing_json:
+            try:
+                parsed = json.loads(existing_json)
+                if isinstance(parsed, dict):
+                    obj = parsed
+            except (ValueError, TypeError):
+                obj = {}
+        for k, v in extra_obj.items():
+            obj[k] = v
+        return json.dumps(obj, ensure_ascii=False) if obj else existing_json
+
+    def per_lang(per_locale_value, en_value, locale):
+        """Pick the per-language value if non-empty, else the en-us value."""
+        if per_locale_value is not None and per_locale_value != "":
+            return per_locale_value
+        return en_value
+
+    # Build the en-us JSON blobs from the top-level args, then merge any
+    # translations in for the other locales.
+    name_json = json.dumps({"en-us": name_en.strip()}, ensure_ascii=False) if name_en else None
+    desc_json = json.dumps({"en-us": description}, ensure_ascii=False) if description else None
+    # The `links` column is conceptually a per-language i18n blob whose
+    # value is a list of {url, label} entries: {"en-us": [...], "cs-cz": [...], ...}.
+    # The top-level `links` argument holds the en-us list. Translations
+    # extend it for other locales.
+    links_json = json.dumps({"en-us": links}, ensure_ascii=False) if links else None
+    if translations:
+        for loc, tr in translations.items():
+            if not isinstance(tr, dict) or loc == "en-us":
+                continue
+            t_name = tr.get("name")
+            if t_name:
+                name_json = merge_i18n(name_json, t_name.strip(), loc)
+            t_desc = tr.get("description")
+            if t_desc:
+                desc_json = merge_i18n(desc_json, t_desc, loc)
+            t_links = tr.get("links")
+            if t_links:
+                t_links_obj = t_links if isinstance(t_links, (dict, list)) else None
+                if t_links_obj is not None:
+                    # Initialize the per-locale i18n dict if needed.
+                    if not links_json:
+                        links_json = json.dumps({loc: t_links_obj}, ensure_ascii=False)
+                    else:
+                        try:
+                            parsed = json.loads(links_json)
+                        except (ValueError, TypeError):
+                            parsed = {}
+                        if not isinstance(parsed, dict):
+                            # Existing payload is a non-i18n list; promote it
+                            # to an i18n dict under en-us first.
+                            parsed = {"en-us": parsed}
+                        parsed[loc] = t_links_obj
+                        links_json = json.dumps(parsed, ensure_ascii=False)
+
+    def sql_lit_json(s):
+        if s is None:
+            return "NULL"
+        return sql_lit(s)
 
     formula_sql = (
-        "INSERT OR IGNORE INTO formula (id, name, topic, difficulty) VALUES\n"
-        f"({sql_lit(formula_id)}, {sql_i18n(name_en.strip())}, "
-        f"{sql_lit(topic)}, {difficulty});"
+        "INSERT OR IGNORE INTO formula (id, name, topic, difficulty, description, links) VALUES\n"
+        f"({sql_lit(formula_id)}, {sql_lit_json(name_json)}, "
+        f"{sql_lit(topic)}, {difficulty}, {sql_lit_json(desc_json)}, "
+        f"{sql_lit_json(links_json)});"
     )
+
+    # Translation overrides (per language) extend the en-us overrides
+    # ONLY for fields not already set in the en-us row. The `_i18n_with_...`
+    # function below merges in the per-locale values for the SQL output.
+    tr_overrides_by_loc = {}
+    if translations:
+        for loc, tr in translations.items():
+            if not isinstance(tr, dict) or loc == "en-us":
+                continue
+            t_ov = tr.get("overrides") or {}
+            if t_ov:
+                tr_overrides_by_loc[loc] = t_ov
 
     rows = []
     for pos, tok in enumerate(tokens, start=1):
         if tok["token_kind"] == "number":
             value = tok["value"]
-            ov_key = None
             label = sym_ow = name_ow = "NULL"
             rows.append(
                 f"({sql_lit(formula_id)}, {pos}, 'number', "
@@ -1515,10 +1657,29 @@ def build_create_sql(conn, name_en, topic, difficulty, equation, overrides=None)
         elif tok["token_kind"] == "quantity":
             qid = tok["quantity_id"]
             alias = tok.get("label") or ""
-            ov = overrides.get(qid + "|" + alias, {})
-            label = sql_i18n(ov.get("label"))
-            sym_ow = sql_i18n(ov.get("symbol"))
-            name_ow = sql_i18n(ov.get("name"))
+            key = qid + "|" + alias + "|" + str(pos)
+            ov = overrides.get(key, {})
+
+            def _i18n_with_translations(fld):
+                # Read the en-us value from the un-merged `overrides` (so a
+                # translation field can't clobber the English one).
+                base = ov.get(fld)
+                per_locale = {}
+                for loc, t_ov in tr_overrides_by_loc.items():
+                    v = (t_ov.get(key) or {}).get(fld)
+                    if v:
+                        per_locale[loc] = v
+                if not base and not per_locale:
+                    return "NULL"
+                obj = {}
+                if base:
+                    obj["en-us"] = base
+                obj.update(per_locale)
+                return sql_lit(json.dumps(obj, ensure_ascii=False))
+
+            label = _i18n_with_translations("label")
+            sym_ow = _i18n_with_translations("symbol")
+            name_ow = _i18n_with_translations("name")
             rows.append(
                 f"({sql_lit(formula_id)}, {pos}, 'quantity', "
                 f"{sql_lit(qid)}, NULL, NULL, NULL, {label}, {sym_ow}, {name_ow})"

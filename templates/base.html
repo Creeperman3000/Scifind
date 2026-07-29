@@ -49,7 +49,8 @@
       --shadow-xl: 0 4px 12px rgba(0,0,0,0.2);
     }
     @media (prefers-color-scheme: dark) {
-      :root:not([data-theme="light"]) {
+      :root:not([data-theme="light"]),
+      :root[data-theme="dark"] {
         --bg: #1a1a1a;
         --bg-secondary: #2a2a2a;
         --bg-tertiary: #333;
@@ -60,26 +61,30 @@
         --accent-hover: #2563eb;
       }
     }
-    :root[data-theme="dark"] {
-      --bg: #1a1a1a;
-      --bg-secondary: #2a2a2a;
-      --bg-tertiary: #333;
-      --text: #e0e0e0;
-      --text-secondary: #999;
-      --border: #444;
-      --accent: #3b82f6;
-      --accent-hover: #2563eb;
-    }
 
     body { font-family: var(--font); background: var(--bg); color: var(--text); height: 100vh; overflow: hidden; }
     a { color: var(--accent); text-decoration: none; }
     a:hover { text-decoration: underline; }
     .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+    .hidden { display: none !important; }
 
-    :root {
-      --bp-tablet: {{ bp_tablet }}px;
-      --bp-desktop: {{ bp_desktop }}px;
-    }
+    /* Form fields — neutral name for inputs/textarea/text-like elements.
+       Used by the quantity filter input, the per-language form fields,
+       and the formula/token override tables on /create. */
+    .text-field { width: 100%; font-size: 0.82rem; padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); font-family: inherit; }
+    .text-field:focus { outline: none; border-color: var(--accent); }
+    /* Textareas that auto-grow with content. JS keeps scrollHeight == height. */
+    .text-field.auto-grow { resize: none; overflow: hidden; }
+    /* Borderless input that styles itself like a heading. Used by the name
+       + formula-id inputs on /create, which the user types into directly
+       in place of an <h2>. */
+    .borderless-input { border: none; background: transparent; padding: 0; width: 100%; font-family: inherit; display: block; font-size: 1.3rem; font-weight: 700; line-height: 1.2; color: var(--text); margin-bottom: 16px; }
+    .borderless-input.detail-desc { font-style: italic; color: var(--text-secondary); font-size: 0.9rem; font-weight: normal; }
+    /* Inline flex row for grouped controls (e.g. export format selector). */
+    .form-row { display: flex; gap: 8px; align-items: center; }
+    /* Settings-menu styled link, mirrors .settings-item button. */
+    .settings-link { display: inline-block; padding: 4px 12px; font-size: 0.85rem; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); cursor: pointer; text-decoration: none; }
+    .settings-link:hover { background: var(--bg-secondary); text-decoration: none; }
 
     /* Top bar */
     .topbar { display: flex; align-items: center; padding: 0 12px; border-bottom: 1px solid var(--border); background: var(--bg); height: var(--topbar-height); z-index: 100; flex-shrink: 0; gap: 8px; }
@@ -133,7 +138,7 @@
 
     /* Main content */
     .main { flex: 1; overflow-y: auto; padding: 20px 24px; min-width: 0; display: flex; flex-direction: column; align-items: center; }
-    .main h2 { font-size: 1.3rem; margin-bottom: 16px; }
+    .main h2 { font-size: 1.3rem; margin-bottom: 16px; line-height: 1.2; }
     .main-inner { max-width: 800px; width: 100%; }
     .main table { border-collapse: collapse; font-size: 0.9rem; width: 100%; }
     .main table th, .main table td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
@@ -180,8 +185,6 @@
     .filter-dim-row input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
 
     .filter-qty-search-wrap { margin-bottom: 8px; position: relative; }
-    .qty-search { width: 100%; font-size: 0.82rem; padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); }
-    .qty-search:focus { outline: none; border-color: var(--accent); }
     .qty-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
     .qty-chips:empty { display: none; }
     .qty-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px 2px 8px; background: var(--accent); color: #fff; border-radius: 12px; font-size: 0.75rem; cursor: default; }
@@ -273,6 +276,26 @@
     @keyframes toast-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
     /* ============================================================
+       Modal (overlay + content)
+       ============================================================ */
+    .modal-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+      display: none; align-items: center; justify-content: center;
+      z-index: 300; padding: 20px;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal-content {
+      position: relative; background: var(--bg); border: 1px solid var(--border);
+      border-radius: 12px; max-width: 900px; width: 100%;
+      max-height: 85vh; overflow-y: auto; padding: 28px;
+      box-shadow: var(--shadow-xl);
+    }
+    .modal-close {
+      position: absolute; top: 12px; right: 12px; width: 32px; height: 32px;
+      border-radius: 6px; color: var(--text);
+    }
+
+    /* ============================================================
        Content (formula grid, detail page, etc.)
        ============================================================ */
     .formula-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
@@ -284,20 +307,15 @@
     .formula-card .formula-name { font-size: 0.85rem; color: var(--accent); text-align: center; margin-top: auto; }
     .formula-card .formula-relation-label { font-size: 0.75rem; color: var(--text-secondary); text-align: center; margin-top: 4px; }
 
-    .detail-heading { font-size: 1.3rem; font-weight: 700; line-height: 1.2; color: var(--text); margin-bottom: 16px; }
-    .detail-breadcrumbs, .breadcrumb-bar { font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 12px; padding: 6px 0; }
-    .detail-breadcrumbs a, .breadcrumb-bar a { color: var(--text-secondary); }
-    .detail-breadcrumbs a:hover, .breadcrumb-bar a:hover { color: var(--accent); }
+    .breadcrumb-bar { font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 12px; padding: 6px 0; }
+    .breadcrumb-bar a { color: var(--text-secondary); }
+    .breadcrumb-bar a:hover { color: var(--accent); }
     .detail-meta { font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 16px; }
     .detail-meta input[type="range"] { accent-color: var(--accent); }
     .detail-meta > span { display: block; margin-bottom: 2px; }
-    /* Inline variant — children sit on a single row with gap (used by /create meta) */
-    .detail-meta.inline { display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
-    .detail-meta.inline > span,
-    .detail-meta.inline > div { display: inline-flex; }
     .detail-section { margin-bottom: 20px; }
     .detail-section h3 { font-size: 1rem; margin-bottom: 8px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; }
-    .detail-desc { font-style: italic; color: var(--text-secondary); margin-bottom: 16px; font-size: 0.9rem; }
+    .detail-desc { font-style: italic; color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 16px; }
 
     .formula-box { display: block; position: relative; margin: 12px 0; padding: 20px 40px; background: var(--bg-secondary); border-radius: 8px; font-size: 1.4em; text-align: center; }
     .formula-copy-wrap { position: absolute; top: 8px; right: 8px; z-index: 2; }
@@ -310,29 +328,34 @@
     .formula-copy-menu button:hover { background: var(--bg-secondary); }
 
     .var-table, .units-table { max-width: 700px; }
-    .var-table td:first-child { white-space: nowrap; }
+    .var-table td:first-child, .units-table td:first-child { white-space: nowrap; }
 
     /* ============================================================
        Scrollbar (webkit)
        ============================================================ */
     .sidebar-scroll::-webkit-scrollbar,
     .main::-webkit-scrollbar,
-    .qty-results::-webkit-scrollbar { width: 6px; }
+    .qty-results::-webkit-scrollbar,
+    #modal-step::-webkit-scrollbar { width: 6px; }
     .sidebar-scroll::-webkit-scrollbar-thumb,
     .main::-webkit-scrollbar-thumb,
-    .qty-results::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    .qty-results::-webkit-scrollbar-thumb,
+    #modal-step::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
     /* ============================================================
        TABLET (768..1023) — left inline, right overlays
        ============================================================ */
     @media ({{ bp_tablet }}px <= width < {{ bp_desktop }}px) {
+      /* Left stays in-flow (desktop-like). Right overlays from the side
+         at a width that matches the desktop sidebar so the content reflow
+         isn't too jarring. */
       .sidebar.right {
         position: fixed;
         top: var(--topbar-height);
         right: 0;
         bottom: 0;
-        width: 60vw !important;
-        max-width: 420px;
+        width: var(--sidebar-width-right) !important;
+        max-width: none;
         z-index: 50;
         border-left: 1px solid var(--border) !important;
         box-shadow: 0 0 20px rgba(0,0,0,0.15);
@@ -342,6 +365,10 @@
       .sidebar.right.open { transform: translateX(0) !important; }
       .sidebar.right.collapsed { transform: translateX(100%) !important; }
       .sidebar-resize.right-edge { display: none; }
+      /* Left sidebar uses the same .collapsed toggle as PC: width 0 when
+         closed. No width override needed — .sidebar.left already has
+         `width: var(--sidebar-width-left)` from the default PC block. */
+      .sidebar.left.collapsed { width: 0 !important; }
       .sidebar-backdrop {
         position: fixed;
         top: var(--topbar-height);
@@ -364,8 +391,11 @@
       /* The view-tabs duplicate the dock's formulas/quantities toggle on mobile. */
       .sidebar.left .view-tabs { display: none; }
 
-      /* Sidebars become bottom sheets (80vh) with a drag handle */
-      .sidebar {
+      /* Sidebars become bottom sheets (80vh) with a drag handle. The
+     .sidebar.left / .sidebar.right selectors are used (instead of just
+     .sidebar) so they win against the tablet breakpoint's
+     .sidebar.left { width: var(--sidebar-width-left) !important } rule. */
+      .sidebar.left, .sidebar.right {
         position: fixed;
         top: auto;
         bottom: 0;
@@ -613,11 +643,11 @@
           </div>
           <div class="settings-divider"></div>
           <div class="settings-item">
-            <label for="setting-dim">{{ _('settings.dimensions') }}</label>
+            <label for="setting-dim">{{ _('detail.dimensions') }}</label>
             <select id="setting-dim" data-action="switch-dim-mode">
-              <option value="dim" {{ 'selected' if g.dim_mode == 'dim' }}>{{ _('settings.dim_mode_dimensions') }}</option>
-              <option value="var" {{ 'selected' if g.dim_mode == 'var' }}>{{ _('settings.dim_mode_quantities') }}</option>
-              <option value="unit" {{ 'selected' if g.dim_mode == 'unit' }}>{{ _('settings.dim_mode_units') }}</option>
+              <option value="dim" {{ 'selected' if g.dim_mode == 'dim' }}>{{ _('detail.dimensions') }}</option>
+              <option value="var" {{ 'selected' if g.dim_mode == 'var' }}>{{ _('detail.quantities') }}</option>
+              <option value="unit" {{ 'selected' if g.dim_mode == 'unit' }}>{{ _('detail.units') }}</option>
             </select>
           </div>
           <div class="settings-item">
@@ -627,8 +657,7 @@
           <div class="settings-divider"></div>
           <div class="settings-item">
             <span>{{ _('settings.export') }}</span>
-            <form method="get" action="/export" style="display:flex;gap:8px;">
-              <label for="export-format" class="sr-only">{{ _('settings.export_format') }}</label>
+            <form method="get" action="/export" class="form-row">
               <select id="export-format" name="format" data-action="set-export-format">
                 <option value="csv" {{ 'selected' if request.cookies.get('sf_export_format') == 'csv' }}>CSV</option>
                 <option value="xlsx" {{ 'selected' if request.cookies.get('sf_export_format') == 'xlsx' }}>XLSX</option>
@@ -638,12 +667,12 @@
             </form>
           </div>
           <div class="settings-item">
-            <label for="setting-report">{{ _('settings.found_bug') }}</label>
-            <button onclick="window.open('https://github.com/Creeperman3000/Scifind/issues/new','_blank')">{{ _('settings.report_bug') }}</button>
+            <span>{{ _('settings.missing_formula') }}</span>
+            <a href="/create" data-spa-full class="settings-link">{{ _('settings.create') }}</a>
           </div>
           <div class="settings-item">
-            <span>{{ _('settings.missing_formula') }}</span>
-            <a href="/create" data-spa-full style="display:inline-block;padding:4px 12px;font-size:0.85rem;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);cursor:pointer;text-decoration:none;">{{ _('nav.create') }}</a>
+            <label for="setting-report">{{ _('settings.found_bug') }}</label>
+            <button onclick="window.open('https://github.com/Creeperman3000/Scifind/issues/new','_blank')">{{ _('settings.report_bug') }}</button>
           </div>
         </div>
       </div>
@@ -679,8 +708,8 @@
       <div class="sheet-handle" data-sheet-target="left" role="button" tabindex="0" aria-label="Drag to dismiss"></div>
       <div class="sidebar-inner" id="sidebar-left-inner">
         <div class="view-tabs">
-          <a class="view-tab {{ 'active' if current_view == 'formulas' }}" href="/formulas{{ '?' + request.query_string.decode() if request.query_string.decode() else '' }}"><i data-lucide="sigma" width="14" height="14"></i> {{ _('nav.formulas') }}</a>
-          <a class="view-tab {{ 'active' if current_view == 'quantities' }}" href="/quantities{{ '?' + request.query_string.decode() if request.query_string.decode() else '' }}"><i data-lucide="weight" width="14" height="14"></i> {{ _('nav.quantities') }}</a>
+           <a class="view-tab {{ 'active' if current_view == 'formulas' and request.path != '/create' else '' }}" href="/formulas{{ '?' + request.query_string.decode() if request.query_string.decode() else '' }}"><i data-lucide="sigma" width="14" height="14"></i> {{ _('nav.formulas') }}</a>
+           <a class="view-tab {{ 'active' if current_view == 'quantities' and request.path != '/create' else '' }}" href="/quantities{{ '?' + request.query_string.decode() if request.query_string.decode() else '' }}"><i data-lucide="weight" width="14" height="14"></i> {{ _('detail.quantities') }}</a>
         </div>
 
         <div id="dim-filter-area">
@@ -688,7 +717,7 @@
           <div class="section-label">{{ _('filter.dimension') }}</div>
           <div class="filter-buttons">
             <button class="filter-btn{{ ' active' if dim_mode == 'or' }}" id="dim-mode-toggle" type="button" title="{{ _('filter.dim_mode_or') if dim_mode == 'or' else _('filter.dim_mode_and') }}" style="display:none"><i data-lucide="{{ 'squares-unite' if dim_mode == 'or' else 'squares-intersect' }}" width="16" height="16"></i></button>
-            <button class="filter-btn" id="dim-base-qty" type="button" title="{{ _('filter.base_quantities') }}"><i data-lucide="ruler" width="16" height="16"></i></button>
+            <button class="filter-btn" id="dim-base-qty" type="button" title="{{ _('detail.base_quantities') }}"><i data-lucide="ruler" width="16" height="16"></i></button>
             <button class="filter-btn" id="dim-fill-zeros" type="button" title="{{ _('filter.fill_zeros') }}"><i data-lucide="paint-bucket" width="16" height="16"></i></button>
             <button class="filter-btn" id="dim-reset" type="button" title="{{ _('filter.clear_dims') }}"><i data-lucide="rotate-ccw" width="16" height="16"></i></button>
           </div>
@@ -710,16 +739,16 @@
 
         <div>
         <div class="section-label-row">
-          <div class="section-label">{{ _('filter.quantity') }}</div>
+          <div class="section-label">{{ _('detail.quantity') }}</div>
           <div class="filter-buttons">
             <button class="filter-btn{{ ' active' if (qty_mode == 'and') != (current_view == 'formulas') }}" id="qty-mode-toggle" type="button" title="{{ _('filter.qty_mode_and') if qty_mode == 'and' else _('filter.qty_mode_or') }}" style="display:none"><i data-lucide="{{ 'squares-intersect' if qty_mode == 'and' else 'squares-unite' }}" width="16" height="16"></i></button>
             <button class="filter-btn" id="qty-reset" type="button" title="{{ _('filter.clear_qty') }}"><i data-lucide="rotate-ccw" width="16" height="16"></i></button>
           </div>
         </div>
         <div class="filter-qty-search-wrap">
+          <label for="qty-search" class="sr-only">{{ _('filter.search_quantity') }}</label>
           <div class="qty-search-wrap">
-            <label for="qty-search" class="sr-only">{{ _('filter.search_quantity') }}</label>
-            <input type="text" class="qty-search" id="qty-search" placeholder="{{ _('filter.search_quantity') }}" autocomplete="off">
+            <input type="text" class="text-field" id="qty-search" placeholder="{{ _('filter.search_quantity') }}" autocomplete="off">
             <div class="qty-results" id="qty-results"></div>
           </div>
           <div class="qty-chips" id="qty-chips"></div>
@@ -727,7 +756,7 @@
 
         <div class="diff-wrap">
           <div class="section-label-row">
-            <div class="diff-label">{{ _('filter.difficulty') }}</div>
+            <div class="diff-label">{{ _('detail.difficulty') }}</div>
             <div class="filter-buttons">
               <button class="filter-btn" id="diff-reset" type="button" title="{{ _('filter.reset_diff') }}"><i data-lucide="rotate-ccw" width="16" height="16"></i></button>
             </div>
@@ -735,9 +764,7 @@
           <div class="diff-sliders">
             <div class="diff-track"></div>
             <div class="diff-fill" id="diff-fill"></div>
-            <label for="diff-min" class="sr-only">{{ _('filter.min_difficulty') }}</label>
             <input type="range" id="diff-min" min="1" max="10" value="{{ diff_min }}" step="1" data-action="sync-diff">
-            <label for="diff-max" class="sr-only">{{ _('filter.max_difficulty') }}</label>
             <input type="range" id="diff-max" min="1" max="10" value="{{ diff_max }}" step="1" data-action="sync-diff">
           </div>
           <div class="diff-vals">
@@ -766,7 +793,7 @@
       <div class="sheet-handle" data-sheet-target="right" role="button" tabindex="0" aria-label="Drag to dismiss"></div>
       <div class="sidebar-inner" id="sidebar-right-inner">
         <div class="section-label-row">
-          <div class="section-label">{{ _('filter.topic') }}</div>
+          <div class="section-label">{{ _('nav.filter') }}</div>
           <div class="filter-buttons">
             <button class="filter-btn" id="tree-deselect-all" type="button" title="{{ _('filter.deselect_all') }}"><i data-lucide="eraser" width="16" height="16"></i></button>
             <button class="filter-btn" id="tree-select-all" type="button" title="{{ _('filter.reset_tree') }}"><i data-lucide="rotate-ccw" width="16" height="16"></i></button>
@@ -783,28 +810,28 @@
   <div class="mobile-fade" id="mobile-fade"></div>
   <div class="mobile-dock" id="mobile-dock">
     <div class="dock-pill dock-split">
-      <button class="dock-half {{ 'active' if current_view != 'quantities' }}" data-dock-view="formulas" data-action="dock-set-view" type="button" aria-label="{{ _('dock.formulas') }}">
-        <i data-lucide="sigma" width="20" height="20"></i>
-        <span class="dock-pill-label">{{ _('dock.formulas') }}</span>
+      <button class="dock-half{{ ' active' if current_view == 'formulas' and request.path != '/create' else '' }}" data-dock-view="formulas" data-action="dock-set-view" type="button" aria-label="{{ _('nav.formulas') }}">
+        <i data-lucide="sigma" width="18" height="18"></i>
+        <span class="dock-pill-label">{{ _('nav.formulas') }}</span>
       </button>
-      <button class="dock-half {{ 'active' if current_view == 'quantities' }}" data-dock-view="quantities" data-action="dock-set-view" type="button" aria-label="{{ _('dock.quantities') }}">
-        <i data-lucide="weight" width="20" height="20"></i>
-        <span class="dock-pill-label">{{ _('dock.quantities') }}</span>
+      <button class="dock-half{{ ' active' if current_view == 'quantities' and request.path != '/create' else '' }}" data-dock-view="quantities" data-action="dock-set-view" type="button" aria-label="{{ _('detail.quantities') }}">
+        <i data-lucide="weight" width="18" height="18"></i>
+        <span class="dock-pill-label">{{ _('detail.quantities') }}</span>
       </button>
     </div>
     <div class="dock-pill dock-split">
-      <button class="dock-half" data-action="dock-toggle-panel" data-target="left" data-pill="filter" type="button" aria-label="{{ _('dock.filter') }}">
+      <button class="dock-half" data-action="dock-toggle-panel" data-target="left" data-pill="filter" type="button" aria-label="{{ _('nav.filter') }}">
         <i data-lucide="filter" width="20" height="20"></i>
-        <span class="dock-pill-label">{{ _('dock.filter') }}</span>
+        <span class="dock-pill-label">{{ _('nav.filter') }}</span>
       </button>
-      <button class="dock-half" data-action="dock-toggle-panel" data-target="right" data-pill="tree" type="button" aria-label="{{ _('dock.tree') }}">
+      <button class="dock-half" data-action="dock-toggle-panel" data-target="right" data-pill="tree" type="button" aria-label="{{ _('nav.tree') }}">
         <i data-lucide="git-fork" width="20" height="20"></i>
-        <span class="dock-pill-label">{{ _('dock.tree') }}</span>
+        <span class="dock-pill-label">{{ _('nav.tree') }}</span>
       </button>
     </div>
-    <button class="dock-pill" data-action="dock-toggle-search" data-pill="search" type="button" aria-label="{{ _('dock.search') }}">
-      <i data-lucide="search" width="20" height="20"></i>
-      <span class="dock-pill-label">{{ _('dock.search') }}</span>
+    <button class="dock-pill" data-action="dock-toggle-search" data-pill="search" type="button" aria-label="{{ _('search.title') }}">
+      <i data-lucide="search" width="18" height="18"></i>
+      <span class="dock-pill-label">{{ _('search.title') }}</span>
     </button>
   </div>
 
@@ -990,7 +1017,7 @@
           var switched = getSwitched(url);
           var isOr = switched.indexOf('dim') !== -1;
           modeBtn.classList.toggle('active', isOr);
-          modeBtn.title = isOr ? ((window._localeUI.filter && window._localeUI.filter.dim_mode_or) || 'Dimension filter mode: OR') : ((window._localeUI.filter && window._localeUI.filter.dim_mode_and) || 'Dimension filter mode: AND');
+          modeBtn.title = isOr ? window._localeUI.filter.dim_mode_or : window._localeUI.filter.dim_mode_and;
           modeBtn.innerHTML = '<i data-lucide="' + (isOr ? 'squares-unite' : 'squares-intersect') + '" width="16" height="16"></i>';
           if (typeof lucide !== 'undefined') lucide.createIcons();
         } else {
@@ -1056,7 +1083,7 @@
             var isSwitched = switched.indexOf('fml') !== -1;
             qtyModeBtn.classList.toggle('active', isSwitched);
             qtyModeBtn.classList.remove('inactive');
-            qtyModeBtn.title = isSwitched ? ((window._localeUI.filter && window._localeUI.filter.qty_mode_or) || 'Quantity filter mode: OR') : ((window._localeUI.filter && window._localeUI.filter.qty_mode_and) || 'Quantity filter mode: AND');
+            qtyModeBtn.title = isSwitched ? window._localeUI.filter.qty_mode_or : window._localeUI.filter.qty_mode_and;
             qtyModeBtn.innerHTML = '<i data-lucide="' + (isSwitched ? 'squares-unite' : 'squares-intersect') + '" width="16" height="16"></i>';
             if (typeof lucide !== 'undefined') lucide.createIcons();
           } else {
@@ -1456,7 +1483,13 @@
       var bp = document.getElementById('sidebar-backdrop');
       if (!bp) return;
       var anyOpen = isSidebarOpen('left') || isSidebarOpen('right');
-      bp.classList.toggle('open', anyOpen && currentBreakpoint() !== 'pc');
+      // On tablet the left sidebar is always in-flow, so showing a dim
+      // backdrop over the main content (just because left is open) is
+      // confusing. Only treat the right sidebar as needing a backdrop
+      // in tablet/mobile.
+      var layoutBp = currentBreakpoint();
+      if (layoutBp === 'tablet') anyOpen = isSidebarOpen('right');
+      bp.classList.toggle('open', anyOpen && layoutBp !== 'pc');
     }
 
     function syncSidebarIcon(side) {
@@ -1483,7 +1516,9 @@
       var qtyHasVal = window._qtySelected && window._qtySelected.length > 0;
       var diffMin = parseInt(document.getElementById('diff-min').value);
       var diffMax = parseInt(document.getElementById('diff-max').value);
-      var diffHasVal = diffMin > 0 || diffMax < 10;
+      // Default difficulty range is 1..10. Only treat it as an active
+      // filter when the user has narrowed either end.
+      var diffHasVal = diffMin > 1 || diffMax < 10;
       return dimHasVal || qtyHasVal || diffHasVal;
     }
 
@@ -1498,8 +1533,11 @@
       var dock = document.getElementById('mobile-dock');
       if (!dock) return;
       var view = isFormulasView() ? 'formulas' : 'quantities';
+      var onCreate = window.location.pathname === '/create';
       dock.querySelectorAll('[data-dock-view]').forEach(function(btn) {
-        btn.classList.toggle('active', btn.getAttribute('data-dock-view') === view);
+        // On /create neither formulas nor quantities is "active" because
+        // /create is its own page; clicking these buttons navigates away.
+        btn.classList.toggle('active', !onCreate && btn.getAttribute('data-dock-view') === view);
         btn.classList.remove('open');
       });
       dock.querySelectorAll('[data-pill="filter"]').forEach(function(btn) {
@@ -1865,9 +1903,20 @@
         // sidebar slides between layouts (e.g. width 300px → 60vw) on resize.
         document.documentElement.classList.add('suppress-transitions');
 
-        // Re-apply CSS classes from data-open for the new breakpoint.
-        setSidebarState('left', isSidebarOpen('left'));
-        setSidebarState('right', isSidebarOpen('right'));
+        // Reset the open/closed state per breakpoint so a stale close (or
+        // open) doesn't bleed across layouts. desktop: both, tablet: left
+        // only, mobile: neither.
+        var bp = currentBreakpoint();
+        if (bp === 'pc') {
+          setSidebarState('left', true);
+          setSidebarState('right', true);
+        } else if (bp === 'tablet') {
+          setSidebarState('left', true);
+          setSidebarState('right', false);
+        } else {
+          setSidebarState('left', false);
+          setSidebarState('right', false);
+        }
 
         syncBackdrop();
         syncSidebarIcon('left');
@@ -2041,8 +2090,12 @@
       }
 
       if (doCopy) {
-        doCopy.then(function() { var label = (window._localeUI.copy && window._localeUI.copy['image_' + fmt]) || fmt.toUpperCase(); showToast(((window._localeUI.toast && window._localeUI.toast.copied) || 'Copied') + ' ' + label, 'success'); })
-              .catch(function(e) { showToast(((window._localeUI.toast && window._localeUI.toast.copy_failed) || 'Copy failed') + ': ' + e.message, 'error'); });
+        // Toast label: prefer locale copy[fmt], fall back to a known
+        // hardcoded casing (LaTeX, Unicode, PNG, SVG), then to fmt.
+        var labelMap = { latex: 'LaTeX', unicode: 'Unicode', png: 'PNG', svg: 'SVG' };
+        var label = (window._localeUI.copy && window._localeUI.copy[fmt]) || labelMap[fmt] || fmt;
+        doCopy.then(function() { showToast(window._localeUI.toast.copied + ' ' + label, 'success'); })
+              .catch(function(e) { showToast(window._localeUI.toast.copy_failed + ': ' + e.message, 'error'); });
       }
     }
 

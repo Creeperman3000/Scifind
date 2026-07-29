@@ -3,6 +3,7 @@
 -- ============================================================
 
 INSERT OR IGNORE INTO quantity (id, name, symbol, symbol_overwrite, topic, difficulty, description, links, default_unit, dim_M, dim_L, dim_T, dim_I, dim_Θ, dim_N, dim_J) VALUES
+  ('absorbance', '{"en-us": "Absorbance", "cs-cz": "Absorbance"}', 'A', NULL, 'analytical_chemistry', 3, NULL, NULL, NULL, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
   ('absorbed_dose', '{"en-us": "Absorbed dose", "cs-cz": "Absorbovaná dávka"}', 'D', NULL, 'nuclear_physics', 4, NULL, NULL, '[{"unit": "gray", "exponent": 1}]', 0.0, 2.0, -2.0, 0.0, 0.0, 0.0, 0.0),
   ('absorbed_dose_rate', '{"en-us": "Absorbed dose rate", "cs-cz": "Dávkový příkon"}', '\dot{D}', NULL, 'nuclear_physics', 4, NULL, NULL, '[{"unit":"gray","exponent":1},{"unit":"second","exponent":-1}]', 0.0, 2.0, -3.0, 0.0, 0.0, 0.0, 0.0),
   ('acceleration', '{"en-us": "Acceleration", "cs-cz": "Zrychlení"}', 'a', NULL, 'kinematics', 2, NULL, NULL, '[{"unit":"metre","exponent":1},{"unit":"second","exponent":-2}]', 0.0, 1.0, -2.0, 0.0, 0.0, 0.0, 0.0),
@@ -18,12 +19,15 @@ INSERT OR IGNORE INTO quantity (id, name, symbol, symbol_overwrite, topic, diffi
   ('catalytic_activity_concentration', '{"en-us": "Catalytic activity concentration", "cs-cz": "Koncentrace katalytické aktivity"}', 'k_v', NULL, 'chemical_kinetics', 4, NULL, NULL, '[{"unit":"katal","exponent":1},{"unit":"metre","exponent":-3}]', 0.0, -3.0, -1.0, 0.0, 0.0, 1.0, 0.0),
   ('charge', '{"en-us": "Electric charge", "cs-cz": "Elektrický náboj"}', 'Q', NULL, 'electrostatics', 2, NULL, NULL, '[{"unit": "coulomb", "exponent": 1}]', 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0),
   ('charge_density', '{"en-us": "Electric charge density", "cs-cz": "Hustota elektrického náboje"}', '\rho', NULL, 'electrostatics', 3, NULL, NULL, '[{"unit":"coulomb","exponent":1},{"unit":"metre","exponent":-3}]', 0.0, -3.0, 1.0, 1.0, 0.0, 0.0, 0.0),
+  ('coefficient_of_friction', '{"en-us": "Coefficient of friction", "cs-cz": "Součinitel tření"}', '\mu', NULL, 'friction', 2, NULL, NULL, NULL, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+  ('coefficient_of_linear_expansion', '{"en-us": "Coefficient of linear expansion", "cs-cz": "Součinitel délkové roztažnosti"}', '\alpha', NULL, 'heat_transfer', 3, NULL, NULL, '[{"unit":"kelvin","exponent":-1}]', 0.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0),
   ('concentration', '{"en-us": "Concentration", "cs-cz": "Koncentrace"}', 'c', NULL, 'solutions', 2, NULL, NULL, '[{"unit":"mole","exponent":1},{"unit":"metre","exponent":-3}]', 0.0, -3.0, 0.0, 0.0, 0.0, 1.0, 0.0),
   ('conductance', '{"en-us": "Electrical conductance", "cs-cz": "Elektrická vodivost"}', 'G', NULL, 'circuits', 3, NULL, NULL, '[{"unit": "siemens", "exponent": 1}]', -1.0, -2.0, 3.0, 2.0, 0.0, 0.0, 0.0),
   ('current', '{"en-us": "Electric current", "cs-cz": "Elektrický proud"}', 'I', NULL, 'current_electricity', 2, NULL, NULL, '[{"unit": "ampere", "exponent": 1}]', 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0),
   ('current_density', '{"en-us": "Current density", "cs-cz": "Hustota proudu"}', 'j', NULL, 'circuits', 3, NULL, NULL, '[{"unit":"ampere","exponent":1},{"unit":"metre","exponent":-2}]', 0.0, -2.0, 0.0, 1.0, 0.0, 0.0, 0.0),
   ('degree_of_polarization', '{"en-us": "Degree of polarization", "cs-cz": "Stupeň polarizace"}', 'P', NULL, 'polarization', 4, NULL, NULL, NULL, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
   ('density', '{"en-us": "Density", "cs-cz": "Hustota"}', '\rho', NULL, 'fluid_mechanics', 2, NULL, NULL, '[{"unit":"kilogram","exponent":1},{"unit":"metre","exponent":-3}]', 1.0, -3.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+  ('dimensionless', '{"en-us": "Dimensionless", "cs-cz": "Bezrozměrné"}', '', NULL, NULL, NULL, NULL, NULL, NULL, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
   ('dose_equivalent', '{"en-us": "Dose equivalent", "cs-cz": "Dávkový ekvivalent"}', 'H', NULL, 'nuclear_physics', 4, NULL, NULL, '[{"unit": "sievert", "exponent": 1}]', 0.0, 2.0, -2.0, 0.0, 0.0, 0.0, 0.0),
   ('dynamic_viscosity', '{"en-us": "Dynamic viscosity", "cs-cz": "Dynamická viskozita"}', '\eta', NULL, 'fluid_dynamics', 3, NULL, NULL, '[{"unit":"pascal","exponent":1},{"unit":"second","exponent":1}]', 1.0, -1.0, -1.0, 0.0, 0.0, 0.0, 0.0),
   ('electric_field_strength', '{"en-us": "Electric field strength", "cs-cz": "Intenzita elektrického pole"}', 'E', NULL, 'electrostatics', 3, NULL, NULL, '[{"unit":"volt","exponent":1},{"unit":"metre","exponent":-1}]', 1.0, 1.0, -3.0, -1.0, 0.0, 0.0, 0.0),
@@ -43,10 +47,11 @@ INSERT OR IGNORE INTO quantity (id, name, symbol, symbol_overwrite, topic, diffi
   ('inductance', '{"en-us": "Inductance", "cs-cz": "Indukčnost"}', 'L', NULL, 'circuits', 3, NULL, NULL, '[{"unit": "henry", "exponent": 1}]', 1.0, 2.0, -2.0, -2.0, 0.0, 0.0, 0.0),
   ('irradiance', '{"en-us": "Irradiance", "cs-cz": "Intenzita záření"}', 'E', NULL, 'electromagnetic_waves', 3, NULL, NULL, '[{"unit":"watt","exponent":1},{"unit":"metre","exponent":-2}]', 1.0, 0.0, -3.0, 0.0, 0.0, 0.0, 0.0),
   ('length', '{"en-us": "Length", "cs-cz": "Délka"}', 'l', NULL, 'kinematics', 1, NULL, NULL, '[{"unit": "metre", "exponent": 1}]', 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+   ('logarithmic_ratio', '{"en-us": "Logarithmic ratio", "cs-cz": "Logaritmický podíl"}', '', NULL, NULL, NULL, NULL, NULL, NULL, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+  ('lorentz_factor', '{"en-us": "Lorentz factor", "cs-cz": "Lorentzův faktor"}', '\gamma', NULL, 'relativity', 3, NULL, NULL, NULL, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
   ('luminance', '{"en-us": "Luminance", "cs-cz": "Svítivost"}', 'L_v', NULL, 'electromagnetic_waves', 3, NULL, NULL, '[{"unit":"candela","exponent":1},{"unit":"metre","exponent":-2}]', 0.0, -2.0, 0.0, 0.0, 0.0, 0.0, 1.0),
   ('luminous_flux', '{"en-us": "Luminous flux", "cs-cz": "Světelný tok"}', '\Phi_v', NULL, 'electromagnetic_waves', 3, NULL, NULL, '[{"unit": "lumen", "exponent": 1}]', 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0),
   ('luminous_intensity', '{"en-us": "Luminous intensity", "cs-cz": "Svítivost"}', 'I_v', NULL, 'electromagnetic_waves', 3, NULL, NULL, '[{"unit": "candela", "exponent": 1}]', 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0),
-  ('logarithmic_ratio', '{"en-us": "Logarithmic ratio", "cs-cz": "Logaritmický podíl"}', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
   ('magnetic_field_strength', '{"en-us": "Magnetic field strength", "cs-cz": "Intenzita magnetického pole"}', 'H', NULL, 'magnetism', 3, NULL, NULL, '[{"unit":"ampere","exponent":1},{"unit":"metre","exponent":-1}]', 0.0, -1.0, 0.0, 1.0, 0.0, 0.0, 0.0),
   ('magnetic_flux', '{"en-us": "Magnetic flux", "cs-cz": "Magnetický tok"}', '\Phi', NULL, 'magnetism', 3, NULL, NULL, '[{"unit": "weber", "exponent": 1}]', 1.0, 2.0, -2.0, -1.0, 0.0, 0.0, 0.0),
   ('magnetic_flux_density', '{"en-us": "Magnetic flux density", "cs-cz": "Magnetická indukce"}', 'B', NULL, 'magnetism', 3, NULL, NULL, '[{"unit": "tesla", "exponent": 1}]', 1.0, 0.0, -2.0, -1.0, 0.0, 0.0, 0.0),
@@ -59,6 +64,7 @@ INSERT OR IGNORE INTO quantity (id, name, symbol, symbol_overwrite, topic, diffi
   ('momentum', '{"en-us": "Momentum", "cs-cz": "Hybnost"}', 'p', NULL, 'dynamics', 2, NULL, NULL, '[{"unit":"kilogram","exponent":1},{"unit":"metre","exponent":1},{"unit":"second","exponent":-1}]', 1.0, 1.0, -1.0, 0.0, 0.0, 0.0, 0.0),
   ('permeability', '{"en-us": "Permeability", "cs-cz": "Permeabilita"}', '\mu', NULL, 'magnetism', 4, NULL, NULL, '[{"unit":"henry","exponent":1},{"unit":"metre","exponent":-1}]', 1.0, 1.0, -2.0, -2.0, 0.0, 0.0, 0.0),
   ('permittivity', '{"en-us": "Permittivity", "cs-cz": "Permitivita"}', '\varepsilon', NULL, 'electrostatics', 4, NULL, NULL, '[{"unit":"farad","exponent":1},{"unit":"metre","exponent":-1}]', -1.0, -3.0, 4.0, 2.0, 0.0, 0.0, 0.0),
+  ('ph', '{"en-us": "pH", "cs-cz": "pH"}', '\mathrm{pH}', NULL, 'acids_and_bases', 2, NULL, NULL, NULL, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
   ('power', '{"en-us": "Power", "cs-cz": "Výkon"}', 'P', NULL, 'work_and_energy', 2, NULL, NULL, '[{"unit": "watt", "exponent": 1}]', 1.0, 2.0, -3.0, 0.0, 0.0, 0.0, 0.0),
   ('pressure', '{"en-us": "Pressure", "cs-cz": "Tlak"}', 'P', NULL, 'ideal_gases', 3, NULL, NULL, '[{"unit": "pascal", "exponent": 1}]', 1.0, -1.0, -2.0, 0.0, 0.0, 0.0, 0.0),
   ('radiance', '{"en-us": "Radiance", "cs-cz": "Záře"}', 'L_e', NULL, 'electromagnetic_waves', 4, NULL, NULL, '[{"unit":"watt","exponent":1},{"unit":"metre","exponent":-2},{"unit":"steradian","exponent":-1}]', 1.0, 0.0, -3.0, 0.0, 0.0, 0.0, 0.0),
@@ -68,6 +74,7 @@ INSERT OR IGNORE INTO quantity (id, name, symbol, symbol_overwrite, topic, diffi
   ('resistance', '{"en-us": "Resistance", "cs-cz": "Elektrický odpor"}', 'R', NULL, 'circuits', 3, NULL, NULL, '[{"unit": "ohm", "exponent": 1}]', 1.0, 2.0, -3.0, -2.0, 0.0, 0.0, 0.0),
   ('reynolds_number', '{"en-us": "Reynolds number", "cs-cz": "Reynoldsovo číslo"}', '\mathit{Re}', NULL, 'reynolds_number', 3, NULL, NULL, NULL, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
   ('solid_angle', '{"en-us": "Solid angle", "cs-cz": "Prostorový úhel"}', '\Omega', NULL, 'trigonometric_identities', 2, NULL, NULL, '[{"unit": "steradian", "exponent": 1}]', 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+  ('specific_charge', '{"en-us": "Specific charge", "cs-cz": "Měrný náboj"}', 'q_m', NULL, 'electrostatics', 3, NULL, NULL, '[{"unit":"coulomb","exponent":1},{"unit":"kilogram","exponent":-1}]', -1.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0),
   ('specific_energy', '{"en-us": "Specific energy", "cs-cz": "Měrná energie"}', 'e', NULL, 'work_and_energy', 3, NULL, NULL, '[{"unit":"joule","exponent":1},{"unit":"kilogram","exponent":-1}]', 0.0, 2.0, -2.0, 0.0, 0.0, 0.0, 0.0),
   ('specific_heat_capacity', '{"en-us": "Specific heat capacity", "cs-cz": "Měrná tepelná kapacita"}', 'c', NULL, 'heat_transfer', 3, NULL, NULL, '[{"unit":"joule","exponent":1},{"unit":"kilogram","exponent":-1},{"unit":"kelvin","exponent":-1}]', 0.0, 2.0, -2.0, 0.0, -1.0, 0.0, 0.0),
   ('specific_volume', '{"en-us": "Specific volume", "cs-cz": "Měrný objem"}', 'v', NULL, 'fluid_mechanics', 3, NULL, NULL, '[{"unit":"metre","exponent":3},{"unit":"kilogram","exponent":-1}]', -1.0, 3.0, 0.0, 0.0, 0.0, 0.0, 0.0),
@@ -79,10 +86,13 @@ INSERT OR IGNORE INTO quantity (id, name, symbol, symbol_overwrite, topic, diffi
   ('thermal_conductivity', '{"en-us": "Thermal conductivity", "cs-cz": "Tepelná vodivost"}', 'k', NULL, 'heat_transfer', 3, NULL, NULL, '[{"unit":"watt","exponent":1},{"unit":"metre","exponent":-1},{"unit":"kelvin","exponent":-1}]', 1.0, 1.0, -3.0, 0.0, -1.0, 0.0, 0.0),
   ('time', '{"en-us": "Time", "cs-cz": "Čas"}', 't', NULL, 'kinematics', 1, NULL, NULL, '[{"unit": "second", "exponent": 1}]', 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0),
   ('torque', '{"en-us": "Torque", "cs-cz": "Moment síly"}', '\tau', NULL, 'rotational_mechanics', 3, NULL, NULL, '[{"unit":"newton","exponent":1},{"unit":"metre","exponent":1}]', 1.0, 2.0, -2.0, 0.0, 0.0, 0.0, 0.0),
+  ('van_der_waals_attraction', '{"en-us": "Van der Waals attraction parameter", "cs-cz": "Van der Waalsova přitažlivost"}', 'a', NULL, 'ideal_gases', 4, NULL, NULL, '[{"unit":"pascal","exponent":1},{"unit":"metre","exponent":6},{"unit":"mole","exponent":-2}]', 1.0, 5.0, -2.0, 0.0, 0.0, -2.0, 0.0),
+  ('van_der_waals_volume', '{"en-us": "Van der Waals volume parameter", "cs-cz": "Van der Waalsův objem"}', 'b', NULL, 'ideal_gases', 4, NULL, NULL, '[{"unit":"metre","exponent":3},{"unit":"mole","exponent":-1}]', 0.0, 3.0, 0.0, 0.0, 0.0, -1.0, 0.0),
   ('velocity', '{"en-us": "Velocity", "cs-cz": "Rychlost"}', 'v', NULL, 'kinematics', 2, NULL, NULL, '[{"unit":"metre","exponent":1},{"unit":"second","exponent":-1}]', 0.0, 1.0, -1.0, 0.0, 0.0, 0.0, 0.0),
   ('volume', '{"en-us": "Volume", "cs-cz": "Objem"}', 'V', NULL, 'ideal_gases', 2, NULL, NULL, '[{"unit":"metre","exponent":3}]', 0.0, 3.0, 0.0, 0.0, 0.0, 0.0, 0.0),
   ('wavenumber', '{"en-us": "Wavenumber", "cs-cz": "Vlnové číslo"}', '\tilde{\nu}', NULL, 'oscillations_and_waves', 3, NULL, NULL, '[{"unit":"metre","exponent":-1}]', 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 ;
+
 
 INSERT OR IGNORE INTO unit VALUES('ampere','{"en-us": "Ampere", "cs-cz": "Ampér"}','A','current',1,'SI',1.0,NULL,0.0);
 INSERT OR IGNORE INTO unit VALUES('arcminute','{"en-us": "Arcminute", "cs-cz": "Úhlová minuta"}','{}^{\prime}','angle',0,NULL,0.00029088820866572158,NULL,0.0);
@@ -131,7 +141,6 @@ INSERT OR IGNORE INTO unit VALUES('tonne','{"en-us": "Tonne", "cs-cz": "Tuna"}',
 INSERT OR IGNORE INTO unit VALUES('volt','{"en-us": "Volt", "cs-cz": "Volt"}','V','electric_potential',1,'SI',1.0,NULL,0.0);
 INSERT OR IGNORE INTO unit VALUES('watt','{"en-us": "Watt", "cs-cz": "Watt"}','W','power',1,'SI',1.0,NULL,0.0);
 INSERT OR IGNORE INTO unit VALUES('weber','{"en-us": "Weber", "cs-cz": "Weber"}','Wb','magnetic_flux',1,'SI',1.0,NULL,0.0);
-
 -- ============================================================
 -- Operator catalogue
 -- ============================================================
@@ -143,33 +152,45 @@ INSERT OR IGNORE INTO unit VALUES('weber','{"en-us": "Weber", "cs-cz": "Weber"}'
 -- Precedence is the binding strength; higher = binds tighter.
 -- Special: relational operators use 5, arithmetic uses 10-30.
 
-INSERT OR IGNORE INTO operator (id, symbol, syntax, math, arity, precedence, associativity, operator_type) VALUES
+INSERT OR IGNORE INTO operator (id, symbol, math, arity, precedence, associativity, operator_type, parened_arg) VALUES
   -- Arithmetic (infix)
-  ('add',    '+',       '+',      'a+b',                 2, 10, 'left',  'infix'),
-  ('sub',    '-',       '-',      'a-b',                 2, 10, 'left',  'infix'),
-  ('mul',    NULL,      '*',      'a*b',                 2, 20, 'left',  'infix'),
-  ('cdot',   '\cdot',   '\cdot', 'a*b',                 2, 20, 'left',  'infix'),
-  ('times',  '\times',  '\times','a*b',                 2, 20, 'left',  'infix'),
-  ('div',    '/',       '/',      'a/b',                 2, 20, 'left',  'infix'),
-  ('frac',   '\frac',   '/',      'a/b',                 2, 25, 'left',  'infix'),
-  ('pow',    '^',       '^',      'a**b',                2, 30, 'right', 'infix'),
+  ('add',    '+',      'a+b',                 2, 10, 'left',  'infix',       1),
+  ('sub',    '-',      'a-b',                 2, 10, 'left',  'infix',       1),
+  ('mul',    NULL,     'a*b',                 2, 20, 'left',  'infix',       1),
+  ('cdot',   '\cdot',  'a*b',                 2, 20, 'left',  'infix',       1),
+  ('times',  '\times', 'a*b',                 2, 20, 'left',  'infix',       1),
+  ('div',    '/',      'a/b',                 2, 20, 'left',  'infix',       1),
+  -- frac and pow self-delimit via macro syntax (\frac{a}{b}, a^{b}); no extra parens.
+  ('frac',   '\frac',  'a/b',                 2, 20, 'left',  'infix',       0),
+  ('pow',    '^',      'a**b',                2, 30, 'right', 'infix',       0),
   -- Unary (prefix)
-  ('neg',    '-',       '-',      '-a',                  1, 25, 'right', 'prefix'),
+  ('neg',    '-',      '-a',                  1, 25, 'right', 'prefix',      1),
   -- Functions (prefix)
-  ('sin',    '\sin',   'sin(',   'math.sin(a)',         1, 30, 'right', 'prefix'),
-  ('cos',    '\cos',   'cos(',   'math.cos(a)',         1, 30, 'right', 'prefix'),
-  ('tan',    '\tan',   'tan(',   'math.tan(a)',         1, 30, 'right', 'prefix'),
-  ('sqrt',   '\sqrt',  'sqrt(',  'math.sqrt(a)',        1, 30, 'right', 'prefix'),
+  ('sin',    '\sin',   'math.sin(a)',         1, 30, 'right', 'prefix',      1),
+  ('cos',    '\cos',   'math.cos(a)',         1, 30, 'right', 'prefix',      1),
+  ('tan',    '\tan',   'math.tan(a)',         1, 30, 'right', 'prefix',      1),
+  -- sqrt self-delimits via \sqrt{...}; no extra parens.
+  ('sqrt',   '\sqrt',  'math.sqrt(a)',        1, 30, 'right', 'prefix',      0),
   -- Decorators (prefix, no math)
-  ('Delta',  '\Delta', 'Delta(', NULL,                  1, 30, 'right', 'prefix'),
-  ('rmd',    '\mathrm{d}', 'd(', NULL,                  1, 30, 'right', 'prefix'),
-  ('overl',  '\overline', '\overline', NULL,            1, 30, 'right', 'prefix'),
-  -- Relational
-  ('eq',     '=',       '=',      NULL,                  2,  5, 'none',  'relational'),
-  ('approx', '\approx', '~',      NULL,                  2,  5, 'none',  'relational'),
-  ('prop',   '\propto', 'oo',     NULL,                  2,  5, 'none',  'relational'),
-  ('gt',     '>',       '>',      NULL,                  2,  5, 'none',  'relational'),
-  ('lt',     '<',       '<',      NULL,                  2,  5, 'none',  'relational')
+  ('Delta',  '\Delta', NULL,                  1, 30, 'right', 'prefix',      1),
+  ('rmd',    '\mathrm{d}', NULL,              1, 30, 'right', 'prefix',      1),
+  ('overl',  '\overline', NULL,               1, 30, 'right', 'prefix',      1),
+  ('ln',     '\ln',     'math.log(a)',         1, 30, 'right', 'prefix',      1),
+  ('exp',    '\exp',    'math.exp(a)',         1, 30, 'right', 'prefix',      1),
+  ('log',    '\log',    'math.log10(a)',       1, 30, 'right', 'prefix',      1),
+  ('atan',   '\arctan', 'math.atan(a)',        1, 30, 'right', 'prefix',      1),
+  ('asin',   '\arcsin', 'math.asin(a)',        1, 30, 'right', 'prefix',      1),
+  ('acos',   '\arccos', 'math.acos(a)',        1, 30, 'right', 'prefix',      1),
+  ('abs',    NULL,      'abs(a)',              1, 30, 'right', 'prefix',      1),
+  ('factorial', '!',    'math.factorial(a)',   1, 30, 'right', 'prefix',      1),
+  ('root',   '\sqrt[n]','a**(1/b)',            2, 20, 'left',  'infix',       1),
+   ('sum',    '\sum',    NULL,                  1, 30, 'right', 'prefix',      1),
+   -- Relational
+  ('eq',     '=',      NULL,                  2,  5, 'none',  'relational',  1),
+  ('approx', '\approx', NULL,                 2,  5, 'none',  'relational',  1),
+  ('prop',   '\propto', NULL,                 2,  5, 'none',  'relational',  1),
+  ('gt',     '>',      NULL,                  2,  5, 'none',  'relational',  1),
+  ('lt',     '<',      NULL,                  2,  5, 'none',  'relational',  1)
 ;
 
 
@@ -194,9 +215,37 @@ INSERT OR IGNORE INTO constant (id, name, symbol, value, default_unit) VALUES
   -- reference it (the legacy schema encoded it implicitly via a NULL
   -- quantity + coeff_exponent=2.0 row, which we now interpret as `c`).
   ('speed_of_light',         '{"en-us": "Speed of light in vacuum", "cs-cz": "Rychlost světla ve vakuu"}', 'c', 299792458.0,
-    '[{"unit":"metre","exponent":1},{"unit":"second","exponent":-1}]')
+    '[{"unit":"metre","exponent":1},{"unit":"second","exponent":-1}]'),
+  ('avogadro_number',        '{"en-us": "Avogadro number", "cs-cz": "Avogadrova konstanta"}', 'N_\mathrm{A}', 6.02214076e23, NULL),
+  ('planck_constant',        '{"en-us": "Planck constant", "cs-cz": "Planckova konstanta"}', 'h', 6.62607015e-34,
+    '[{"unit":"joule","exponent":1},{"unit":"second","exponent":1}]'),
+  ('vacuum_permittivity',    '{"en-us": "Vacuum permittivity", "cs-cz": "Permitivita vakua"}', '\varepsilon_0', 8.854187817e-12,
+    '[{"unit":"farad","exponent":1},{"unit":"metre","exponent":-1}]'),
+  ('vacuum_permeability',    '{"en-us": "Vacuum permeability", "cs-cz": "Permeabilita vakua"}', '\mu_0', 1.25663706212e-6,
+    '[{"unit":"henry","exponent":1},{"unit":"metre","exponent":-1}]'),
+  ('boltzmann_constant',     '{"en-us": "Boltzmann constant", "cs-cz": "Boltzmannova konstanta"}', 'k_\mathrm{B}', 1.380649e-23,
+    '[{"unit":"joule","exponent":1},{"unit":"kelvin","exponent":-1}]'),
+  ('elementary_charge',      '{"en-us": "Elementary charge", "cs-cz": "Elementární náboj"}', 'e', 1.602176634e-19,
+    '[{"unit":"coulomb","exponent":1}]'),
+  ('standard_gravity',       '{"en-us": "Standard gravity", "cs-cz": "Normální tíhové zrychlení"}', 'g_0', 9.80665,
+    '[{"unit":"metre","exponent":1},{"unit":"second","exponent":-2}]'),
+  ('coulomb_constant',       '{"en-us": "Coulomb constant", "cs-cz": "Coulombova konstanta"}', 'k_\mathrm{e}', 8.9875517923e9,
+    '[{"unit":"newton","exponent":1},{"unit":"metre","exponent":2},{"unit":"coulomb","exponent":-2}]'),
+  ('rydberg_constant',       '{"en-us": "Rydberg constant", "cs-cz": "Rydbergova konstanta"}', 'R_\mathrm{H}', 10973731.568160,
+    '[{"unit":"metre","exponent":-1}]'),
+  ('wiens_constant',         '{"en-us": "Wien''s displacement constant", "cs-cz": "Wienova konstanta"}', 'b', 0.002897771955,
+    '[{"unit":"metre","exponent":1},{"unit":"kelvin","exponent":1}]'),
+  ('celsius_zero',           '{"en-us": "Celsius zero in Kelvin", "cs-cz": "Nula Celsia v Kelvinech"}', '273.15', 273.15,
+    '[{"unit":"kelvin","exponent":1}]'),
+  ('faraday_constant',       '{"en-us": "Faraday constant", "cs-cz": "Faradayova konstanta"}', 'F', 96485.33212,
+    '[{"unit":"coulomb","exponent":1},{"unit":"mole","exponent":-1}]'),
+  ('hubble_constant',        '{"en-us": "Hubble constant", "cs-cz": "Hubbleova konstanta"}', 'H_0', 2.2e-18,
+    '[{"unit":"second","exponent":-1}]'),
+  ('stefan_boltzmann_constant', '{"en-us": "Stefan-Boltzmann constant", "cs-cz": "Stefanova-Boltzmannova konstanta"}', '\sigma', 5.670374419e-8,
+    '[{"unit":"watt","exponent":1},{"unit":"metre","exponent":-2},{"unit":"kelvin","exponent":-4}]'),
+  ('bohr_radius',               '{"en-us": "Bohr radius", "cs-cz": "Bohrův poloměr"}', 'a_0', 5.29177210903e-11,
+    '[{"unit":"metre","exponent":1}]')
 ;
-
 
 
 INSERT OR IGNORE INTO formula (id, name, topic, difficulty, description) VALUES

@@ -1,10 +1,11 @@
 {% extends "base.html" %}
+{% import "_macros.html" as ui %}
 {% block title %}{{ _(q.name) }}{% endblock %}
 {% block content %}
 
-<h2 class="detail-heading">{% if q.symbol %}${{ q.symbol }}$ {% endif %}{{ _(q.name) }}</h2>
+<h2>{% if q.symbol %}${{ q.symbol }}$ {% endif %}{{ _(q.name) }}</h2>
 
-<div class="detail-desc">{{ _('filter.quantity') }}</div>
+<div class="detail-desc">{{ _('list.quantity') }}</div>
 
 {% if q.breadcrumbs %}
 <div class="breadcrumb-bar">
@@ -34,7 +35,7 @@
   <table class="units-table">
     <thead>
       <tr>
-        <th>{{ _('unit.unit') }}</th>
+        <th>{{ _('list.unit') }}</th>
         <th>{{ _('detail.system') }}</th>
         {% if show_factor %}<th>{{ _('detail.factor_to') }} ${{ default_unit_symbol_latex }}$</th>{% endif %}
         {% if show_offset %}<th>{{ _('detail.offset_from') }} ${{ default_unit_symbol_latex }}$</th>{% endif %}
@@ -63,12 +64,7 @@
   <h3>{{ _('detail.primary_formulas') }}</h3>
   <div class="formula-grid">
   {% for f in primary_formulas %}
-    <div class="formula-card">
-      <a href="/formula/{{ f.id }}">
-        <div class="formula-eqn">$${{ f.latex }}$$</div>
-        <div class="formula-name">{{ _(f.name) }}</div>
-      </a>
-    </div>
+    {{ ui.formula_card('/formula/' ~ f.id, f.latex, _(f.name)) }}
   {% endfor %}
   </div>
 </div>
@@ -79,12 +75,7 @@
   <h3>{{ _('detail.also_appears_in') }}</h3>
   <div class="formula-grid">
   {% for f in nonprimary_formulas %}
-    <div class="formula-card">
-      <a href="/formula/{{ f.id }}">
-        <div class="formula-eqn">$${{ f.latex }}$$</div>
-        <div class="formula-name">{{ _(f.name) }}</div>
-      </a>
-    </div>
+    {{ ui.formula_card('/formula/' ~ f.id, f.latex, _(f.name)) }}
   {% endfor %}
   </div>
 </div>
@@ -95,13 +86,7 @@
   <h3>{{ _('detail.related_formulas') }}</h3>
   <div class="formula-grid">
   {% for r in related_formulas %}
-    <div class="formula-card">
-      <a href="/formula/{{ r.id }}">
-        <div class="formula-eqn">$${{ r.latex }}$$</div>
-        <div class="formula-name">{{ _(r.name) }}</div>
-        <div class="formula-relation-label">{{ _('relation.' ~ r.relation_type) }}</div>
-      </a>
-    </div>
+    {{ ui.formula_card('/formula/' ~ r.id, r.latex, _(r.name), relation=_('relation.' ~ r.relation_type)) }}
   {% endfor %}
   </div>
 </div>

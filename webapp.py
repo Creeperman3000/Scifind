@@ -511,7 +511,7 @@ def _scan_locales():
     """Discover available locale files and build Accept-Language mapping."""
     global _available_locales, _lang_to_locale
     if _available_locales is not None:
-        return
+        return _available_locales
     _available_locales = {}
     _lang_to_locale = {}
     if _LOCALE_DIR.is_dir():
@@ -530,6 +530,7 @@ def _scan_locales():
         _available_locales["en-us"] = DEFAULT_LOCALE_FALLBACK
     _lang_to_locale.setdefault("en-US", "en-us")
     _lang_to_locale.setdefault("en", "en-us")
+    return _available_locales
 
 
 def _resolve_locale_from_header(header):
@@ -588,19 +589,55 @@ def _database_is_initialised(db):
 
 
 def _bootstrap_database():
-    """Apply schema and seed data on first run when the DB has no tables."""
+    """Apply schema and seed data on first run when the DB has no tables.
+
+    For existing databases, also apply lightweight ALTER TABLE migrations
+    for columns added in newer schema versions (schema.sql uses
+    CREATE TABLE IF NOT EXISTS, which won't add columns to an existing
+    table). Each migration should be idempotent — it should detect
+    whether the change has already been applied.
+    """
     conn = open_database()
     try:
-        if _database_is_initialised(conn):
-            return
-        conn.execute("PRAGMA foreign_keys = OFF")
-        conn.executescript((_PROJECT_DIR / "schema.sql").read_text(encoding="utf-8"))
-        conn.executescript((_PROJECT_DIR / "seed.sql").read_text(encoding="utf-8"))
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.commit()
-        logger.info("Database initialised at %s", database_path())
+        if not _database_is_initialised(conn):
+            conn.execute("PRAGMA foreign_keys = OFF")
+            conn.executescript((_PROJECT_DIR / "schema.sql").read_text(encoding="utf-8"))
+            conn.executescript((_PROJECT_DIR / "seed.sql").read_text(encoding="utf-8"))
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.commit()
+            logger.info("Database initialised at %s", database_path())
+        _apply_migrations(conn)
     finally:
         conn.close()
+
+
+def _column_exists(conn, table: str, column: str) -> bool:
+    row = conn.execute(
+        f"SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?",
+        (column,),
+    ).fetchone()
+    return bool(row)
+
+
+def _apply_migrations(conn):
+    """Apply ALTER TABLE migrations for columns added after the initial
+    schema. Each migration must be idempotent — re-running on an
+    already-migrated DB is a no-op.
+    """
+    # Migration: ensure `operator.parened_arg INTEGER` column exists.
+    # (Fresh installs already have it via schema.sql; this catches DBs
+    # created before the column was introduced. The `parened_arg=0`
+    # flags are reapplied to sqrt/frac/pow each time so legacy seeds
+    # without the explicit value still render correctly.)
+    if not _column_exists(conn, "operator", "parened_arg"):
+        conn.execute(
+            "ALTER TABLE operator ADD COLUMN parened_arg INTEGER NOT NULL "
+            "DEFAULT 1 CHECK (parened_arg IN (0, 1))"
+        )
+        conn.commit()
+        logger.info("Migration: added operator.parened_arg column")
+    conn.execute("UPDATE operator SET parened_arg = 0 WHERE id IN ('sqrt', 'frac', 'pow')")
+    conn.commit()
 
 
 _bootstrap_database()
@@ -640,17 +677,40 @@ def _uninitialised_response():
 # Template globals
 # ---------------------------------------------------------------------------
 
+def _build_ui_with_fallback(locale):
+    """Deep-merge UI dict along the fallback chain (current locale wins)."""
+    _scan_locales()
+    chain = []
+    visited = set()
+    while locale and locale not in visited:
+        visited.add(locale)
+        chain.append(locale)
+        locale = _available_locales.get(locale, {}).get("meta", {}).get("fallback")
+    merged = {}
+    for loc in reversed(chain):
+        ui = _available_locales.get(loc, {}).get("ui", {})
+        for cat, children in ui.items():
+            if cat not in merged:
+                merged[cat] = {}
+            merged[cat].update(children)
+    return merged
+
+
 def _ui_lookup(locale, key):
-    """Look up a dotted UI key ('category.child') in the nested locale ui dict."""
+    """Look up a dotted UI key ('category.child') in the nested locale ui dict,
+    following the fallback chain (e.g. cs-cz -> en-us)."""
     _scan_locales()
     parts = key.split(".", 1)
     if len(parts) == 2:
         cat, child = parts
-        for ui in (_available_locales.get(locale, {}).get("ui", {}),
-                   _available_locales.get("en-us", {}).get("ui", {})):
+        visited = set()
+        while locale and locale not in visited:
+            visited.add(locale)
+            ui = _available_locales.get(locale, {}).get("ui", {})
             val = ui.get(cat, {}).get(child)
             if val is not None:
                 return val
+            locale = _available_locales.get(locale, {}).get("meta", {}).get("fallback")
     return key
 
 
@@ -779,7 +839,7 @@ def inject_globals():
         {"code": code, "name": data.get("meta", {}).get("name", code)}
         for code, data in _available_locales.items()
     ]
-    locale_ui = _available_locales.get(locale, {}).get("ui", {})
+    locale_ui = _build_ui_with_fallback(locale)
 
     return dict(
         tree_json=tree_json,
@@ -1119,7 +1179,6 @@ def token_dictionary():
         {
             "id": r["id"],
             "symbol": r["symbol"],
-            "syntax": r["syntax"],
             "math": r["math"],
             "arity": r["arity"],
             "precedence": r["precedence"],
@@ -1147,7 +1206,7 @@ def preview_equation_api():
     equation = (request.args.get("equation") or "").strip()
     locale = g.locale
     caches = _get_dimension_caches()
-    result = preview_equation(db, equation, locale=locale, dim_caches=caches)
+    result = preview_equation(db, equation, locale=locale, dim_caches=caches, dim_mode=g.get("dim_mode", "dim"))
     return result
 
 
@@ -1187,7 +1246,7 @@ def create_preview_render():
     equation = (request.form.get("equation") or "").strip()
     overrides = _parse_override_form_keys()
     caches = _get_dimension_caches()
-    result = preview_equation(db, equation, locale=locale, dim_caches=caches, overrides=overrides)
+    result = preview_equation(db, equation, locale=locale, dim_caches=caches, overrides=overrides, dim_mode=g.get("dim_mode", "dim"))
     if result.get("error") or not result.get("latex"):
         return result
     items = _build_formula_detail_items_from_tokens(db, result["tokens"], overrides, locale)
@@ -1199,7 +1258,8 @@ def create_preview_render():
 def build_sql_api():
     """Generate the INSERT SQL strings for a new formula.
 
-    Accepts JSON: {name_en, topic, difficulty, equation, overrides?}.
+    Accepts JSON: {name_en, topic, difficulty, equation, overrides?,
+                   translations?}.
     Returns {formula_sql, token_sql} on success or {error: str} on failure.
     """
     db = get_db()
@@ -1212,6 +1272,7 @@ def build_sql_api():
             difficulty=payload.get("difficulty", 2),
             equation=payload.get("equation", ""),
             overrides=payload.get("overrides") or {},
+            translations=payload.get("translations") or {},
         )
     except ValueError as e:
         return {"error": str(e)}, 400
@@ -1234,15 +1295,44 @@ def _row_dict(row):
     return dict(row) if row is not None else {}
 
 
+def _operator_latex(item):
+    """Generate LaTeX for an operator in the token sidebar.
+
+    Uses id, symbol, and operator_type to produce LaTeX with placeholder
+    letters starting from x, y, z, a, b, ...
+    """
+    op_id = item["id"]
+    symbol = item.get("symbol") or ""
+    op_type = item["operator_type"]
+    L = [chr(c) for c in range(ord("x"), ord("z") + 1)] + [chr(c) for c in range(ord("a"), ord("x"))]
+    if op_type in ("infix", "relational"):
+        if op_id == "frac":
+            return f"\\frac{{{L[0]}}}{{{L[1]}}}"
+        if op_id == "pow":
+            return f"{L[0]}^{{{L[1]}}}"
+        if symbol:
+            return f"{L[0]} {symbol} {L[1]}"
+        return f"{L[0]} {L[1]}"
+    if op_type == "prefix":
+        if symbol == "-":
+            return f"-{L[0]}"
+        return f"{symbol} {L[0]}"
+    if op_type == "postfix":
+        return f"{L[0]} {symbol}" if symbol else L[0]
+    return ""
+
+
 def _render_token_item(item, kind, locale):
     """One <div class="qty-result"> for the token sidebar."""
     item = _row_dict(item)
     if kind == "op":
-        syntax = item.get("syntax") or item.get("symbol") or item["id"]
+        latex = _operator_latex(item)
+        insert = item.get("symbol") or item["id"]
+        search = " ".join([item["id"], item.get("symbol") or ""]).lower()
         return (
-            f'<div class="qty-result" data-kind="op" data-insert="{html_module.escape(syntax)}"'
-            f' data-search="{html_module.escape(syntax.lower())}">'
-            f'<span class="qty-result-sym token-syntax">{html_module.escape(syntax)}</span>'
+            f'<div class="qty-result" data-kind="op" data-insert="{html_module.escape(insert)}"'
+            f' data-search="{html_module.escape(search)}">'
+            f'<span class="qty-result-sym">${html_module.escape(latex)}$</span>'
             f'<span class="qty-result-name">{html_module.escape(item["id"])}</span>'
             f'</div>'
         )
@@ -1253,7 +1343,7 @@ def _render_token_item(item, kind, locale):
         if symbol else ""
     )
     haystack = " ".join([
-        item["id"], symbol, str(item.get("name") or ""), str(item.get("syntax") or ""),
+        item["id"], symbol, str(item.get("name") or ""),
     ]).lower()
     return (
         f'<div class="qty-result" data-kind="{kind}" data-insert="{html_module.escape(item["id"])}"'
@@ -1291,22 +1381,22 @@ def create_token_sidebar():
 
     sections = [
         _render_token_section(
-            _("create.quantities"), "token-qty", quantities, "qty", locale,
-            _("create.no_matches"),
+            _("detail.quantities"), "token-qty", quantities, "qty", locale,
+            _("create.no_results"),
         ),
         _render_token_section(
-            _("create.constants"), "token-const", constants, "const", locale,
-            _("create.no_matches"),
+            _("nav.constants"), "token-const", constants, "const", locale,
+            _("create.no_results"),
         ),
         _render_token_section(
-            _("create.operators"), "token-op", operators, "op", locale,
-            _("create.no_matches"),
+            _("nav.operators"), "token-op", operators, "op", locale,
+            _("create.no_results"),
         ),
     ]
 
     return Markup(
         '<div class="filter-qty-search-wrap">'
-        f'<div class="qty-search-wrap"><input type="text" class="qty-search" id="token-search" placeholder="{html_module.escape(_("create.search_placeholder"))}" autocomplete="off"></div>'
+        f'<div class="qty-search-wrap"><input type="text" class="qty-search text-field" id="token-search" placeholder="{html_module.escape(_("create.search_placeholder"))}" autocomplete="off"></div>'
         '</div>'
         f'<div class="token-sidebar">{"".join(sections)}</div>'
     )
@@ -1394,53 +1484,176 @@ def create_breadcrumb():
     return _render_breadcrumb(topic, tree, name_map)
 
 
+@app.route("/create/languages")
+def create_languages():
+    """Return the list of available locales for the /create translation flow.
+
+    Each entry is `{"code": "en-us", "name": "US English"}`. The current
+    document language is included as `current` so the front-end can default
+    the "skip English" checkbox. The `repo` field carries the GitHub
+    `owner/repo` slug the new-issue link should point to (overridable via
+    the SCIFIND_GITHUB_REPO env var).
+    """
+    locales = _scan_locales()
+    items = []
+    for code, data in sorted(locales.items()):
+        if code == "en-us" and code not in locales:
+            continue
+        meta = data.get("meta", {}) if isinstance(data, dict) else {}
+        items.append({
+            "code": code,
+            "name": meta.get("name", code),
+        })
+    repo = os.environ.get("SCIFIND_GITHUB_REPO", "Creeperman3000/Scifind")
+    return {"current": getattr(g, "locale", "en-us"), "locales": items, "repo": repo}
+
+
+def _parse_translation_block(prefix):
+    """Parse a FormData block shaped like `<prefix>[<locale>][<field>]`.
+
+    Returns `{locale: {field: value, ...}, ...}`. Values that are blank
+    strings are omitted so callers can use "field present" to decide whether
+    to merge the value into the i18n blob.
+    """
+    out = {}
+    pattern = re.compile(r"^" + re.escape(prefix) + r"\[([^\]]+)\]\[([^\]]+)\]$")
+    for key, val in request.form.items(multi=True):
+        m = pattern.match(key)
+        if not m:
+            continue
+        loc, field = m.group(1), m.group(2)
+        if not val or not str(val).strip():
+            continue
+        out.setdefault(loc, {})[field] = str(val).strip()
+    return out
+
+
+def _parse_translation_links_block(prefix):
+    """Parse a FormData block shaped like `<prefix>[<locale>][links][]`.
+
+    Returns `{locale: [{"url": ..., "label": ...}, ...], ...}`.
+    """
+    out = {}
+    for key, val in request.form.items(multi=True):
+        m = re.match(r"^" + re.escape(prefix) + r"\[([^\]]+)\]\[links\]\[\]$", key)
+        if not m:
+            continue
+        loc = m.group(1)
+        if not val or not str(val).strip():
+            continue
+        out.setdefault(loc, []).append({"url": str(val).strip()})
+    return out
+
+
+def _build_create_sql_payload(db, form, *, for_issue=False):
+    """Common path for /create/build-sql and /create/build-issue.
+
+    Returns (formula_sql, token_sql, payload_dict) on success or raises
+    ValueError. `payload_dict` includes the inputs (name_en, topic, ...,
+    translations) so callers can echo them back in HTML/issue body.
+    """
+    def _scalar(name):
+        return (form.get(name) or "").strip()
+
+    name_en = _scalar("name_en")
+    topic = _scalar("topic")
+    difficulty = _scalar("difficulty") or "2"
+    equation = (form.get("equation") or "")
+    description = _scalar("description") or None
+    links_raw = _scalar("links") or None
+    links = None
+    if links_raw:
+        # One URL per line. Empty lines are skipped.
+        parts = [p.strip() for p in links_raw.splitlines() if p.strip()]
+        links = [{"url": p} for p in parts] if parts else None
+
+    overrides = _parse_override_form_keys()
+
+    # Per-language fields are submitted as `tr[<locale>][name]`,
+    # `tr[<locale>][description]`, `tr[<locale>][links][]`,
+    # `tr[<locale>][overrides][<key>][symbol|name|label]`.
+    tr_top = _parse_translation_block("tr")
+    tr_links = _parse_translation_links_block("tr")
+    tr_ov = _parse_translation_block("tr_overrides")
+
+    translations = {}
+    all_locs = set(tr_top) | set(tr_links) | set(tr_ov)
+    for loc in all_locs:
+        entry = {}
+        top = tr_top.get(loc, {})
+        if "name" in top:
+            entry["name"] = top["name"]
+        if "description" in top:
+            entry["description"] = top["description"]
+        if loc in tr_links:
+            entry["links"] = tr_links[loc]
+        if loc in tr_ov:
+            entry["overrides"] = tr_ov[loc]
+        if entry:
+            translations[loc] = entry
+
+    formula_sql, token_sql = build_create_sql(
+        db,
+        name_en=name_en,
+        topic=topic,
+        difficulty=difficulty,
+        equation=equation,
+        overrides=overrides,
+        description=description,
+        links=links,
+        translations=translations,
+    )
+    return formula_sql, token_sql, {
+        "name_en": name_en,
+        "topic": topic,
+        "difficulty": difficulty,
+        "equation": equation,
+        "description": description,
+        "links": links,
+        "overrides": overrides,
+        "translations": translations,
+    }
+
+
+def _render_sql_modal_html(formula_sql, token_sql):
+    # Icon-only copy button in the top-right of each .sql-block. Matches
+    # the .formula-copy-btn look used in the main formula preview.
+    return Markup(
+        '<div class="sql-block">'
+        f'<button class="formula-copy-btn sql-copy-btn" type="button" data-action="copy-formula-sql" title="Copy">'
+        f'<i data-lucide="copy" width="16" height="16"></i>'
+        f'</button>'
+        f'<pre id="formula-sql">{html_module.escape(formula_sql)}</pre>'
+        f'</div>'
+        '<h3>' + html_module.escape(_("create.token_inserts")) + '</h3>'
+        '<div class="sql-block">'
+        f'<button class="formula-copy-btn sql-copy-btn" type="button" data-action="copy-token-sql" title="Copy">'
+        f'<i data-lucide="copy" width="16" height="16"></i>'
+        f'</button>'
+        f'<pre id="token-sql">{html_module.escape(token_sql)}</pre>'
+        f'</div>'
+    )
+
+
 @app.route("/create/build-sql", methods=["POST"])
 def create_build_sql():
     """Form-POST equivalent of /api/build-sql.
 
     Accepts the same fields as the create form, including `override[<key>]`
-    arrays for variable overrides. Returns the rendered modal HTML on
+    arrays for variable overrides and `tr[<locale>][...]` blocks for
+    per-language translations. Returns the rendered modal HTML on
     success and a JSON `{error}` with 400 on failure.
     """
     db = get_db()
-
-    def _scalar(name):
-        return (request.form.get(name) or "").strip()
-
-    name_en = _scalar("name_en")
-    topic = _scalar("topic")
-    difficulty = _scalar("difficulty") or "2"
-    equation = (request.form.get("equation") or "")
-
-    overrides = _parse_override_form_keys()
-
     try:
-        formula_sql, token_sql = build_create_sql(
-            db,
-            name_en=name_en,
-            topic=topic,
-            difficulty=difficulty,
-            equation=equation,
-            overrides=overrides,
-        )
+        formula_sql, token_sql, _ = _build_create_sql_payload(db, request.form)
     except ValueError as e:
         body = (
             f'<p class="detail-desc" data-error="{html_module.escape(str(e))}">'
             f'{html_module.escape(str(e))}</p>'
         )
         return Markup(body), 400
-
-    return Markup(
-        '<div class="sql-block">'
-        f'<button class="sql-copy-btn" type="button" data-action="copy-formula-sql">{html_module.escape(_("copy.latex"))}</button>'
-        f'<pre id="formula-sql">{html_module.escape(formula_sql)}</pre>'
-        f'</div>'
-        '<h3>' + html_module.escape(_("create.token_inserts")) + '</h3>'
-        '<div class="sql-block">'
-        f'<button class="sql-copy-btn" type="button" data-action="copy-token-sql">{html_module.escape(_("copy.latex"))}</button>'
-        f'<pre id="token-sql">{html_module.escape(token_sql)}</pre>'
-        f'</div>'
-    )
+    return _render_sql_modal_html(formula_sql, token_sql)
 
 
 @app.route("/quantities")
@@ -1494,12 +1707,12 @@ def all_quantities():
         quantity_names = [localise(names_by_id[qid], locale) for qid in fs.quantity_ids
                           if qid in names_by_id]
     heading = _heading_from_compressed(
-        _("nav.quantities"), compressed, name_map, locale, fs,
+        _("detail.quantities"), compressed, name_map, locale, fs,
         dim_mode=g.get("dim_mode", "dim"), dimension_caches=dim_caches,
         active_quantity_names=quantity_names,
     )
     if fs.base_quantity_only:
-        heading = _("list.base_quantities")
+        heading = _("detail.base_quantities")
     return render_template("quantities.html", quantities=filtered, heading=heading)
 
 
