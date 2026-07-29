@@ -192,11 +192,11 @@
     .qty-chip-x:hover { opacity: 1; }
     .qty-results { position: absolute; left: 0; right: 0; top: 100%; max-height: 200px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); display: none; z-index: 100; box-shadow: var(--shadow-lg); }
     .qty-results.open { display: block; }
-    .qty-result { padding: 4px 8px; font-size: 0.82rem; cursor: pointer; display: flex; justify-content: space-between; gap: 6px; }
+    .qty-result { padding: 4px 8px; font-size: 0.82rem; cursor: pointer; display: flex; gap: 6px; }
     .qty-result:hover, .qty-result:focus { background: var(--bg-secondary); outline: none; }
     .qty-result.selected { opacity: 0.5; cursor: default; }
-    .qty-result-sym { font-weight: 600; }
-    .qty-result-name { color: var(--text-secondary); font-size: 0.78rem; }
+    .qty-result-sym { font-weight: 600; flex-shrink: 0; }
+    .qty-result-name { color: var(--text-secondary); font-size: 0.78rem; margin-left: auto; text-align: right; min-width: 0; word-break: break-word; }
 
     .diff-wrap { margin-top: auto; padding-top: 12px; }
     .diff-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary); margin-bottom: 4px; }
@@ -1235,11 +1235,10 @@
           var isSel = window._qtySelected.indexOf(item.id) !== -1;
           var symRaw = item.symbol || '';
           var nameRaw = item.name || item.id;
-          var symDisplay = symRaw ? window._renderLatex(symRaw) : nameRaw;
-          var sub = (symRaw && nameRaw) ? nameRaw : '';
+          var symDisplay = symRaw ? window._renderLatex(symRaw) : '';
           html += '<div class="qty-result' + (isSel ? ' selected' : '') + '" data-action="add-qty-chip" data-qty="' + item.id + '" tabindex="0">';
           html += '<span class="qty-result-sym">' + symDisplay + '</span>';
-          if (sub) html += '<span class="qty-result-name">' + sub + '</span>';
+          html += '<span class="qty-result-name">' + nameRaw + '</span>';
           html += '</div>';
         });
         resultsEl.innerHTML = html;

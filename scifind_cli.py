@@ -14,7 +14,6 @@ Usage:
 """
 
 import argparse
-import json
 import os
 import sqlite3
 import sys
@@ -46,6 +45,7 @@ from scifind_lib import (
     export_to_xlsx,
     export_to_ods,
     DIMENSION_COLUMNS,
+    topic_name,
 )
 
 
@@ -55,64 +55,22 @@ def _exit_with_error(message, code=1):
 
 
 _USE_COLOUR = sys.stdout.isatty()
+_CODES = {"bold": 1, "dim": 2, "yellow": 33, "cyan": 36}
 
 
-def _coloured(code, text):
-    return f"\033[{code}m{text}\033[0m" if _USE_COLOUR else text
+def _styled(style, text):
+    return f"\033[{_CODES[style]}m{text}\033[0m" if _USE_COLOUR else text
 
 
-def _bold(text):
-    return _coloured("1", text)
+def _wrap(text):
+    """Indent-wrap a description string at 72 columns."""
+    return textwrap.fill(text, width=72, initial_indent="  ", subsequent_indent="  ")
 
 
-def _dim(text):
-    return _coloured("2", text)
-
-
-def _yellow(text):
-    return _coloured("33", text)
-
-
-def _cyan(text):
-    return _coloured("36", text)
-
-
-_tree_cache = None
-_topic_name_map = None
-
-
-def _load_tree():
-    global _tree_cache, _topic_name_map
-    if _topic_name_map is not None:
-        return _topic_name_map
-    tree_path = _PROJECT_DIR / "tree.json"
-    try:
-        with open(tree_path) as f:
-            _tree_cache = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        _tree_cache = None
-    _topic_name_map = {}
-
-    def walk(nodes):
-        for node in nodes:
-            _topic_name_map[node["id"]] = node.get("translations", {}).get("en-us", node["id"])
-            children = node.get("children")
-            if children:
-                walk(children)
-
-    if _tree_cache:
-        walk(_tree_cache["sciences"])
-    return _topic_name_map
-
-
-def _topic_name(topic_id):
-    """Resolve a topic ID to its display name from tree.json."""
-    if not topic_id:
-        return None
-    name_map = _load_tree()
-    if topic_id in name_map:
-        return name_map[topic_id]
-    return topic_id.replace("_", " ").title()
+def _format_unit_str(default_unit_json):
+    """Render a default_unit JSON list as e.g. 'm·s⁻¹' for the CLI."""
+    parts = parse_default_unit(default_unit_json)
+    return "\u00b7".join(f"{uid}^{exp}" for uid, exp in parts) if parts else ""
 
 
 # ---------------------------------------------------------------------------
@@ -200,11 +158,11 @@ def command_list(args):
 
     by_topic = {}
     for row in rows:
-        topic = _topic_name(row["topic_id"]) or "General"
+        topic = topic_name(row["topic_id"]) or "General"
         by_topic.setdefault(topic, []).append(row)
 
     for topic, topic_formulas in by_topic.items():
-        print(f"\n  {_yellow(topic)}:")
+        print(f"\n  {_styled("yellow", topic)}:")
         for f in topic_formulas:
             stars = difficulty_to_stars(f["difficulty"])
             print(f"    {f['id']:40s} {stars}  {f['name_en']}")
@@ -225,12 +183,12 @@ def command_show(args):
     name = localise_english(row["name"])
     description = localise_english(row["description"])
     difficulty = row["difficulty"]
-    topic = _topic_name(row["topic_id"])
+    topic = topic_name(row["topic_id"])
     stars = difficulty_to_stars(difficulty)
 
-    print(f"\n  {_bold(name)}  {stars}")
+    print(f"\n  {_styled("bold", name)}  {stars}")
     if topic:
-        print(f"  {_cyan(topic)}  (difficulty {difficulty}/10)")
+        print(f"  {_styled("cyan", topic)}  (difficulty {difficulty}/10)")
 
     if latex:
         print(f"\n  $$")
@@ -238,21 +196,17 @@ def command_show(args):
         print(f"  $$")
 
     if description:
-        wrapped = textwrap.fill(
-            description, width=72,
-            initial_indent="  ", subsequent_indent="  ",
-        )
-        print(f"\n  {_dim(wrapped)}")
+        print(f"\n  {_styled("dim", _wrap(description))}")
 
     if quantities:
-        print(f"\n  {_bold('Quantities:')}")
+        print(f"\n  {_styled("bold", 'Quantities:')}")
         for q in quantities:
-            print(f"    ${q['symbol']}$  {q['name_en']}  ({_dim(q['id'])})")
+            print(f"    ${q['symbol']}$  {q['name_en']}  ({_styled("dim", q['id'])})")
 
     if related:
-        print(f"\n  {_bold('Related:')}")
+        print(f"\n  {_styled("bold", 'Related:')}")
         for r in related:
-            print(f"    {_dim(r['relation_type'])} \u2192 {r['related_id']}  ({r['related_name']})")
+            print(f"    {_styled("dim", r['relation_type'])} \u2192 {r['related_id']}  ({r['related_name']})")
     print()
 
 
@@ -264,7 +218,7 @@ def command_search(args):
         print("No results.")
         return
 
-    print(f"\n  {_bold(f'{len(rows)} result(s)')} for {_yellow(repr(args.query))}\n")
+    print(f"\n  {_styled("bold", f'{len(rows)} result(s)')} for {_styled("yellow", repr(args.query))}\n")
     for kind, id_, name_en in rows:
         print(f"  [{kind}] {name_en}  ({id_})")
     print()
@@ -287,20 +241,19 @@ def command_quantities(args):
         print("No quantities found.")
         return
 
-    header = f"\n  {_bold('Quantities')}"
+    header = f"\n  {_styled("bold", 'Quantities')}"
     if args.formula:
-        header += f" for {_yellow(args.formula)}"
+        header += f" for {_styled("yellow", args.formula)}"
     print(header + "\n")
 
     for q in rows:
         dimensions = format_dimensions_plain(*extract_dimensions_from_row(q))
-        unit_parts = parse_default_unit(q["default_unit"])
-        unit_str = "\u00b7".join(f"{uid}^{exp}" for uid, exp in unit_parts) if unit_parts else ""
-        print(f"  ${q['symbol']}$  {_bold(q['name_en'])}  ({_dim(q['id'])})")
+        unit_str = _format_unit_str(q["default_unit"])
+        print(f"  ${q['symbol']}$  {_styled("bold", q['name_en'])}  ({_styled("dim", q['id'])})")
         if unit_str:
-            print(f"      Dimensions: {_dim(dimensions)}  default unit: {unit_str}")
+            print(f"      Dimensions: {_styled("dim", dimensions)}  default unit: {unit_str}")
         else:
-            print(f"      Dimensions: {_dim(dimensions)}")
+            print(f"      Dimensions: {_styled("dim", dimensions)}")
     conn.close()
     print()
 
@@ -318,32 +271,27 @@ def command_quantity(args):
     description = localise_english(q["description"])
     dimensions = format_dimensions_plain(*extract_dimensions_from_row(q))
     conn.close()
-    unit_parts = parse_default_unit(q["default_unit"])
-    unit_str = "\u00b7".join(f"{uid}^{exp}" for uid, exp in unit_parts) if unit_parts else ""
+    unit_str = _format_unit_str(q["default_unit"])
 
     label = f"${q['symbol']}$ \u2014 {name}"
-    print(f"\n  {_bold(label)}  ({_dim(q['id'])})")
+    print(f"\n  {_styled("bold", label)}  ({_styled("dim", q['id'])})")
     if dimensions:
-        print(f"  Dimensions: {_dim(dimensions)}")
+        print(f"  Dimensions: {_styled("dim", dimensions)}")
     if unit_str:
         print(f"  Default unit: {unit_str}")
 
     if description:
-        wrapped = textwrap.fill(
-            description, width=72,
-            initial_indent="  ", subsequent_indent="  ",
-        )
-        print(f"\n  {_dim(wrapped)}")
+        print(f"\n  {_styled("dim", _wrap(description))}")
 
     if units:
-        print(f"\n  {_bold('Units:')}")
+        print(f"\n  {_styled("bold", 'Units:')}")
         for u in units:
             mark = "\u2713" if u["default_unit"] else " "
             offset_str = f" + {u['offset']}" if u["offset"] else ""
             print(f"    [{mark}] ${u['symbol']}$  {u['id']}  [{u['unit_system'] or 'any'}]  \u00d7{u['factor']}{offset_str} \u2192 SI")
 
     if formulas:
-        print(f"\n  {_bold('Appears in formulas:')}")
+        print(f"\n  {_styled("bold", 'Appears in formulas:')}")
         for f in formulas:
             stars = difficulty_to_stars(f["difficulty"])
             print(f"    {f['id']:40s} {stars}  {f['name_en']}")
@@ -370,15 +318,15 @@ def command_units(args):
         print("No units found.")
         return
 
-    header = f"\n  {_bold('Units')}"
+    header = f"\n  {_styled("bold", 'Units')}"
     if args.quantity:
-        header += f" for {_yellow(args.quantity)}"
+        header += f" for {_styled("yellow", args.quantity)}"
     print(header + "\n")
 
     for u in rows:
         mark = "\u2713" if u["default_unit"] else " "
         offset_str = f" + {u['offset']}" if u["offset"] else ""
-        print(f"  [{mark}] ${u['symbol']}$  {_bold(u['id'])}  [{u['unit_system'] or 'any'}]  \u00d7{u['factor']}{offset_str} \u2192 SI")
+        print(f"  [{mark}] ${u['symbol']}$  {_styled("bold", u['id'])}  [{u['unit_system'] or 'any'}]  \u00d7{u['factor']}{offset_str} \u2192 SI")
     print()
 
 
@@ -393,11 +341,11 @@ def command_browse(args):
 
     tree = {}
     for row in rows:
-        topic = _topic_name(row["topic_id"]) or "General"
+        topic = topic_name(row["topic_id"]) or "General"
         tree.setdefault(topic, []).append(row)
 
     for topic, topic_formulas in tree.items():
-        print(f"\n  {_yellow(topic)}")
+        print(f"\n  {_styled("yellow", topic)}")
         for f in topic_formulas:
             stars = difficulty_to_stars(f["difficulty"])
             print(f"      {f['id']:38s} {stars}  {f['name_en']}")

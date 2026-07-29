@@ -40,26 +40,6 @@ def DIMENSION_COLUMNS():
     return [f"dim_{s}" for s in _BASE_DIMENSION_ORDER]
 
 
-def fetch_dimensions(conn):
-    """Return dimension rows: one per base dimension, in the canonical order."""
-    qid_rows = conn.execute(
-        f"SELECT id, name, json_extract(name, '$.en-us') AS name_en "
-        f"FROM quantity WHERE id IN ({','.join('?' * len(_BASE_DIMENSION_QTY_IDS))})",
-        tuple(_BASE_DIMENSION_QTY_IDS.values()),
-    ).fetchall()
-    by_id = {r["id"]: r for r in qid_rows}
-    return [
-        {
-            "symbol_overwrite": symbol,
-            "quantity_id": qid,
-            "quantity_name": by_id[qid]["name"],
-            "name_en": by_id[qid]["name_en"],
-        }
-        for symbol, qid in _BASE_DIMENSION_QTY_IDS.items()
-        if qid in by_id
-    ]
-
-
 def dimension_quantity_ids():
     return dict(_BASE_DIMENSION_QTY_IDS)
 
@@ -102,8 +82,9 @@ def localise(value, locale, default="en-us"):
         d = None
     if isinstance(d, dict):
         return d.get(locale) or d.get(default) or s
-    # Malformed JSON (e.g. LaTeX backslashes like \_, \lambda) — recover
-    # the first value by stripping the "key": "..." envelope.
+    # Malformed JSON — some symbol_overwrite entries in seed.sql embed raw
+    # LaTeX like `{"en-us": "\\lambda"}` (double-backslash from SQL escaping
+    # becoming invalid `\l` JSON). Recover the first "..." value.
     if d is None and s.endswith("}"):
         _, _, raw = s[s.find("{") + 1 : s.rfind("}")].partition(":")
         raw = raw.strip()
@@ -114,6 +95,70 @@ def localise(value, locale, default="en-us"):
 
 def localise_english(value):
     return localise(value, "en-us")
+
+
+# ---------------------------------------------------------------------------
+# Science tree
+# ---------------------------------------------------------------------------
+
+_PROJECT_DIR = Path(__file__).resolve().parent
+TREE_PATH = _PROJECT_DIR / "tree.json"
+_TREE_CACHE = {}
+
+
+def load_tree():
+    """Load the sciences/branch/topic tree from tree.json (cached)."""
+    if "tree" not in _TREE_CACHE:
+        try:
+            with open(TREE_PATH, encoding="utf-8") as f:
+                _TREE_CACHE["tree"] = json.load(f).get("sciences", [])
+        except (OSError, ValueError):
+            _TREE_CACHE["tree"] = []
+    return _TREE_CACHE["tree"]
+
+
+def _walk_tree(tree, visit):
+    """Depth-first walk; visit(node) is called for each node."""
+    for root in tree:
+        visit(root)
+        for child in (root.get("children") or []):
+            _walk_tree([child], visit)
+
+
+def _collect_ids(tree, predicate):
+    out = set()
+
+    def visit(node):
+        if predicate(node):
+            out.add(node["id"])
+    _walk_tree(tree, visit)
+    return out
+
+
+def all_tree_ids(tree):
+    return _collect_ids(tree, lambda n: True)
+
+
+def topic_name_map(tree, locale="en-us"):
+    """Flat {id: localised name} for every node in the tree."""
+    out = {}
+
+    def visit(node):
+        out[node["id"]] = localise(node.get("translations") or {}, locale)
+    _walk_tree(tree, visit)
+    return out
+
+
+def topic_name(topic_id, tree=None, locale="en-us"):
+    """Resolve a topic ID to its localised display name (en-us fallback)."""
+    if not topic_id:
+        return None
+    if tree is None:
+        tree = load_tree()
+    name_map = topic_name_map(tree, locale)
+    if topic_id in name_map:
+        return name_map[topic_id]
+    return topic_id.replace("_", " ").title()
 
 
 # ---------------------------------------------------------------------------
@@ -142,50 +187,50 @@ def open_database():
 # Name + symbol search & autocomplete
 # ---------------------------------------------------------------------------
 
+_NAME_PICK_SQL = (
+    "COALESCE("
+    "CASE WHEN LOWER(json_extract(name, '$.cs-cz')) LIKE ? THEN json_extract(name, '$.cs-cz') END,"
+    "CASE WHEN LOWER(json_extract(name, '$.en-us')) LIKE ? THEN json_extract(name, '$.en-us') END,"
+    "json_extract(name, '$.en-us')"
+    ")"
+)
+
+
 def search_headings(conn, query, limit=30):
     """Search entity names, symbols, and IDs via SQL LIKE substring match."""
     if not query or not query.strip():
         return []
     q = query.strip().lower()
     pat = f"%{q}%"
-    rows = conn.execute("""
-        SELECT * FROM (
-            SELECT id, 'formula' AS kind,
-                   COALESCE(
-                       CASE WHEN LOWER(json_extract(name, '$.cs-cz')) LIKE ? THEN json_extract(name, '$.cs-cz') END,
-                       CASE WHEN LOWER(json_extract(name, '$.en-us')) LIKE ? THEN json_extract(name, '$.en-us') END,
-                       json_extract(name, '$.en-us')
-                   ) AS display_name
-            FROM formula
-            WHERE LOWER(json_extract(name, '$.cs-cz')) LIKE ?
-               OR LOWER(json_extract(name, '$.en-us')) LIKE ?
-               OR LOWER(id) LIKE ?
-            UNION ALL
-            SELECT id, 'quantity' AS kind,
-                   COALESCE(
-                       CASE WHEN LOWER(json_extract(name, '$.cs-cz')) LIKE ? THEN json_extract(name, '$.cs-cz') END,
-                       CASE WHEN LOWER(json_extract(name, '$.en-us')) LIKE ? THEN json_extract(name, '$.en-us') END,
-                       json_extract(name, '$.en-us')
-                   ) AS display_name
-            FROM quantity
-            WHERE LOWER(json_extract(name, '$.cs-cz')) LIKE ?
-               OR LOWER(json_extract(name, '$.en-us')) LIKE ?
-               OR LOWER(symbol) LIKE ?
-               OR LOWER(id) LIKE ?
-            UNION ALL
-            SELECT id, 'unit' AS kind,
-                   COALESCE(
-                       CASE WHEN LOWER(json_extract(name, '$.cs-cz')) LIKE ? THEN json_extract(name, '$.cs-cz') END,
-                       CASE WHEN LOWER(json_extract(name, '$.en-us')) LIKE ? THEN json_extract(name, '$.en-us') END,
-                       json_extract(name, '$.en-us')
-                   ) AS display_name
-            FROM unit
-            WHERE LOWER(json_extract(name, '$.cs-cz')) LIKE ?
-               OR LOWER(json_extract(name, '$.en-us')) LIKE ?
-               OR LOWER(symbol) LIKE ?
-               OR LOWER(id) LIKE ?
-        ) ORDER BY CASE WHEN LOWER(display_name) = LOWER(?) THEN 0 ELSE 1 END, LENGTH(display_name)
-    """, (pat,) * 17 + (q,)).fetchall()
+    # (table, kind, extra LIKE column) tuples; the leading name LIKE clause is
+    # always present, plus `id`, plus a kind-specific extra column.
+    sources = (
+        ("formula",   "formula",   None),
+        ("quantity",  "quantity",  "symbol"),
+        ("unit",      "unit",      "symbol"),
+    )
+    union_parts = []
+    params = []
+    for table, kind, extra in sources:
+        where = [
+            "LOWER(json_extract(name, '$.cs-cz')) LIKE ?",
+            "LOWER(json_extract(name, '$.en-us')) LIKE ?",
+            "LOWER(id) LIKE ?",
+        ]
+        # _NAME_PICK_SQL uses the pattern 2 times; the WHERE clause adds 3.
+        params.extend([pat] * 5)
+        if extra:
+            where.append(f"LOWER({extra}) LIKE ?")
+            params.append(pat)
+        union_parts.append(
+            f"SELECT id, '{kind}' AS kind, {_NAME_PICK_SQL} AS display_name "
+            f"FROM {table} WHERE {' OR '.join(where)}"
+        )
+    sql = (
+        f"SELECT * FROM ({f' UNION ALL '.join(union_parts)}) "
+        f"ORDER BY CASE WHEN LOWER(display_name) = LOWER(?) THEN 0 ELSE 1 END, LENGTH(display_name)"
+    )
+    rows = conn.execute(sql, params + [q]).fetchall()
     return [(r["kind"], r["id"], r["display_name"]) for r in rows]
 
 
@@ -493,56 +538,30 @@ def _load_quantity(conn, quantity_id: str) -> dict:
                   quantity_id)
 
 
+# Per-connection caches for the equation parser. These are populated lazily on
+# first use; the caller must hand us the same connection each time. Keys:
+#   "qty_ids"     -> set of quantity ids
+#   "const_ids"   -> set of constant ids
+#   "operators"   -> (op_by_id dict, symbol_to_id dict)
 _PARSER_CACHE = {}
 
 
-def _id_set_from(conn, table, cache_key):
-    if cache_key in _PARSER_CACHE:
-        return _PARSER_CACHE[cache_key]
-    rows = conn.execute(f"SELECT id FROM {table}").fetchall()
-    s = {r["id"] if isinstance(r, dict) else r[0] for r in rows}
-    _PARSER_CACHE[cache_key] = s
-    return s
-
-
-def _operator_lookup(conn):
-    """Cache of {operator_id: operator_row} and symbol/operator-id lookups.
-
-    `fetch_all_operators` returns tuples unless the connection has a dict
-    row_factory installed, so this helper is agnostic and rebuilds dicts
-    from the known column order. The parser matches user-typed text
-    against the LaTeX `symbol` column: e.g. typing `+` matches `add`
-    (whose symbol is `+`), typing `=` matches `eq`. Prefix operators
-    like `\\sin` aren't matched by a multi-char string (the parser tries
-    4/3/2/1 chars) but fall through to identifier matching on the next
-    scan, which checks `op_by_id` directly.
-    """
-    if "operators" in _PARSER_CACHE:
-        return _PARSER_CACHE["operators"]
-    rows = fetch_all_operators(conn)
-    keys = ("id", "symbol", "math", "arity", "precedence",
-            "associativity", "operator_type")
-    by_id = {}
-    symbol_to_id = {}
-    for r in rows:
-        d = dict(zip(keys, r)) if isinstance(r, tuple) else dict(r)
-        by_id[d["id"]] = d
-        key = d.get("symbol")
-        if key:
-            symbol_to_id[key] = d["id"]
-    _PARSER_CACHE["operators"] = (by_id, symbol_to_id)
-    return by_id, symbol_to_id
-
-
-def _quantity_id_set(conn):
-    return _id_set_from(conn, "quantity", "qty_ids")
-
-
-def _constant_id_set(conn):
-    return _id_set_from(conn, "constant", "const_ids")
-
-
-
+def _parser_caches(conn):
+    cache = _PARSER_CACHE.setdefault(id(conn), {})
+    if "qty_ids" not in cache:
+        cache["qty_ids"] = {r["id"] for r in conn.execute("SELECT id FROM quantity")}
+        cache["const_ids"] = {r["id"] for r in conn.execute("SELECT id FROM constant")}
+        by_id = {}
+        symbol_to_id = {}
+        for r in conn.execute(
+            "SELECT id, symbol, math, arity, precedence, associativity, operator_type, parened_arg "
+            "FROM operator"
+        ):
+            by_id[r["id"]] = dict(r)
+            if r["symbol"]:
+                symbol_to_id[r["symbol"]] = r["id"]
+        cache["operators"] = (by_id, symbol_to_id)
+    return cache
 
 
 def parse_equation(conn, equation):
@@ -555,9 +574,10 @@ def parse_equation(conn, equation):
     `operator` table: an identifier like 'sin' is treated as the operator
     'sin' if one exists in the table, otherwise as a quantity/constant id.
     """
-    op_by_id, symbol_to_id = _operator_lookup(conn)
-    qty_ids = _quantity_id_set(conn)
-    const_ids = _constant_id_set(conn)
+    cache = _parser_caches(conn)
+    op_by_id, symbol_to_id = cache["operators"]
+    qty_ids = cache["qty_ids"]
+    const_ids = cache["const_ids"]
 
     def match_operator():
         for length in (4, 3, 2, 1):
@@ -832,63 +852,6 @@ def preview_equation(conn, equation, locale="en-us", dim_caches=None, overrides=
     }
 
 
-def compute_rpn_dimensions(conn, tokens):
-    """Like compute_formula_dimensions, but works on an in-memory RPN token list."""
-    cols = DIMENSION_COLUMNS()
-    qid_to_dims = {
-        r["id"]: [r[c] for c in cols]
-        for r in conn.execute(
-            f"SELECT id, {', '.join(cols)} FROM quantity"
-        ).fetchall()
-    }
-    if not tokens:
-        return [0.0] * len(cols)
-
-    try:
-        tree = _evaluate_rpn(conn, tokens)
-    except Exception:
-        return [0.0] * len(cols)
-    if tree is None:
-        return [0.0] * len(cols)
-
-    def find_lhs(node):
-        if node.kind == "operator" and node.operator_type == "relational":
-            return find_lhs(node.children[0])
-        return node
-
-    dims = [0.0] * len(cols)
-
-    def walk(node, sign):
-        if node.kind != "operator":
-            if node.kind == "quantity":
-                for i, v in enumerate(qid_to_dims.get(node.quantity_id, [])):
-                    dims[i] += v * sign
-            return
-        op = node.operator_id
-        if op in ("div", "frac"):
-            walk(node.children[0], sign)
-            walk(node.children[1], -sign)
-        elif op == "pow":
-            base, exp = node.children
-            scale = exp.value if exp.kind == "number" and exp.value is not None else 1
-            walk(base, sign * scale)
-        elif op in ("add", "sub"):
-            walk(node.children[0], sign)
-        elif op in ("sin", "cos", "tan"):
-            pass
-        elif op == "sqrt":
-            before = list(dims)
-            walk(node.children[0], sign)
-            for i in range(len(dims)):
-                dims[i] = before[i] + (dims[i] - before[i]) * 0.5
-        else:
-            for c in node.children:
-                walk(c, sign)
-
-    walk(find_lhs(tree), 1)
-    return [int(round(d)) for d in dims]
-
-
 def _evaluate_rpn(conn, tokens: list[dict]) -> Optional[_Node]:
     stack: list[_Node] = []
     for t in tokens:
@@ -1027,9 +990,13 @@ def _latex_infix(node: _Node, conn, locale: str) -> str:
     return f"{l} {r}"
 
 
-def _latex_prefix(node: _Node, conn, locale: str) -> str:
+def _render_child(node: _Node, conn, locale: str) -> str:
     a = _latex_node(node.children[0], conn, locale)
-    a = _wrap(a, node.children[0], node, "child")
+    return _wrap(a, node.children[0], node, "child")
+
+
+def _latex_prefix(node: _Node, conn, locale: str) -> str:
+    a = _render_child(node, conn, locale)
     sym = node.symbol or ""
     if sym == "-":
         return f"-{a}"
@@ -1044,8 +1011,7 @@ def _latex_prefix(node: _Node, conn, locale: str) -> str:
 
 
 def _latex_postfix(node: _Node, conn, locale: str) -> str:
-    a = _latex_node(node.children[0], conn, locale)
-    a = _wrap(a, node.children[0], node, "child")
+    a = _render_child(node, conn, locale)
     return f"{a}{node.symbol or ''}"
 
 
@@ -1262,12 +1228,80 @@ def fetch_quantity_formulas_by_side(conn, quantity_id):
     return primary, non_primary
 
 
+def _collect_qid_dimensions(conn):
+    """Return {quantity_id: [dim_M, dim_L, ...]} for all quantities."""
+    cols = DIMENSION_COLUMNS()
+    return {
+        r["id"]: [r[c] for c in cols]
+        for r in conn.execute(f"SELECT id, {', '.join(cols)} FROM quantity")
+    }
+
+
+def _walk_dimensions(node, qid_to_dims, dims):
+    """Sum dimensional exponents of every quantity under `node` into `dims`.
+
+    Division/frac: inverts the right operand's sign.
+    Pow: scales the base by the numeric exponent (defaulting to 1).
+    add/sub: dimensions unchanged — only the first operand is walked.
+    sin/cos/tan: dimensionless — nothing added.
+    sqrt: halves the result of walking its argument.
+    """
+    if node.kind != "operator":
+        if node.kind == "quantity":
+            for i, v in enumerate(qid_to_dims.get(node.quantity_id, [])):
+                dims[i] += v
+        return
+    op = node.operator_id
+    if op in ("div", "frac"):
+        _walk_dimensions(node.children[0], qid_to_dims, dims)
+        # Flip sign on a snapshot, then add — keeps dims in-place.
+        before = list(dims)
+        _walk_dimensions(node.children[1], qid_to_dims, dims)
+        for i in range(len(dims)):
+            dims[i] = before[i] - (dims[i] - before[i])
+    elif op == "pow":
+        base, exp = node.children
+        scale = exp.value if exp.kind == "number" and exp.value is not None else 1
+        sub_dims = [0.0] * len(dims)
+        _walk_dimensions(base, qid_to_dims, sub_dims)
+        for i, v in enumerate(sub_dims):
+            dims[i] += v * scale
+    elif op in ("add", "sub"):
+        _walk_dimensions(node.children[0], qid_to_dims, dims)
+    elif op in ("sin", "cos", "tan"):
+        pass
+    elif op == "sqrt":
+        sub_dims = [0.0] * len(dims)
+        _walk_dimensions(node.children[0], qid_to_dims, sub_dims)
+        for i, range_i in enumerate(dims):
+            dims[i] += sub_dims[i] * 0.5
+    else:
+        for c in node.children:
+            _walk_dimensions(c, qid_to_dims, dims)
+
+
+def _lhs_dimensions(tree, qid_to_dims):
+    """Sum dimensions on the LHS of a relational tree."""
+    node = tree
+    while node.kind == "operator" and node.operator_type == "relational":
+        node = node.children[0]
+    dims = [0.0] * len(DIMENSION_COLUMNS())
+    _walk_dimensions(node, qid_to_dims, dims)
+    return [int(round(d)) for d in dims]
+
+
+def _compute_dimensions(conn, tree, empty_default):
+    """Run LHS-dimensions on a parsed RPN tree; return `empty_default` on no tree."""
+    if tree is None:
+        return empty_default
+    return _lhs_dimensions(tree, _collect_qid_dimensions(conn))
+
+
 def compute_formula_dimensions(conn, formula_id):
-    """Compute dimensions from the LHS of a formula.
+    """Compute dimensions from the LHS of a stored formula.
 
     The LHS is identified by walking the RPN tree and taking the first
-    operand of the topmost `=` operator. We then sum the dimensional
-    exponents of all quantities in that subtree.
+    operand of the topmost `=` operator.
     """
     tokens = conn.execute(
         "SELECT * FROM formula_token WHERE formula_id = ? ORDER BY position",
@@ -1279,55 +1313,18 @@ def compute_formula_dimensions(conn, formula_id):
         tree = _evaluate_rpn(conn, [dict(t) for t in tokens])
     except Exception:
         return []
-    if tree is None:
-        return []
+    return _compute_dimensions(conn, tree, [])
 
-    def find_lhs(node):
-        if node.kind == "operator" and node.operator_type == "relational":
-            return find_lhs(node.children[0])
-        return node
 
-    cols = DIMENSION_COLUMNS()
-    qid_to_dims = {
-        r["id"]: [r[c] for c in cols]
-        for r in conn.execute(
-            f"SELECT id, {', '.join(cols)} FROM quantity"
-        ).fetchall()
-    }
-    dims = [0.0] * len(cols)
-
-    def walk(node, sign):
-        if node.kind != "operator":
-            if node.kind == "quantity":
-                for i, v in enumerate(qid_to_dims.get(node.quantity_id, [])):
-                    dims[i] += v * sign
-            return
-        op = node.operator_id
-        if op in ("div", "frac"):
-            walk(node.children[0], sign)
-            walk(node.children[1], -sign)
-        elif op == "pow":
-            base, exp = node.children
-            scale = exp.value if exp.kind == "number" and exp.value is not None else 1
-            walk(base, sign * scale)
-        elif op in ("add", "sub"):
-            # Addition/subtraction doesn't change dimensions — all
-            # operands must have the same dimension. Walk only one.
-            walk(node.children[0], sign)
-        elif op in ("sin", "cos", "tan"):
-            # Transcendental functions produce dimensionless results.
-            pass
-        elif op == "sqrt":
-            before = list(dims)
-            walk(node.children[0], sign)
-            for i in range(len(dims)):
-                dims[i] = before[i] + (dims[i] - before[i]) * 0.5
-        else:
-            for c in node.children:
-                walk(c, sign)
-
-    walk(find_lhs(tree), 1)
-    return [int(round(d)) for d in dims]
+def compute_rpn_dimensions(conn, tokens):
+    """Like compute_formula_dimensions, but works on an in-memory RPN token list."""
+    if not tokens:
+        return [0.0] * len(DIMENSION_COLUMNS())
+    try:
+        tree = _evaluate_rpn(conn, tokens)
+    except Exception:
+        return [0.0] * len(DIMENSION_COLUMNS())
+    return _compute_dimensions(conn, tree, [0.0] * len(DIMENSION_COLUMNS()))
 
 
 def fetch_si_unit_symbol(conn, quantity_id):
@@ -1530,173 +1527,106 @@ def build_create_sql(conn, name_en, topic, difficulty, equation, overrides=None,
         raise ValueError("name must contain at least one alphanumeric character")
 
     tokens = parse_equation(conn, equation)
-
     overrides = overrides or {}
     translations = translations or {}
 
-    def sql_lit(s):
-        if s is None:
-            return "NULL"
-        return "'" + str(s).replace("'", "''") + "'"
+    # The formula-level i18n blobs are dicts of {locale: value}. en-us comes
+    # from the top-level arguments; other locales are merged in from translations.
+    def sql_str(s):
+        return "NULL" if s is None else "'" + str(s).replace("'", "''") + "'"
 
-    def sql_i18n(val, locale="en-us"):
-        if not val:
-            return "NULL"
-        return sql_lit(json.dumps({locale: val}, ensure_ascii=False))
-
-    def merge_i18n(existing_json, val, locale):
-        """Merge a per-locale value into a JSON i18n blob string.
-
-        `existing_json` may be a JSON string, a dict already, or None.
-        Returns a JSON string with `{locale: val}` added under `locale`.
-        """
+    def add_locale(blob, value, locale):
+        """Return a JSON dict string with `locale: value` merged into `blob`."""
         obj = {}
-        if existing_json:
+        if blob:
             try:
-                parsed = json.loads(existing_json)
+                parsed = json.loads(blob)
                 if isinstance(parsed, dict):
                     obj = parsed
             except (ValueError, TypeError):
                 obj = {}
-        obj[locale] = val
+        obj[locale] = value
         return json.dumps(obj, ensure_ascii=False)
 
-    def merge_i18n_from_blob(existing_json, extra_obj):
-        """Merge a {locale: value} dict into an i18n blob string."""
-        if not extra_obj:
-            return existing_json
-        obj = {}
-        if existing_json:
-            try:
-                parsed = json.loads(existing_json)
-                if isinstance(parsed, dict):
-                    obj = parsed
-            except (ValueError, TypeError):
-                obj = {}
-        for k, v in extra_obj.items():
-            obj[k] = v
-        return json.dumps(obj, ensure_ascii=False) if obj else existing_json
-
-    def per_lang(per_locale_value, en_value, locale):
-        """Pick the per-language value if non-empty, else the en-us value."""
-        if per_locale_value is not None and per_locale_value != "":
-            return per_locale_value
-        return en_value
-
-    # Build the en-us JSON blobs from the top-level args, then merge any
-    # translations in for the other locales.
     name_json = json.dumps({"en-us": name_en.strip()}, ensure_ascii=False) if name_en else None
     desc_json = json.dumps({"en-us": description}, ensure_ascii=False) if description else None
-    # The `links` column is conceptually a per-language i18n blob whose
-    # value is a list of {url, label} entries: {"en-us": [...], "cs-cz": [...], ...}.
-    # The top-level `links` argument holds the en-us list. Translations
-    # extend it for other locales.
+    # Links are stored as {locale: [list of {url,label}]}. en-us comes from
+    # the top-level `links` argument; translations can add other locales.
     links_json = json.dumps({"en-us": links}, ensure_ascii=False) if links else None
+    tr_overrides_by_loc = {}
     if translations:
         for loc, tr in translations.items():
             if not isinstance(tr, dict) or loc == "en-us":
                 continue
             t_name = tr.get("name")
             if t_name:
-                name_json = merge_i18n(name_json, t_name.strip(), loc)
+                name_json = add_locale(name_json, t_name.strip(), loc)
             t_desc = tr.get("description")
             if t_desc:
-                desc_json = merge_i18n(desc_json, t_desc, loc)
+                desc_json = add_locale(desc_json, t_desc, loc)
             t_links = tr.get("links")
-            if t_links:
-                t_links_obj = t_links if isinstance(t_links, (dict, list)) else None
-                if t_links_obj is not None:
-                    # Initialize the per-locale i18n dict if needed.
-                    if not links_json:
-                        links_json = json.dumps({loc: t_links_obj}, ensure_ascii=False)
-                    else:
-                        try:
-                            parsed = json.loads(links_json)
-                        except (ValueError, TypeError):
-                            parsed = {}
-                        if not isinstance(parsed, dict):
-                            # Existing payload is a non-i18n list; promote it
-                            # to an i18n dict under en-us first.
-                            parsed = {"en-us": parsed}
-                        parsed[loc] = t_links_obj
-                        links_json = json.dumps(parsed, ensure_ascii=False)
-
-    def sql_lit_json(s):
-        if s is None:
-            return "NULL"
-        return sql_lit(s)
-
-    formula_sql = (
-        "INSERT OR IGNORE INTO formula (id, name, topic, difficulty, description, links) VALUES\n"
-        f"({sql_lit(formula_id)}, {sql_lit_json(name_json)}, "
-        f"{sql_lit(topic)}, {difficulty}, {sql_lit_json(desc_json)}, "
-        f"{sql_lit_json(links_json)});"
-    )
-
-    # Translation overrides (per language) extend the en-us overrides
-    # ONLY for fields not already set in the en-us row. The `_i18n_with_...`
-    # function below merges in the per-locale values for the SQL output.
-    tr_overrides_by_loc = {}
-    if translations:
-        for loc, tr in translations.items():
-            if not isinstance(tr, dict) or loc == "en-us":
-                continue
+            if t_links and isinstance(t_links, (dict, list)):
+                links_json = add_locale(links_json, t_links, loc)
             t_ov = tr.get("overrides") or {}
             if t_ov:
                 tr_overrides_by_loc[loc] = t_ov
 
+    formula_sql = (
+        "INSERT OR IGNORE INTO formula (id, name, topic, difficulty, description, links) VALUES\n"
+        f"({sql_str(formula_id)}, {sql_str(name_json)}, "
+        f"{sql_str(topic)}, {difficulty}, {sql_str(desc_json)}, "
+        f"{sql_str(links_json)});"
+    )
+
+    # Per-token overrides merge en-us (from `overrides`) with each locale's
+    # value (from `tr_overrides_by_loc`); an English value is never overridden
+    # by a translation entry.
+    def i18n_override(field, key):
+        base = (overrides.get(key) or {}).get(field)
+        per_locale = {loc: (t_ov.get(key) or {}).get(field)
+                      for loc, t_ov in tr_overrides_by_loc.items()
+                      if (t_ov.get(key) or {}).get(field)}
+        if not base and not per_locale:
+            return "NULL"
+        obj = {}
+        if base:
+            obj["en-us"] = base
+        obj.update(per_locale)
+        return sql_str(json.dumps(obj, ensure_ascii=False))
+
+    # fields indexed by position in the quantity INSERT column list
+    QTY_OVERRIDE_FIELDS = ("label", "symbol", "name")
+
     rows = []
     for pos, tok in enumerate(tokens, start=1):
-        if tok["token_kind"] == "number":
-            value = tok["value"]
-            label = sym_ow = name_ow = "NULL"
+        kind = tok["token_kind"]
+        if kind == "number":
             rows.append(
-                f"({sql_lit(formula_id)}, {pos}, 'number', "
-                f"NULL, NULL, NULL, {value}, {label}, {sym_ow}, {name_ow})"
+                f"({sql_str(formula_id)}, {pos}, 'number', "
+                f"NULL, NULL, NULL, {tok['value']}, NULL, NULL, NULL)"
             )
-        elif tok["token_kind"] == "quantity":
+        elif kind == "quantity":
             qid = tok["quantity_id"]
-            alias = tok.get("label") or ""
-            key = qid + "|" + alias + "|" + str(pos)
-            ov = overrides.get(key, {})
-
-            def _i18n_with_translations(fld):
-                # Read the en-us value from the un-merged `overrides` (so a
-                # translation field can't clobber the English one).
-                base = ov.get(fld)
-                per_locale = {}
-                for loc, t_ov in tr_overrides_by_loc.items():
-                    v = (t_ov.get(key) or {}).get(fld)
-                    if v:
-                        per_locale[loc] = v
-                if not base and not per_locale:
-                    return "NULL"
-                obj = {}
-                if base:
-                    obj["en-us"] = base
-                obj.update(per_locale)
-                return sql_lit(json.dumps(obj, ensure_ascii=False))
-
-            label = _i18n_with_translations("label")
-            sym_ow = _i18n_with_translations("symbol")
-            name_ow = _i18n_with_translations("name")
-            rows.append(
-                f"({sql_lit(formula_id)}, {pos}, 'quantity', "
-                f"{sql_lit(qid)}, NULL, NULL, NULL, {label}, {sym_ow}, {name_ow})"
+            key = qid + "|" + (tok.get("label") or "") + "|" + str(pos)
+            overrides_sql = ", ".join(
+                i18n_override(field, key) for field in QTY_OVERRIDE_FIELDS
             )
-        elif tok["token_kind"] == "constant":
-            cid = tok["constant_id"]
             rows.append(
-                f"({sql_lit(formula_id)}, {pos}, 'constant', "
-                f"NULL, {sql_lit(cid)}, NULL, NULL, NULL, NULL, NULL)"
+                f"({sql_str(formula_id)}, {pos}, 'quantity', "
+                f"{sql_str(qid)}, NULL, NULL, NULL, {overrides_sql})"
             )
-        else:
+        elif kind == "constant":
+            rows.append(
+                f"({sql_str(formula_id)}, {pos}, 'constant', "
+                f"NULL, {sql_str(tok['constant_id'])}, NULL, NULL, NULL, NULL, NULL)"
+            )
+        else:  # operator
             op_id = tok["operator_id"]
             if op_id in ("paren_open", "paren_close"):
                 raise ValueError("unbalanced parentheses")
             rows.append(
-                f"({sql_lit(formula_id)}, {pos}, 'operator', "
-                f"NULL, NULL, {sql_lit(op_id)}, NULL, NULL, NULL, NULL)"
+                f"({sql_str(formula_id)}, {pos}, 'operator', "
+                f"NULL, NULL, {sql_str(op_id)}, NULL, NULL, NULL, NULL)"
             )
 
     token_sql = (

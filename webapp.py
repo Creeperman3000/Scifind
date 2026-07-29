@@ -69,6 +69,10 @@ from scifind_lib import (
     dimension_quantity_ids,
     extract_dimensions_from_row,
     locale_sibilants,
+    DIMENSION_COLUMNS,
+    load_tree,
+    topic_name_map,
+    all_tree_ids,
 )
 
 app = Flask(__name__)
@@ -188,36 +192,9 @@ def parse_filter_state(args, path="") -> FilterState:
 # Science tree helpers
 # ---------------------------------------------------------------------------
 
-TREE_PATH = _PROJECT_DIR / "tree.json"
-_tree_cache = None
-
-
-def _sciences_tree():
-    global _tree_cache
-    if _tree_cache is None:
-        try:
-            with open(TREE_PATH) as f:
-                _tree_cache = json.load(f).get("sciences", [])
-        except (OSError, ValueError) as exc:
-            logger.warning("Failed to load tree.json: %s", exc)
-            _tree_cache = []
-    return _tree_cache
-
-
-def _all_ids(tree):
-    """Return every id anywhere in the sciences tree."""
-    out = set()
-    def walk(node):
-        out.add(node["id"])
-        for child in (node.get("children") or []):
-            walk(child)
-    for root in tree:
-        walk(root)
-    return out
-
 
 def _leaf_ids(node):
-    """Return every leaf id under a node (a leaf has no children)."""
+    """Every leaf id under a node (a leaf has no children)."""
     if not node.get("children"):
         return {node["id"]}
     leaves = set()
@@ -226,32 +203,39 @@ def _leaf_ids(node):
     return leaves
 
 
-def _all_descendant_ids(node):
-    """Return all descendant node ids including the node itself."""
+def _descendant_ids(node):
+    """All descendant node ids including the node itself."""
     ids = {node["id"]}
     for child in (node.get("children") or []):
-        ids |= _all_descendant_ids(child)
+        ids |= _descendant_ids(child)
     return ids
 
 
-def _expand_to_topics(tree, ids):
+def _walk_tree(tree, visit):
+    """Depth-first walk; visit(node) is called for every node."""
+    for root in tree:
+        visit(root)
+        _walk_tree(root.get("children") or [], visit)
+
+
+def _walk_tree_skip(tree, visit):
+    """Depth-first walk; visit(node) returning False skips recursion into children."""
+    for root in tree:
+        if visit(root):
+            _walk_tree_skip(root.get("children") or [], visit)
+
+
+def _expand_selection(tree, ids):
     """Expand a set of tree-level ids to all leaf ids they cover.
 
     Unknown ids in the input are silently dropped.
     """
     idset = set(ids)
     covered = set()
-
-    def walk(node):
-        nonlocal covered
+    def visit(node):
         if node["id"] in idset:
-            covered |= _all_descendant_ids(node)
-            return
-        for child in (node.get("children") or []):
-            walk(child)
-
-    for root in tree:
-        walk(root)
+            covered.update(_descendant_ids(node))
+    _walk_tree(tree, visit)
     return covered
 
 
@@ -259,60 +243,32 @@ def _compress_selection(tree, ids):
     """Replace a set of leaf ids with the minimal ancestor covering set."""
     idset = set(ids)
     covered_leaves = set()
-
-    def gather(node):
-        nonlocal covered_leaves
+    def visit_collect(node):
         if node["id"] in idset:
-            covered_leaves |= _leaf_ids(node)
-            return
-        for child in (node.get("children") or []):
-            gather(child)
-
-    for root in tree:
-        gather(root)
+            covered_leaves.update(_leaf_ids(node))
+    _walk_tree(tree, visit_collect)
 
     out = set()
-
-    def collapse(node):
-        nonlocal out
-        leaves = _leaf_ids(node)
-        if leaves <= covered_leaves:
+    def visit_collapse(node):
+        if _leaf_ids(node) <= covered_leaves:
             out.add(node["id"])
-            return
-        for child in (node.get("children") or []):
-            collapse(child)
-
-    for root in tree:
-        collapse(root)
-    return out
-
-
-def _tree_name_map(tree, locale):
-    """Flatten (id → localised name) using the current locale."""
-    out = {}
-    def walk(node):
-        out[node["id"]] = localise(
-            node.get("translations") or {}, locale,
-        )
-        for child in (node.get("children") or []):
-            walk(child)
-    for root in tree:
-        walk(root)
+            return False
+        return True
+    _walk_tree_skip(tree, visit_collapse)
     return out
 
 
 def _topic_path(tree, topic):
     """Return the ids along the path to a topic, or None if not in the tree."""
-    def find(node, ancestors=()):
+    def visit(node, ancestors=()):
         if node["id"] == topic:
             return ancestors + (topic,)
         for child in (node.get("children") or []):
-            result = find(child, ancestors + (node["id"],))
+            result = visit(child, ancestors + (node["id"],))
             if result:
                 return result
     for root in tree:
-        result = find(root)
-        if result:
+        if result := visit(root):
             return result
     return None
 
@@ -333,8 +289,8 @@ def _jstree_data(tree, name_map, compressed, exclude_all=False, ids_provided=Fal
 
 def _attach_breadcrumbs(row, locale):
     """Add a breadcrumbs list to a row (root-first ordered ancestor chain)."""
-    tree = _sciences_tree()
-    name_map = _tree_name_map(tree, locale)
+    tree = load_tree()
+    name_map = topic_name_map(tree, locale)
     topic = row.get("topic_id")
     path = _topic_path(tree, topic)
     if path:
@@ -346,8 +302,21 @@ def _attach_breadcrumbs(row, locale):
 
 def _filtered_ids_for_query(tree, ids):
     """Convert a set of tree-level ids into the full set of leaf topic ids."""
-    valid = [i for i in ids if i in _all_ids(tree)]
-    return _expand_to_topics(tree, valid)
+    valid = [i for i in ids if i in all_tree_ids(tree)]
+    return _expand_selection(tree, valid)
+
+
+def _all_tree_root_ids(tree):
+    return {r["id"] for r in tree}
+
+
+def _localised_quantity_names(db, quantity_ids, locale):
+    """Localised names for the given quantity ids (preserves input order)."""
+    if not quantity_ids:
+        return []
+    names_by_id = fetch_quantities_by_ids(db, quantity_ids)
+    return [localise(names_by_id[qid], locale) for qid in quantity_ids
+            if qid in names_by_id]
 
 
 # ---------------------------------------------------------------------------
@@ -388,28 +357,31 @@ def _tree_order(tree):
     """Depth-first index for each tree node id (used to sort compressed ids)."""
     order = {}
     counter = [0]
-    def walk(node):
+    def visit(node):
         order[node["id"]] = counter[0]
         counter[0] += 1
-        for c in (node.get("children") or []):
-            walk(c)
-    for root in tree:
-        walk(root)
+    _walk_tree(tree, visit)
     return order
 
 
 def _tree_gen_map(tree):
     """Map of node id → 'cs-cz-gen' translation (Czech genitive form)."""
     out = {}
-    def walk(node):
+    def visit(node):
         g = (node.get("translations") or {}).get("cs-cz-gen")
         if g:
             out[node["id"]] = g
-        for c in (node.get("children") or []):
-            walk(c)
-    for root in tree:
-        walk(root)
+    _walk_tree(tree, visit)
     return out
+
+
+def _render_list_heading(view_label, tree, compressed, fs, db, locale):
+    """Render the /quantities or /formulas page heading from filter state."""
+    return _heading_from_compressed(
+        view_label, compressed, topic_name_map(tree, locale), locale, fs,
+        dim_mode=g.get("dim_mode", "dim"), dimension_caches=_get_dimension_caches(),
+        active_quantity_names=_localised_quantity_names(db, fs.quantity_ids, locale),
+    )
 
 
 def _heading_from_compressed(view_label, compressed, name_map, locale, fs,
@@ -420,14 +392,11 @@ def _heading_from_compressed(view_label, compressed, name_map, locale, fs,
     Format: {view_label} from {topics} with {quantity_label} {quantities}
             where difficulty is {difficulty} and {dimensions}
     """
-    def _loc_ui(key):
-        return _ui_lookup(locale, key)
-
+    ui = lambda key: _ui_lookup(locale, key)
     parts = [view_label]
 
-    # --- topics ---
     if compressed:
-        tree = _sciences_tree()
+        tree = load_tree()
         order = _tree_order(tree)
         gen_map = _tree_gen_map(tree) if locale == "cs-cz" else {}
         seen = set()
@@ -439,31 +408,29 @@ def _heading_from_compressed(view_label, compressed, name_map, locale, fs,
                 seen.add(n)
         if topic_names:
             joined = _join_names(topic_names, locale)
-            prep = _sibilant_prep(joined, _loc_ui("heading.from"), locale)
+            prep = _sibilant_prep(joined, ui("heading.from"), locale)
             parts.append(f"{prep} {joined}")
 
-    # --- quantities ---
     if active_quantity_names:
-        count = len(active_quantity_names)
-        q_label = _loc_ui("heading.quantity") if count == 1 else _loc_ui("heading.quantities")
+        q_label = ui("heading.quantity" if len(active_quantity_names) == 1
+                     else "heading.quantities")
         q_conj = "heading.or" if fs.quantity_mode == "or" else "heading.and"
         joined = _join_names(active_quantity_names, locale, q_conj)
-        prep = _sibilant_prep(joined, _loc_ui("heading.with"), locale)
+        prep = _sibilant_prep(joined, ui("heading.with"), locale)
         parts.append(f"{prep} {q_label} {joined}")
 
-    # --- difficulty ---
-    diff_str = ""
+    clauses = []
     if fs.diff_min > MIN_DIFFICULTY or fs.diff_max < MAX_DIFFICULTY:
-        where = _loc_ui("heading.where_difficulty_is")
+        where = ui("heading.where_difficulty_is")
         if fs.diff_min == fs.diff_max:
-            diff_str = f"{where} {fs.diff_min}"
+            clauses.append(f"{where} {fs.diff_min}")
         else:
-            diff_str = f"{where} {fs.diff_min}\u2013{fs.diff_max}"
+            clauses.append(f"{where} {fs.diff_min}\u2013{fs.diff_max}")
 
-    # --- dimensions ---
-    caches = dimension_caches or {}
-    x_map = caches.get("var" if dim_mode == "unit" else dim_mode, {})
-    y_map = caches.get("unit", {})
+    if dimension_caches is None:
+        dimension_caches = {}
+    x_map = dimension_caches.get("var" if dim_mode == "unit" else dim_mode, {})
+    y_map = dimension_caches.get("unit", {})
     op_syms = {"eq": "=", "geq": "\u2265", "leq": "\u2264"}
     dim_parts = []
     for symbol in DIMENSION_SYMBOLS():
@@ -476,89 +443,150 @@ def _heading_from_compressed(view_label, compressed, name_map, locale, fs,
         y_sym = _strip_textcmd(y_map.get(symbol, symbol))
         dv = str(value).translate(SUPERSCRIPT_DIGITS)
         dim_parts.append(f"{x_sym} {op_syms[op]} {y_sym}{dv}")
-    dim_str = ""
     if dim_parts:
         d_conj = "heading.or" if fs.dim_mode == "or" else "heading.and"
         joined = _join_names(dim_parts, locale, d_conj)
-        dim_str = f"{_loc_ui('heading.where_dimensions_are')} {joined}"
+        clauses.append(f"{ui('heading.where_dimensions_are')} {joined}")
 
-    # --- combine difficulty + dimensions ---
-    if diff_str and dim_str:
-        parts.append(f"{diff_str} {_loc_ui('heading.and')} {dim_str}")
-    elif diff_str:
-        parts.append(diff_str)
-    elif dim_str:
-        parts.append(dim_str)
+    if clauses:
+        parts.append(f" {ui('heading.and')} ".join(clauses))
 
     text = " ".join(parts)
-    return text[0].upper() + text[1:] if text else f"{_loc_ui('heading.all')} {view_label}"
+    return text[0].upper() + text[1:] if text else f"{ui('heading.all')} {view_label}"
 
 
 # ---------------------------------------------------------------------------
 # Locale
 # ---------------------------------------------------------------------------
 
-_available_locales = None
-_lang_to_locale = None
-
+DEFAULT_LOCALE = "en-us"
 DEFAULT_LOCALE_FALLBACK = {
     "meta": {"name": "US English", "acceptLanguage": "en-US"},
     "ui": {},
 }
 
+# (locale → loaded dict, lang → locale)
+_LOCALES: dict | None = None
 
-def _scan_locales():
-    """Discover available locale files and build Accept-Language mapping."""
-    global _available_locales, _lang_to_locale
-    if _available_locales is not None:
-        return _available_locales
-    _available_locales = {}
-    _lang_to_locale = {}
+
+def _load_locales():
+    """Read all locales/*.json files. Cached after first call."""
+    global _LOCALES
+    if _LOCALES is not None:
+        return _LOCALES
+    data = {}
+    lang_map = {}
     if _LOCALE_DIR.is_dir():
         for path in sorted(_LOCALE_DIR.glob("*.json")):
             locale = path.stem
             try:
                 with open(path, encoding="utf-8") as f:
-                    data = json.load(f)
+                    payload = json.load(f)
             except (OSError, ValueError):
                 continue
-            meta = data.get("meta", {})
-            _available_locales[locale] = data
-            lang = meta.get("acceptLanguage", locale)
-            _lang_to_locale[lang] = locale
-    if "en-us" not in _available_locales:
-        _available_locales["en-us"] = DEFAULT_LOCALE_FALLBACK
-    _lang_to_locale.setdefault("en-US", "en-us")
-    _lang_to_locale.setdefault("en", "en-us")
-    return _available_locales
+            data[locale] = payload
+            lang = payload.get("meta", {}).get("acceptLanguage", locale)
+            lang_map[lang] = locale
+    if DEFAULT_LOCALE not in data:
+        data[DEFAULT_LOCALE] = DEFAULT_LOCALE_FALLBACK
+    lang_map.setdefault("en-US", DEFAULT_LOCALE)
+    lang_map.setdefault("en", DEFAULT_LOCALE)
+    _LOCALES = (data, lang_map)
+    return _LOCALES
 
 
-def _resolve_locale_from_header(header):
-    """Match Accept-Language header to best available locale."""
+def _available_locales():
+    return _load_locales()[0]
+
+
+def _lang_to_locale():
+    return _load_locales()[1]
+
+
+def _locale_chain(start):
+    """Locale code → list of codes walking the fallback chain (deduped)."""
+    data, _ = _load_locales()
+    chain = []
+    seen = set()
+    locale = start
+    while locale and locale not in seen:
+        seen.add(locale)
+        chain.append(locale)
+        locale = data.get(locale, {}).get("meta", {}).get("fallback")
+    return chain
+
+
+def _resolve_locale(header):
+    """Pick the best locale from an Accept-Language header (or default)."""
     if not header:
-        return "en-us"
+        return DEFAULT_LOCALE
+    lang_map = _lang_to_locale()
     for part in header.split(","):
         code = part.split(";")[0].strip()[:5]
-        if code in _lang_to_locale:
-            return _lang_to_locale[code]
+        if code in lang_map:
+            return lang_map[code]
         base = code[:2]
-        if base in _lang_to_locale:
-            return _lang_to_locale[base]
-    return "en-us"
+        if base in lang_map:
+            return lang_map[base]
+    return DEFAULT_LOCALE
+
+
+def _build_ui_with_fallback(locale):
+    """Deep-merge UI dict along the fallback chain (current locale wins)."""
+    data = _available_locales()
+    merged = {}
+    for loc in reversed(_locale_chain(locale)):
+        ui = data.get(loc, {}).get("ui", {})
+        for cat, children in ui.items():
+            merged.setdefault(cat, {}).update(children)
+    return merged
+
+
+def _ui_lookup(locale, key):
+    """Look up a dotted UI key ('category.child') in the nested locale ui dict,
+    following the fallback chain (e.g. cs-cz -> en-us)."""
+    data = _available_locales()
+    parts = key.split(".", 1)
+    if len(parts) != 2:
+        return key
+    cat, child = parts
+    for loc in _locale_chain(locale):
+        val = data.get(loc, {}).get("ui", {}).get(cat, {}).get(child)
+        if val is not None:
+            return val
+    return key
+
+
+@app.template_global()
+def _(data):
+    """Resolve a localized string.
+
+    If *data* looks like JSON (starts with ``{``), it is treated as a DB
+    i18n object (``{"en-us": "...", "cs-cz": "..."}``) and resolved against
+    the current locale.  Otherwise it is treated as a UI-string key looked
+    up in the current locale file.  Falls back to en-us, then to the raw
+    value.
+    """
+    loc = getattr(g, "locale", DEFAULT_LOCALE)
+    if data and data.strip().startswith("{"):
+        result = localise(data, loc)
+        if result:
+            return result
+    return _ui_lookup(loc, data)
+
+
+app.template_global()(render_symbol)
 
 
 @app.before_request
 def detect_locale():
-    _scan_locales()
     locale = request.args.get("locale") or request.cookies.get("sf_locale")
-    if locale and locale in _available_locales:
+    if locale and locale in _available_locales():
         session["locale"] = locale
-    if session.get("locale") in _available_locales:
+    if session.get("locale") in _available_locales():
         g.locale = session["locale"]
     else:
-        g.locale = _resolve_locale_from_header(
-            request.headers.get("Accept-Language", "")
-        )
+        g.locale = _resolve_locale(request.headers.get("Accept-Language", ""))
 
     dim_mode = request.args.get("dim_mode") or request.cookies.get("sf_dim_mode")
     if dim_mode in ("dim", "var", "unit"):
@@ -589,14 +617,7 @@ def _database_is_initialised(db):
 
 
 def _bootstrap_database():
-    """Apply schema and seed data on first run when the DB has no tables.
-
-    For existing databases, also apply lightweight ALTER TABLE migrations
-    for columns added in newer schema versions (schema.sql uses
-    CREATE TABLE IF NOT EXISTS, which won't add columns to an existing
-    table). Each migration should be idempotent — it should detect
-    whether the change has already been applied.
-    """
+    """Apply schema and seed data on first run when the DB has no tables."""
     conn = open_database()
     try:
         if not _database_is_initialised(conn):
@@ -606,38 +627,8 @@ def _bootstrap_database():
             conn.execute("PRAGMA foreign_keys = ON")
             conn.commit()
             logger.info("Database initialised at %s", database_path())
-        _apply_migrations(conn)
     finally:
         conn.close()
-
-
-def _column_exists(conn, table: str, column: str) -> bool:
-    row = conn.execute(
-        f"SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?",
-        (column,),
-    ).fetchone()
-    return bool(row)
-
-
-def _apply_migrations(conn):
-    """Apply ALTER TABLE migrations for columns added after the initial
-    schema. Each migration must be idempotent — re-running on an
-    already-migrated DB is a no-op.
-    """
-    # Migration: ensure `operator.parened_arg INTEGER` column exists.
-    # (Fresh installs already have it via schema.sql; this catches DBs
-    # created before the column was introduced. The `parened_arg=0`
-    # flags are reapplied to sqrt/frac/pow each time so legacy seeds
-    # without the explicit value still render correctly.)
-    if not _column_exists(conn, "operator", "parened_arg"):
-        conn.execute(
-            "ALTER TABLE operator ADD COLUMN parened_arg INTEGER NOT NULL "
-            "DEFAULT 1 CHECK (parened_arg IN (0, 1))"
-        )
-        conn.commit()
-        logger.info("Migration: added operator.parened_arg column")
-    conn.execute("UPDATE operator SET parened_arg = 0 WHERE id IN ('sqrt', 'frac', 'pow')")
-    conn.commit()
 
 
 _bootstrap_database()
@@ -676,64 +667,6 @@ def _uninitialised_response():
 # ---------------------------------------------------------------------------
 # Template globals
 # ---------------------------------------------------------------------------
-
-def _build_ui_with_fallback(locale):
-    """Deep-merge UI dict along the fallback chain (current locale wins)."""
-    _scan_locales()
-    chain = []
-    visited = set()
-    while locale and locale not in visited:
-        visited.add(locale)
-        chain.append(locale)
-        locale = _available_locales.get(locale, {}).get("meta", {}).get("fallback")
-    merged = {}
-    for loc in reversed(chain):
-        ui = _available_locales.get(loc, {}).get("ui", {})
-        for cat, children in ui.items():
-            if cat not in merged:
-                merged[cat] = {}
-            merged[cat].update(children)
-    return merged
-
-
-def _ui_lookup(locale, key):
-    """Look up a dotted UI key ('category.child') in the nested locale ui dict,
-    following the fallback chain (e.g. cs-cz -> en-us)."""
-    _scan_locales()
-    parts = key.split(".", 1)
-    if len(parts) == 2:
-        cat, child = parts
-        visited = set()
-        while locale and locale not in visited:
-            visited.add(locale)
-            ui = _available_locales.get(locale, {}).get("ui", {})
-            val = ui.get(cat, {}).get(child)
-            if val is not None:
-                return val
-            locale = _available_locales.get(locale, {}).get("meta", {}).get("fallback")
-    return key
-
-
-@app.template_global()
-def _(data):
-    """Resolve a localized string.
-
-    If *data* looks like JSON (starts with ``{``), it is treated as a DB
-    i18n object (``{"en-us": "...", "cs-cz": "..."}``) and resolved against
-    the current locale.  Otherwise it is treated as a UI-string key looked
-    up in the current locale file.  Falls back to en-us, then to the raw
-    value.
-    """
-    loc = g.locale if hasattr(g, "locale") else "en-us"
-    s = (data or "").strip()
-    if s.startswith("{"):
-        result = localise(s, loc)
-        if result:
-            return result
-    return _ui_lookup(loc, data)
-
-
-app.template_global()(render_symbol)
 
 
 def _get_dimension_caches():
@@ -801,32 +734,24 @@ def _render_unit_symbol(default_unit):
 @app.context_processor
 def inject_globals():
     locale = g.get("locale", "en-us")
-    tree = _sciences_tree()
+    tree = load_tree()
     db = None
     try:
         db = get_db()
     except sqlite3.OperationalError as exc:
         logger.warning("Database unavailable: %s", exc)
     fs = parse_filter_state(request.args, request.path)
-    name_map = _tree_name_map(tree, locale)
+    name_map = topic_name_map(tree, locale)
     compressed = _compress_selection(tree, fs.ids)
-    tree_json = _jstree_data(tree, name_map, compressed, fs.exclude_all, ids_provided=fs.ids_provided)
-    path = request.path
-    current_view = (
-        "quantities"
-        if path == "/quantities" or path.startswith(("/quantity/", "/unit/"))
-        else "formulas"
-    )
+
     all_quantities_for_filter = []
     dimension_caches = {"var": {}, "unit": {}, "dim": {}}
     if db is not None:
         try:
-            for q in fetch_all_quantities(db):
-                all_quantities_for_filter.append({
-                    "id": q["id"],
-                    "name": localise(q["name"], locale),
-                    "symbol": q["symbol"] or "",
-                })
+            all_quantities_for_filter = [
+                {"id": q["id"], "name": localise(q["name"], locale), "symbol": q["symbol"] or ""}
+                for q in fetch_all_quantities(db)
+            ]
         except sqlite3.OperationalError as exc:
             logger.warning("Quantity table unavailable: %s", exc)
         dimension_caches = _get_dimension_caches()
@@ -834,18 +759,19 @@ def inject_globals():
     dim_mode = g.get("dim_mode", "dim")
     dim_symbols = dimension_caches.get(dim_mode, dimension_caches.get("dim", {}))
 
-    _scan_locales()
     locale_list = [
         {"code": code, "name": data.get("meta", {}).get("name", code)}
-        for code, data in _available_locales.items()
+        for code, data in _available_locales().items()
     ]
     locale_ui = _build_ui_with_fallback(locale)
+    is_qty_page = (request.path == "/quantities"
+                   or request.path.startswith(("/quantity/", "/unit/")))
 
     return dict(
-        tree_json=tree_json,
+        tree_json=_jstree_data(tree, name_map, compressed, fs.exclude_all, ids_provided=fs.ids_provided),
         diff_min=fs.diff_min,
         diff_max=fs.diff_max,
-        current_view=current_view,
+        current_view="quantities" if is_qty_page else "formulas",
         dim_filter=fs.dimension_filter,
         dim_mode=fs.dim_mode,
         qty_mode=fs.quantity_mode,
@@ -876,25 +802,69 @@ def create_formula():
     return render_template("create.html")
 
 
-def _build_formula_detail_items(db, formula_id, locale):
-    """Build the formula detail table data from formula_token rows."""
+def _items_from_tokens(db, tokens):
+    """Build detail-items-shaped dicts from in-memory RPN tokens + overrides.
+
+    Resolves quantity metadata (name/symbol/default_unit) once via IN-clause
+    query, then one dict per quantity token (operators/constants skipped).
+    """
+    qids = {tok["quantity_id"] for tok in tokens
+            if tok.get("token_kind") == "quantity"}
+    if not qids:
+        return []
+    placeholder = ",".join("?" for _ in qids)
+    qrows = {
+        r["id"]: r for r in db.execute(
+            f"SELECT id, name, symbol, default_unit FROM quantity "
+            f"WHERE id IN ({placeholder})", list(qids)
+        ).fetchall()
+    }
+    items = []
+    for tok in tokens:
+        if tok.get("token_kind") != "quantity":
+            continue
+        qrow = qrows.get(tok["quantity_id"])
+        if not qrow:
+            continue
+        qid = tok["quantity_id"]
+        qty_name = localise(qrow["name"], "en-us") or qid.replace("_", " ").title()
+        items.append({
+            "quantity_id": qid,
+            "quantity_symbol": qrow["symbol"],
+            "quantity_name": qty_name,
+            "symbol_overwrite": tok.get("symbol_overwrite") or "",
+            "quantity_name_overwrite": tok.get("quantity_name_overwrite") or "",
+            "label": tok.get("label") or "",
+            "default_unit": qrow["default_unit"],
+        })
+    return items
+
+
+def _build_formula_detail_items(db, formula_id, locale, tokens=None):
+    """Build the formula detail table data.
+
+    Pass either `formula_id` (to fetch from formula_token) or `tokens` (the
+    in-memory output of `parse_equation`, with overrides already applied).
+    Both paths produce the same shape — the /create preview flow uses
+    `tokens` to skip the round-trip through formula_token.
+    """
+    if tokens is None:
+        items = [dict(r) for r in fetch_formula_detail_items(db, formula_id)]
+    else:
+        items = _items_from_tokens(db, tokens)
+
     result = []
-    for item in fetch_formula_detail_items(db, formula_id):
-        item = dict(item)
+    for item in items:
         qid = item.get("quantity_id")
         if not qid:
             continue
 
         symbol_latex = render_variable_base(item, locale)
-
         qty_name = item.get("quantity_name") or qid.replace("_", " ").title()
         orig_symbol = (item.get("quantity_symbol") or "").strip()
-        overwrite_raw = item.get("symbol_overwrite") or ""
-        overwrite = localise(overwrite_raw, locale)
+        overwrite = localise(item.get("symbol_overwrite") or "", locale)
         has_overwrite = bool(overwrite and orig_symbol and overwrite != orig_symbol)
-
         qno_raw = localise(item.get("quantity_name_overwrite") or "", locale)
-
         qlink = (
             f'<a href="/quantity/{html_module.escape(qid)}">'
             f"{html_module.escape(qty_name)}</a>"
@@ -908,10 +878,8 @@ def _build_formula_detail_items(db, formula_id, locale):
             marker_ids = {m.split('|')[0].lower().replace(' ', '_')
                           for m in re.findall(r'\[([^\]]+)\]', qno_raw)}
             if qid in marker_ids:
-                # qno has [quantity_id] marker — resolve links
                 name_html = parse_quantity_name_markers(qno_raw)
             else:
-                # qno is plain text — use as name, show orig symbol + quantity name in parens
                 name_html = html_module.escape(qno_raw)
                 if has_overwrite and orig_symbol:
                     paren_parts.append(qlink)
@@ -932,71 +900,6 @@ def _build_formula_detail_items(db, formula_id, locale):
     return result
 
 
-def _build_formula_detail_items_from_tokens(db, tokens, overrides, locale):
-    """Same shape as :func:`_build_formula_detail_items` but for in-memory
-    tokens produced by ``parse_equation``. The ``overrides`` arg is accepted
-    for symmetry but unused here — the caller is expected to have already
-    applied the overrides to the tokens (which is what ``preview_equation``
-    does when ``overrides`` is passed in).
-    """
-    result = []
-    for tok in tokens:
-        if tok.get("token_kind") != "quantity":
-            continue
-        qid = tok["quantity_id"]
-        qrow = db.execute(
-            "SELECT id, name, symbol, default_unit FROM quantity WHERE id=?",
-            (qid,),
-        ).fetchone()
-        if not qrow:
-            continue
-        qty_name = (json.loads(qrow["name"]).get("en-us") if qrow["name"] else None) or qid.replace("_", " ").title()
-        item = {
-            "quantity_id": qid,
-            "quantity_symbol": qrow["symbol"],
-            "quantity_name": qty_name,
-            "symbol_overwrite": tok.get("symbol_overwrite") or "",
-            "quantity_name_overwrite": tok.get("quantity_name_overwrite") or "",
-            "label": tok.get("label") or "",
-            "default_unit": qrow["default_unit"],
-        }
-
-        symbol_latex = render_variable_base(item, locale)
-        orig_symbol = (item["quantity_symbol"] or "").strip()
-        overwrite = localise(item["symbol_overwrite"], locale)
-        has_overwrite = bool(overwrite and orig_symbol and overwrite != orig_symbol)
-        qno_raw = localise(item["quantity_name_overwrite"], locale)
-
-        qlink = (
-            f'<a href="/quantity/{html_module.escape(qid)}">'
-            f"{html_module.escape(qty_name)}</a>"
-        )
-        paren_parts = []
-        if has_overwrite and orig_symbol:
-            paren_parts.append(f"${orig_symbol}$")
-        if qno_raw:
-            marker_ids = {m.split('|')[0].lower().replace(' ', '_')
-                          for m in re.findall(r'\[([^\]]+)\]', qno_raw)}
-            if qid in marker_ids:
-                name_html = parse_quantity_name_markers(qno_raw)
-            else:
-                name_html = html_module.escape(qno_raw)
-                if has_overwrite and orig_symbol:
-                    paren_parts.append(qlink)
-        else:
-            name_html = qlink
-        paren_html = f"({' '.join(paren_parts)})" if paren_parts else ""
-        default_unit = item["default_unit"]
-        result.append({
-            "symbol_latex": symbol_latex,
-            "name_html": Markup(name_html) if name_html else "",
-            "paren_html": Markup(paren_html) if paren_html else "",
-            "default_unit_html": Markup(_render_unit_html(default_unit, locale)) if default_unit else "",
-            "default_unit_symbol_latex": _render_unit_symbol(default_unit) if default_unit else "",
-        })
-    return result
-
-
 @app.route("/formula/<formula_id>")
 def formula_detail(formula_id):
     db = get_db()
@@ -1009,7 +912,6 @@ def formula_detail(formula_id):
     latex = render_formula(db, formula_id, locale=locale)
     related = []
     for r in fetch_formula_related(db, formula_id):
-        r = dict(r)
         r["latex"] = render_formula(db, r["related_id"], locale=locale)
         related.append(r)
     detail_items = _build_formula_detail_items(db, formula_id, locale)
@@ -1055,7 +957,6 @@ def quantity_detail(quantity_id):
     default_unit_html = Markup(
         _render_unit_html(q["default_unit"], locale)
     ) if q.get("default_unit") else ""
-
     default_unit_symbol_latex = Markup(
         _render_unit_symbol(q["default_unit"])
     ) if q.get("default_unit") else ""
@@ -1068,8 +969,8 @@ def quantity_detail(quantity_id):
             du = json.loads(q["default_unit"])
         except (json.JSONDecodeError, TypeError):
             du = []
-        du_ids = {e["unit"] for e in du}
         if du:
+            du_ids = {e["unit"] for e in du}
             placeholders = ",".join("?" for _ in du)
             unit_system_row = db.execute(
                 f"SELECT unit_system FROM unit WHERE id IN ({placeholders}) "
@@ -1077,19 +978,22 @@ def quantity_detail(quantity_id):
                 tuple(e["unit"] for e in du),
             ).fetchone()
             unit_system = unit_system_row["unit_system"] if unit_system_row else "SI"
+            units.append({
+                "symbol_latex": default_unit_symbol_latex,
+                "name_html": default_unit_html,
+                "unit_system": unit_system,
+                "factor": 1,
+                "offset": 0,
+                "latex_factor": None,
+            })
         else:
             unit_system = "SI"
-        units.append({
-            "symbol_latex": default_unit_symbol_latex,
-            "name_html": default_unit_html,
-            "unit_system": unit_system,
-            "factor": 1,
-            "offset": 0,
-            "latex_factor": None,
-        })
+    else:
+        unit_system = "SI"
 
-    extra_units = [dict(u) for u in fetch_quantity_units(db, quantity_id) if u["id"] not in du_ids]
-    for eu in extra_units:
+    for eu in (dict(u) for u in fetch_quantity_units(db, quantity_id)):
+        if eu["id"] in du_ids:
+            continue
         units.append({
             "symbol_latex": Markup(render_symbol(eu["symbol"])),
             "name_html": _unit_name_link(eu["id"]),
@@ -1098,13 +1002,12 @@ def quantity_detail(quantity_id):
             "offset": eu.get("offset", 0),
             "latex_factor": eu.get("latex_factor"),
         })
-    show_offset = any(u.get("offset", 0) != 0 for u in units)
-    show_factor = any(u.get("factor", 1) != 1 for u in units)
+    show_offset = any(u["offset"] != 0 for u in units)
+    show_factor = any(u["factor"] != 1 for u in units)
 
     dim_caches = _get_dimension_caches()
-    quantity_dims = extract_dimensions_from_row(q)
     dim_latex = format_dimensions_latex(
-        *quantity_dims,
+        *extract_dimensions_from_row(q),
         variable_symbols=dim_caches["var"],
         unit_symbols=dim_caches["unit"],
         dimension_symbols=dim_caches["dim"],
@@ -1112,7 +1015,7 @@ def quantity_detail(quantity_id):
     )
     return render_template(
         "quantity.html",
-        q=dict(q, default_unit_html=default_unit_html),
+        q={**q, "default_unit_html": default_unit_html},
         units=units,
         primary_formulas=primary_formulas,
         nonprimary_formulas=non_primary_formulas,
@@ -1160,7 +1063,6 @@ def token_dictionary():
     """All quantities, constants, and operators — used by the formula
     builder UI for autocomplete, validation, and rendering."""
     db = get_db()
-    from scifind_lib import DIMENSION_COLUMNS
     dim_cols = DIMENSION_COLUMNS()
     quantities = [
         {
@@ -1216,11 +1118,11 @@ def _parse_override_form_keys():
     matching the keys the /create page uses for its override inputs.
     """
     overrides = {}
+    sep = "]["
     for key, values in request.form.lists():
         if not key.startswith("override[") or not key.endswith("]"):
             continue
         body = key[len("override["):-1]
-        sep = "]["
         if sep not in body:
             continue
         ov_key, field = body.rsplit(sep, 1)
@@ -1249,7 +1151,7 @@ def create_preview_render():
     result = preview_equation(db, equation, locale=locale, dim_caches=caches, overrides=overrides, dim_mode=g.get("dim_mode", "dim"))
     if result.get("error") or not result.get("latex"):
         return result
-    items = _build_formula_detail_items_from_tokens(db, result["tokens"], overrides, locale)
+    items = _build_formula_detail_items(db, None, locale, tokens=result["tokens"])
     result["detail_items"] = items
     return result
 
@@ -1290,64 +1192,52 @@ def build_sql_api():
 # ---------------------------------------------------------------------------
 
 
-def _row_dict(row):
-    """sqlite3.Row → dict (supports `.get`)."""
-    return dict(row) if row is not None else {}
-
-
 def _operator_latex(item):
     """Generate LaTeX for an operator in the token sidebar.
 
-    Uses id, symbol, and operator_type to produce LaTeX with placeholder
-    letters starting from x, y, z, a, b, ...
+    Placeholder arguments are x, y, then a, b, c, ... (so the prefix
+    "x, y, z" reads like the canonical math notation).
     """
     op_id = item["id"]
     symbol = item.get("symbol") or ""
     op_type = item["operator_type"]
-    L = [chr(c) for c in range(ord("x"), ord("z") + 1)] + [chr(c) for c in range(ord("a"), ord("x"))]
+    placeholders = list("xyz") + [chr(c) for c in range(ord("a"), ord("z"))]
+    x, y = placeholders[0], placeholders[1]
     if op_type in ("infix", "relational"):
         if op_id == "frac":
-            return f"\\frac{{{L[0]}}}{{{L[1]}}}"
+            return f"\\frac{{{x}}}{{{y}}}"
         if op_id == "pow":
-            return f"{L[0]}^{{{L[1]}}}"
+            return f"{x}^{{{y}}}"
         if symbol:
-            return f"{L[0]} {symbol} {L[1]}"
-        return f"{L[0]} {L[1]}"
+            return f"{x} {symbol} {y}"
+        return f"{x} {y}"
     if op_type == "prefix":
-        if symbol == "-":
-            return f"-{L[0]}"
-        return f"{symbol} {L[0]}"
+        return f"-{x}" if symbol == "-" else f"{symbol} {x}"
     if op_type == "postfix":
-        return f"{L[0]} {symbol}" if symbol else L[0]
+        return f"{x}{symbol}" if symbol else x
     return ""
 
 
 def _render_token_item(item, kind, locale):
     """One <div class="qty-result"> for the token sidebar."""
-    item = _row_dict(item)
+    item = dict(item)
     if kind == "op":
-        latex = _operator_latex(item)
+        sym_text = _operator_latex(item)
+        name = item["id"]
         insert = item.get("symbol") or item["id"]
         search = " ".join([item["id"], item.get("symbol") or ""]).lower()
-        return (
-            f'<div class="qty-result" data-kind="op" data-insert="{html_module.escape(insert)}"'
-            f' data-search="{html_module.escape(search)}">'
-            f'<span class="qty-result-sym">${html_module.escape(latex)}$</span>'
-            f'<span class="qty-result-name">{html_module.escape(item["id"])}</span>'
-            f'</div>'
-        )
-    name = localise(item.get("name") or "", locale, default="en-us") or item["id"]
-    symbol = item.get("symbol") or ""
-    sym_html = (
-        f'<span class="qty-result-sym">${html_module.escape(symbol)}$</span>'
-        if symbol else ""
-    )
-    haystack = " ".join([
-        item["id"], symbol, str(item.get("name") or ""),
-    ]).lower()
+    else:
+        sym_text = item.get("symbol") or ""
+        name = localise(item.get("name") or "", locale, default="en-us") or item["id"]
+        insert = item["id"]
+        search = " ".join([
+            item["id"], item.get("symbol") or "", str(item.get("name") or ""),
+        ]).lower()
+
+    sym_html = f'<span class="qty-result-sym">${html_module.escape(sym_text)}$</span>' if sym_text else '<span class="qty-result-sym"></span>'
     return (
-        f'<div class="qty-result" data-kind="{kind}" data-insert="{html_module.escape(item["id"])}"'
-        f' data-search="{html_module.escape(haystack)}">'
+        f'<div class="qty-result" data-kind="{kind}" data-insert="{html_module.escape(insert)}"'
+        f' data-search="{html_module.escape(search)}">'
         f'{sym_html}'
         f'<span class="qty-result-name">{html_module.escape(name)}</span>'
         f'</div>'
@@ -1375,22 +1265,19 @@ def create_token_sidebar():
     """Server-rendered Q/C/O token sidebar for the /create page."""
     db = get_db()
     locale = g.locale
-    quantities = fetch_all_quantities(db)
-    constants = fetch_all_constants(db)
-    operators = fetch_all_operators(db)
-
+    no_results = _("create.no_results")
     sections = [
         _render_token_section(
-            _("detail.quantities"), "token-qty", quantities, "qty", locale,
-            _("create.no_results"),
+            _("detail.quantities"), "token-qty",
+            fetch_all_quantities(db), "qty", locale, no_results,
         ),
         _render_token_section(
-            _("nav.constants"), "token-const", constants, "const", locale,
-            _("create.no_results"),
+            _("nav.constants"), "token-const",
+            fetch_all_constants(db), "const", locale, no_results,
         ),
         _render_token_section(
-            _("nav.operators"), "token-op", operators, "op", locale,
-            _("create.no_results"),
+            _("nav.operators"), "token-op",
+            fetch_all_operators(db), "op", locale, no_results,
         ),
     ]
 
@@ -1446,13 +1333,12 @@ def _render_breadcrumb(selected_id, tree, name_map):
 
 
 def _find_node(tree, node_id):
-    for root in tree:
-        if root["id"] == node_id:
-            return root
-        found = _find_node(root.get("children") or [], node_id)
-        if found is not None:
-            return found
-    return None
+    found = []
+    def visit(node):
+        if node["id"] == node_id:
+            found.append(node)
+    _walk_tree(tree, visit)
+    return found[0] if found else None
 
 
 def _render_menu_item(node_id, tree, name_map):
@@ -1479,8 +1365,8 @@ def _render_menu_item(node_id, tree, name_map):
 def create_breadcrumb():
     """Return the server-rendered breadcrumb for the given topic id."""
     topic = (request.args.get("topic") or "").strip() or None
-    tree = _sciences_tree()
-    name_map = _tree_name_map(tree, g.locale)
+    tree = load_tree()
+    name_map = topic_name_map(tree, g.locale)
     return _render_breadcrumb(topic, tree, name_map)
 
 
@@ -1494,18 +1380,12 @@ def create_languages():
     `owner/repo` slug the new-issue link should point to (overridable via
     the SCIFIND_GITHUB_REPO env var).
     """
-    locales = _scan_locales()
-    items = []
-    for code, data in sorted(locales.items()):
-        if code == "en-us" and code not in locales:
-            continue
-        meta = data.get("meta", {}) if isinstance(data, dict) else {}
-        items.append({
-            "code": code,
-            "name": meta.get("name", code),
-        })
+    items = [
+        {"code": code, "name": data.get("meta", {}).get("name", code)}
+        for code, data in sorted(_available_locales().items())
+    ]
     repo = os.environ.get("SCIFIND_GITHUB_REPO", "Creeperman3000/Scifind")
-    return {"current": getattr(g, "locale", "en-us"), "locales": items, "repo": repo}
+    return {"current": getattr(g, "locale", DEFAULT_LOCALE), "locales": items, "repo": repo}
 
 
 def _parse_translation_block(prefix):
@@ -1534,8 +1414,9 @@ def _parse_translation_links_block(prefix):
     Returns `{locale: [{"url": ..., "label": ...}, ...], ...}`.
     """
     out = {}
+    pattern = re.compile(r"^" + re.escape(prefix) + r"\[([^\]]+)\]\[links\]\[\]$")
     for key, val in request.form.items(multi=True):
-        m = re.match(r"^" + re.escape(prefix) + r"\[([^\]]+)\]\[links\]\[\]$", key)
+        m = pattern.match(key)
         if not m:
             continue
         loc = m.group(1)
@@ -1545,40 +1426,36 @@ def _parse_translation_links_block(prefix):
     return out
 
 
-def _build_create_sql_payload(db, form, *, for_issue=False):
-    """Common path for /create/build-sql and /create/build-issue.
+def _build_create_sql_payload(db, form):
+    """Parse the /create form fields and return (formula_sql, token_sql).
 
-    Returns (formula_sql, token_sql, payload_dict) on success or raises
-    ValueError. `payload_dict` includes the inputs (name_en, topic, ...,
-    translations) so callers can echo them back in HTML/issue body.
+    Raises ValueError for user-input errors that should be shown in the UI.
     """
-    def _scalar(name):
+    def scalar(name):
         return (form.get(name) or "").strip()
 
-    name_en = _scalar("name_en")
-    topic = _scalar("topic")
-    difficulty = _scalar("difficulty") or "2"
-    equation = (form.get("equation") or "")
-    description = _scalar("description") or None
-    links_raw = _scalar("links") or None
+    name_en = scalar("name_en")
+    topic = scalar("topic")
+    difficulty = scalar("difficulty") or "2"
+    equation = form.get("equation") or ""
+    description = scalar("description") or None
+    links_raw = scalar("links")
+    # One URL per line; blank lines skipped.
     links = None
     if links_raw:
-        # One URL per line. Empty lines are skipped.
-        parts = [p.strip() for p in links_raw.splitlines() if p.strip()]
-        links = [{"url": p} for p in parts] if parts else None
+        url_lines = [p.strip() for p in links_raw.splitlines() if p.strip()]
+        if url_lines:
+            links = [{"url": p} for p in url_lines]
 
     overrides = _parse_override_form_keys()
 
-    # Per-language fields are submitted as `tr[<locale>][name]`,
-    # `tr[<locale>][description]`, `tr[<locale>][links][]`,
-    # `tr[<locale>][overrides][<key>][symbol|name|label]`.
+    # Per-language fields are submitted as `tr[<locale>][name|description]`,
+    # `tr[<locale>][links][]`, and `tr_overrides[<locale>][<key>][field]`.
     tr_top = _parse_translation_block("tr")
     tr_links = _parse_translation_links_block("tr")
     tr_ov = _parse_translation_block("tr_overrides")
-
     translations = {}
-    all_locs = set(tr_top) | set(tr_links) | set(tr_ov)
-    for loc in all_locs:
+    for loc in set(tr_top) | set(tr_links) | set(tr_ov):
         entry = {}
         top = tr_top.get(loc, {})
         if "name" in top:
@@ -1592,7 +1469,7 @@ def _build_create_sql_payload(db, form, *, for_issue=False):
         if entry:
             translations[loc] = entry
 
-    formula_sql, token_sql = build_create_sql(
+    return build_create_sql(
         db,
         name_en=name_en,
         topic=topic,
@@ -1603,16 +1480,6 @@ def _build_create_sql_payload(db, form, *, for_issue=False):
         links=links,
         translations=translations,
     )
-    return formula_sql, token_sql, {
-        "name_en": name_en,
-        "topic": topic,
-        "difficulty": difficulty,
-        "equation": equation,
-        "description": description,
-        "links": links,
-        "overrides": overrides,
-        "translations": translations,
-    }
 
 
 def _render_sql_modal_html(formula_sql, token_sql):
@@ -1646,7 +1513,7 @@ def create_build_sql():
     """
     db = get_db()
     try:
-        formula_sql, token_sql, _ = _build_create_sql_payload(db, request.form)
+        formula_sql, token_sql = _build_create_sql_payload(db, request.form)
     except ValueError as e:
         body = (
             f'<p class="detail-desc" data-error="{html_module.escape(str(e))}">'
@@ -1662,9 +1529,9 @@ def all_quantities():
     locale = g.locale
     fs = parse_filter_state(request.args, request.path)
     fs.quantity_mode = "or"
-    tree = _sciences_tree()
+    tree = load_tree()
     compressed = _compress_selection(tree, fs.ids)
-    if compressed == {r["id"] for r in tree}:
+    if compressed == _all_tree_root_ids(tree):
         return redirect("/quantities")
 
     if fs.exclude_all or (fs.ids_provided and not fs.ids):
@@ -1674,7 +1541,7 @@ def all_quantities():
             heading=_("list.quantities_no_results"),
         )
 
-    raw_quantities = fetch_all_quantities(db)
+    raw_quantities = list(fetch_all_quantities(db))
     topic_filter = _filtered_ids_for_query(tree, fs.ids)
     dim_qty_ids = set(dimension_quantity_ids().values()) if fs.base_quantity_only else None
     filtered = []
@@ -1699,17 +1566,8 @@ def all_quantities():
         q["default_unit_symbol_latex"] = _render_unit_symbol(q["default_unit"])
         filtered.append(q)
 
-    name_map = _tree_name_map(tree, locale)
-    dim_caches = _get_dimension_caches()
-    quantity_names = []
-    if fs.quantity_ids:
-        names_by_id = fetch_quantities_by_ids(db, fs.quantity_ids)
-        quantity_names = [localise(names_by_id[qid], locale) for qid in fs.quantity_ids
-                          if qid in names_by_id]
-    heading = _heading_from_compressed(
-        _("detail.quantities"), compressed, name_map, locale, fs,
-        dim_mode=g.get("dim_mode", "dim"), dimension_caches=dim_caches,
-        active_quantity_names=quantity_names,
+    heading = _render_list_heading(
+        _("detail.quantities"), tree, compressed, fs, db, locale,
     )
     if fs.base_quantity_only:
         heading = _("detail.base_quantities")
@@ -1721,9 +1579,9 @@ def all_formulas():
     db = get_db()
     locale = g.locale
     fs = parse_filter_state(request.args, request.path)
-    tree = _sciences_tree()
+    tree = load_tree()
     compressed = _compress_selection(tree, fs.ids)
-    if compressed == {r["id"] for r in tree}:
+    if compressed == _all_tree_root_ids(tree):
         return redirect("/formulas")
 
     if fs.exclude_all or (fs.ids_provided and not fs.ids):
@@ -1736,7 +1594,7 @@ def all_formulas():
     formulas = [dict(f) for f in fetch_all_formulas(db)]
     topic_filter = _filtered_ids_for_query(tree, fs.ids)
     if topic_filter:
-        formulas = [f for f in formulas if f.get("topic_id") in topic_filter]
+        formulas = [f for f in formulas if f["topic_id"] in topic_filter]
     formulas = [
         f for f in formulas
         if fs.diff_min <= (f.get("difficulty") or 0) <= fs.diff_max
@@ -1764,18 +1622,8 @@ def all_formulas():
         _attach_breadcrumbs(f, locale)
         f["latex"] = render_formula(db, f["id"], locale=locale)
 
-    quantity_names = []
-    if fs.quantity_ids:
-        names_by_id = fetch_quantities_by_ids(db, fs.quantity_ids)
-        quantity_names = [localise(names_by_id[qid], locale) for qid in fs.quantity_ids
-                          if qid in names_by_id]
-
-    name_map = _tree_name_map(tree, locale)
-    dim_caches = _get_dimension_caches()
-    heading = _heading_from_compressed(
-        _("nav.formulas"), compressed, name_map, locale, fs,
-        dim_mode=g.get("dim_mode", "dim"), dimension_caches=dim_caches,
-        active_quantity_names=quantity_names,
+    heading = _render_list_heading(
+        _("nav.formulas"), tree, compressed, fs, db, locale,
     )
     return render_template("formulas.html", formulas=formulas, heading=heading)
 
