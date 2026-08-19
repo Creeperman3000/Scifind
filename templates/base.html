@@ -23,7 +23,7 @@
   <script>window._KATEX_MACROS = {};</script>
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/contrib/auto-render.min.js"
-    onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],macros:window._KATEX_MACROS});document.documentElement.classList.add('katex-ready');if(typeof renderQtyChips==='function')renderQtyChips();"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],macros:window._KATEX_MACROS});document.documentElement.classList.add('katex-ready');if(typeof renderQtyChips==='function')renderQtyChips();if(typeof _initLatexObserver==='function')_initLatexObserver();"
     onerror="document.documentElement.classList.add('katex-ready');"></script>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/jstree.min.css') }}">
   <script src="{{ url_for('static', filename='js/jquery.min.js') }}"></script>
@@ -329,7 +329,7 @@
     .formula-card:hover { box-shadow: var(--shadow-sm); }
     .formula-card a { display: flex; flex-direction: column; padding: 16px; text-decoration: none; color: inherit; height: 100%; }
     .formula-card a:hover { text-decoration: none; }
-    .formula-card .formula-eqn { font-size: 1.1rem; text-align: center; padding-bottom: 12px; border-bottom: 1px solid var(--border); margin-bottom: 10px; color: var(--text); }
+    .formula-card .formula-eqn { font-size: 1.1rem; text-align: center; padding-bottom: 12px; border-bottom: 1px solid var(--border); margin-bottom: 10px; color: var(--text); min-height: 2.6em; }
     .formula-card .formula-name { font-size: 0.85rem; color: var(--accent); text-align: center; margin-top: auto; }
     .formula-card .formula-relation-label { font-size: 0.75rem; color: var(--text-secondary); text-align: center; margin-top: 4px; }
 
@@ -901,9 +901,70 @@
       }
     }
 
+    var _latexObserver = null;
+    var _latexObserved = new WeakSet();
+
+    function renderLatexEl(el) {
+      if (!el || !el.parentNode) return;
+      if (typeof katex === 'undefined') return;
+      var src = el.getAttribute('data-latex');
+      if (src == null || src === '') {
+        el.classList.remove('latex-observe');
+        return;
+      }
+      try {
+        var display = el.classList.contains('formula-eqn');
+        katex.render(src, el, { displayMode: display, throwOnError: false, macros: window._KATEX_MACROS || {} });
+        el.removeAttribute('data-latex');
+        el.classList.remove('latex-observe');
+      } catch (e) { /* leave for retry */ }
+    }
+
+    function renderLatexIn(el) {
+      if (!el || typeof katex === 'undefined') return;
+      var nodes = el.querySelectorAll('.latex-observe');
+      for (var i = 0; i < nodes.length; i++) renderLatexEl(nodes[i]);
+    }
+
+    function ensureLatexObserver() {
+      if (_latexObserver) return _latexObserver;
+      if (typeof IntersectionObserver === 'undefined') return null;
+      _latexObserver = new IntersectionObserver(function(entries) {
+        for (var i = 0; i < entries.length; i++) {
+          var e = entries[i];
+          if (e.isIntersecting) {
+            renderLatexEl(e.target);
+            _latexObserver.unobserve(e.target);
+          }
+        }
+      }, { root: null, rootMargin: '1500px 0px', threshold: 0 });
+      return _latexObserver;
+    }
+
+    function observeLatexIn(root) {
+      if (!root) return;
+      var obs = ensureLatexObserver();
+      if (!obs) {
+        renderLatexIn(root);
+        return;
+      }
+      var nodes = root.querySelectorAll('.latex-observe');
+      for (var i = 0; i < nodes.length; i++) {
+        var n = nodes[i];
+        if (_latexObserved.has(n)) continue;
+        _latexObserved.add(n);
+        obs.observe(n);
+      }
+    }
+
     function renderMathInContent() {
+      var root = document.querySelector('#main-content');
+      if (!root) return;
+      if (typeof katex !== 'undefined') {
+        observeLatexIn(root);
+      }
       if (typeof renderMathInElement === 'function') {
-        try { renderMathInElement(document.querySelector('#main-content'), {
+        try { renderMathInElement(root, {
           delimiters: [{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],
           macros: window._KATEX_MACROS || {}
         }); } catch(e) { console.warn('renderMathInElement error', e); }
@@ -2149,6 +2210,9 @@
     }
     restoreFiltersFromUrl();
     syncFilterStates();
+    window._initLatexObserver = function() {
+      if (typeof katex !== 'undefined') observeLatexIn(document.querySelector('#main-content'));
+    };
     syncDockPills();
     updateOverflowPadding();
     window.addEventListener('resize', updateOverflowPadding);
