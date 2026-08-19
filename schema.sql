@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS formula (
     topic       TEXT,                -- ID into tree.json
     difficulty  INTEGER CHECK (difficulty BETWEEN 1 AND 10),
     description TEXT,                -- JSON i18n
-    links       TEXT,                -- JSON array: [{"label":{i18n},"url":"..."}]
+    links       TEXT,                -- JSON array of URL strings: ["https://...", ...]
     created     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     modified    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
@@ -133,7 +133,7 @@ CREATE TABLE IF NOT EXISTS quantity (
     topic       TEXT,                -- ID into tree.json
     difficulty  INTEGER CHECK (difficulty BETWEEN 1 AND 10),
     description TEXT,                -- JSON i18n
-    links       TEXT,                -- JSON array
+    links       TEXT,                -- JSON array of URL strings: ["https://...", ...]
     default_unit TEXT,               -- JSON array: [{"unit":"<id>","exponent":<n>},...]
     dim_M       REAL NOT NULL DEFAULT 0,
     dim_L       REAL NOT NULL DEFAULT 0,

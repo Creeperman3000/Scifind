@@ -17,7 +17,7 @@ One row per equation.
 | `topic`       | TEXT    | ID into `tree.json`                            |
 | `difficulty`  | INTEGER | 1–10                                           |
 | `description` | TEXT    | JSON i18n                                      |
-| `links`       | TEXT    | JSON array: `[{...}]`                         |
+| `links`       | TEXT    | JSON array of URL strings: `["https://...", ...]` |
 | `created`     | TEXT    | Auto timestamp                                 |
 | `modified`    | TEXT    | Auto timestamp                                 |
 
@@ -33,6 +33,7 @@ A reusable operator: arithmetic, function, decorator, or relational.
 | `precedence`    | INTEGER | Binding strength; higher binds tighter                                     |
 | `associativity` | TEXT    | `left`, `right`, or `none`                                                 |
 | `operator_type` | TEXT    | `infix`, `prefix`, `postfix`, or `relational`                              |
+| `paren_arg`     | TEXT    | JSON array of 0/1, length = arity. Per-operand opt-in for `\left(...\right)` wrapping by the renderer. `1` = this operand may be wrapped by the auto rule (or by a source `(...)` group); `0` = never wrap (the operator's macro syntax already scopes this operand, e.g. `\frac{a}{b}`, `\sqrt{a}`, `a^{b}`). |
 
 Functions are represented as arity-1 prefix operators with a
 LaTeX-style symbol (e.g. `\sin`, `\cos`, `\sqrt`). The relational
@@ -103,7 +104,7 @@ in the seed for the seven base dimensions (M, L, T, I, Θ, N, J).
 | `topic`            | TEXT    | ID into `tree.json`                                         |
 | `difficulty`       | INTEGER | 1–10                                                        |
 | `description`      | TEXT    | JSON i18n                                                   |
-| `links`            | TEXT    | JSON array                                                  |
+| `links`            | TEXT    | JSON array of URL strings: `["https://...", ...]` |
 | `default_unit`     | TEXT    | JSON array: `[{"unit":"<id>","exponent":<n>},...]`          |
 | `dim_M` … `dim_J`  | REAL    | SI base dimension exponents (one column per base dimension) |
 | `created`          | TEXT    | Auto timestamp                                              |

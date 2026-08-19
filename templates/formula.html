@@ -1,5 +1,4 @@
 {% extends "base.html" %}
-{% import "_macros.html" as ui %}
 {% block title %}{{ _(formula.name) }}{% endblock %}
 {% block content %}
 
@@ -66,9 +65,20 @@
   <h3>{{ _('detail.related') }}</h3>
   <div class="formula-grid">
   {% for r in relations %}
-    {{ ui.formula_card('/formula/' ~ r.related_id, r.latex, _(r.name), relation=_('relation.' ~ r.relation_type)) }}
+    {{ formula_card('/formula/' ~ r.related_id, r.latex, _(r.name), relation=_('relation.' ~ r.relation_type)) }}
   {% endfor %}
   </div>
+</div>
+{% endif %}
+
+{% if links %}
+<div class="detail-section">
+  <h3>{{ _('detail.links') }}</h3>
+  <ol class="link-list">
+  {% for url in links %}
+    <li><a href="{{ url }}" target="_blank" rel="noopener noreferrer">{{ url }}</a></li>
+  {% endfor %}
+  </ol>
 </div>
 {% endif %}
 

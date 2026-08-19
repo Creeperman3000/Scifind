@@ -69,6 +69,17 @@
       "deselect_all": "Deselect all topics",
       "reset_tree": "Reset topic selection"
     },
+    "sort": {
+      "section": "Sort",
+      "id": "ID",
+      "name": "Name",
+      "diff_asc": "Difficulty (ascending)",
+      "diff_desc": "Difficulty (descending)",
+      "topic_tree": "Topic (tree order)",
+      "topic_alpha": "Topic (alphabetical)",
+      "qty": "Quantities",
+      "relevance": "Relevance"
+    },
     "detail": {
       "dimensions": "Dimensions",
       "difficulty": "Difficulty",
@@ -76,6 +87,7 @@
       "quantities": "Quantities",
       "default_unit": "Default Unit",
       "related": "Related",
+      "links": "Links",
       "units": "Units",
       "system": "System",
       "factor_to": "Factor to",

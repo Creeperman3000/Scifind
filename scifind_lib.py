@@ -1916,8 +1916,11 @@ def build_create_sql(conn, name_en, topic, difficulty, equation, overrides=None,
     /create page uses) and containing {symbol, name, label} strings which
     are stored as JSON i18n blobs.
 
+    `links` is an optional list of URL strings; it is stored as a plain
+    JSON array (not per-locale).
+
     `translations` is an optional mapping of locale code → {
-        name, description, links, overrides
+        name, description, overrides
     }. Each entry's non-empty fields are merged into the per-row i18n
     blobs so the stored JSON looks like {"en-us": ..., "<locale>": ...}.
     The English (en-us) values are always sourced from the top-level
@@ -1966,9 +1969,9 @@ def build_create_sql(conn, name_en, topic, difficulty, equation, overrides=None,
 
     name_json = json.dumps({"en-us": name_en.strip()}, ensure_ascii=False) if name_en else None
     desc_json = json.dumps({"en-us": description}, ensure_ascii=False) if description else None
-    # Links are stored as {locale: [list of {url,label}]}. en-us comes from
-    # the top-level `links` argument; translations can add other locales.
-    links_json = json.dumps({"en-us": links}, ensure_ascii=False) if links else None
+    # Links are stored as a plain JSON array of URL strings, e.g.
+    # ["https://en.wikipedia.org/wiki/Force", ...].
+    links_json = json.dumps(links, ensure_ascii=False) if links else None
     tr_overrides_by_loc = {}
     if translations:
         for loc, tr in translations.items():
@@ -1980,9 +1983,6 @@ def build_create_sql(conn, name_en, topic, difficulty, equation, overrides=None,
             t_desc = tr.get("description")
             if t_desc:
                 desc_json = add_locale(desc_json, t_desc, loc)
-            t_links = tr.get("links")
-            if t_links and isinstance(t_links, (dict, list)):
-                links_json = add_locale(links_json, t_links, loc)
             t_ov = tr.get("overrides") or {}
             if t_ov:
                 tr_overrides_by_loc[loc] = t_ov

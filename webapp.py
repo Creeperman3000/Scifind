@@ -916,6 +916,15 @@ def formula_detail(formula_id):
         related.append(r)
     detail_items = _build_formula_detail_items(db, formula_id, locale)
 
+    links = []
+    if row.get("links"):
+        try:
+            links = json.loads(row["links"])
+            if not isinstance(links, list):
+                links = []
+        except (ValueError, TypeError):
+            links = []
+
     dim_caches = _get_dimension_caches()
     dimensions = compute_formula_dimensions(db, formula_id)
     dim_latex = format_dimensions_latex(
@@ -929,7 +938,7 @@ def formula_detail(formula_id):
         "formula.html",
         formula=row, latex=latex,
         relations=related, detail_items=detail_items,
-        dim_latex=dim_latex,
+        dim_latex=dim_latex, links=links,
     )
 
 
@@ -1408,24 +1417,6 @@ def _parse_translation_block(prefix):
     return out
 
 
-def _parse_translation_links_block(prefix):
-    """Parse a FormData block shaped like `<prefix>[<locale>][links][]`.
-
-    Returns `{locale: [{"url": ..., "label": ...}, ...], ...}`.
-    """
-    out = {}
-    pattern = re.compile(r"^" + re.escape(prefix) + r"\[([^\]]+)\]\[links\]\[\]$")
-    for key, val in request.form.items(multi=True):
-        m = pattern.match(key)
-        if not m:
-            continue
-        loc = m.group(1)
-        if not val or not str(val).strip():
-            continue
-        out.setdefault(loc, []).append({"url": str(val).strip()})
-    return out
-
-
 def _build_create_sql_payload(db, form):
     """Parse the /create form fields and return (formula_sql, token_sql).
 
@@ -1445,25 +1436,22 @@ def _build_create_sql_payload(db, form):
     if links_raw:
         url_lines = [p.strip() for p in links_raw.splitlines() if p.strip()]
         if url_lines:
-            links = [{"url": p} for p in url_lines]
+            links = url_lines
 
     overrides = _parse_override_form_keys()
 
-    # Per-language fields are submitted as `tr[<locale>][name|description]`,
-    # `tr[<locale>][links][]`, and `tr_overrides[<locale>][<key>][field]`.
+    # Per-language fields are submitted as `tr[<locale>][name|description]`
+    # and `tr_overrides[<locale>][<key>][field]`.
     tr_top = _parse_translation_block("tr")
-    tr_links = _parse_translation_links_block("tr")
     tr_ov = _parse_translation_block("tr_overrides")
     translations = {}
-    for loc in set(tr_top) | set(tr_links) | set(tr_ov):
+    for loc in set(tr_top) | set(tr_ov):
         entry = {}
         top = tr_top.get(loc, {})
         if "name" in top:
             entry["name"] = top["name"]
         if "description" in top:
             entry["description"] = top["description"]
-        if loc in tr_links:
-            entry["links"] = tr_links[loc]
         if loc in tr_ov:
             entry["overrides"] = tr_ov[loc]
         if entry:

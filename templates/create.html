@@ -201,7 +201,7 @@
 
 <div class="modal-overlay" id="sql-modal" role="dialog" aria-modal="true">
   <div class="modal-content">
-    <button class="modal-close formula-copy-btn" type="button" aria-label="{{ _('create.close') }}" data-action="close-modal">
+    <button class="modal-close formula-copy-btn" type="button" aria-label="Close" data-action="close-modal">
       <i data-lucide="x" width="16" height="16"></i>
     </button>
     <h2 id="modal-title"></h2>
@@ -505,7 +505,7 @@
   // entered on a previous page is preserved when they return via Back.
   const flow = {
     history: [],            // [{kind: 'pick' | 'translate' | 'sql', ...}, ...]
-    translations: {},       // { 'cs-cz': { name, description, links_text, overrides } }
+    translations: {},       // { 'cs-cz': { name, description, overrides } }
     variables: [],          // [{ id, alias, symbol, name, name_overwrite }, ...]
     issueUrl: null,         // populated on the SQL page
     availableLanguages: [], // [{code, name}, ...]
@@ -641,14 +641,13 @@
     // Placeholders = the English content so the user knows what to translate.
     const enName = ($('name_en').value || '').trim();
     const enDesc = ($('description').value || '').trim();
-    const enLinks = ($('links').value || '').trim();
     // Copy-from-en button. Click sets the field to its current value if
     // non-empty, otherwise to its placeholder (the en-us value). The icon
     // matches the sidebar's filter-btn (reset tree) look.
     const copyBtn = (field) => {
       // Pass the localised label string into the button so the toast can
       // show "Copied <label>" in the user's language without re-keying.
-      const labelMap = { name: 'name', description: 'description', links: 'links' };
+      const labelMap = { name: 'name', description: 'description' };
       const labelKey = labelMap[field] || field;
       return '<button class="filter-btn" type="button" data-tr-copy="' + field + '" data-tr-copy-label="' + esc(t('create.' + labelKey, field)) + '" title="Copy from English">' +
       '<i data-lucide="copy" width="16" height="16"></i></button>';
@@ -662,9 +661,6 @@
         '</div>' +
         '<div class="detail-desc"><div class="tr-label-row"><span>' + esc(t('create.description')) + '</span>' + copyBtn('description') + '</div>' +
         '<textarea data-tr-field="description" name="tr[' + code + '][description]" class="text-field auto-grow" rows="2" spellcheck="false" placeholder="' + esc(enDesc) + '">' + esc(prior.description || '') + '</textarea>' +
-        '</div>' +
-        '<div class="detail-desc"><div class="tr-label-row"><span>' + esc(t('create.links')) + '</span>' + copyBtn('links') + '</div>' +
-        '<textarea data-tr-field="links" name="tr[' + code + '][links_text]" class="text-field auto-grow" rows="2" spellcheck="false" placeholder="' + esc(enLinks) + '">' + esc(prior.links_text || '') + '</textarea>' +
         '</div>' +
         qtyTable +
       '</div>'
@@ -738,12 +734,6 @@
       if (loc === 'en-us') continue;
       if (tr.name) fd.set('tr[' + loc + '][name]', tr.name);
       if (tr.description) fd.set('tr[' + loc + '][description]', tr.description);
-      if (tr.links_text) {
-        for (const url of tr.links_text.split(/\r?\n/)) {
-          const u = url.trim();
-          if (u) fd.append('tr[' + loc + '][links][]', u);
-        }
-      }
       if (tr.overrides) {
         for (const [key, fields] of Object.entries(tr.overrides)) {
           for (const [fld, val] of Object.entries(fields)) {
@@ -851,7 +841,6 @@
     const step = $('modal-step');
     const nameEl = step.querySelector('[data-tr-field="name"]');
     const descEl = step.querySelector('[data-tr-field="description"]');
-    const linksEl = step.querySelector('[data-tr-field="links"]');
     const overrides = {};
     step.querySelectorAll('tr[data-key]').forEach((tr) => {
       const key = tr.dataset.key;
@@ -864,7 +853,6 @@
     const entry = {};
     if (nameEl && nameEl.value.trim()) entry.name = nameEl.value.trim();
     if (descEl && descEl.value.trim()) entry.description = descEl.value.trim();
-    if (linksEl && linksEl.value.trim()) entry.links_text = linksEl.value;
     if (Object.keys(overrides).length) entry.overrides = overrides;
     if (Object.keys(entry).length) flow.translations[code] = entry;
     else delete flow.translations[code];
