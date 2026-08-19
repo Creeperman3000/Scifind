@@ -120,6 +120,80 @@ VALUES ('planck_constant', '{"en-us": "Planck constant"}', 'h', 6.62607015e-34,
         '[{"unit":"joule","exponent":1},{"unit":"second","exponent":1}]');
 ```
 
+### Paren Wrapping and `paren_arg`
+
+Paren wrapping is a property of the **operator**, not the formula
+token. The `operator.paren_arg` column is a JSON array of length =
+operator.arity; each entry is `1` (the renderer may wrap this operand in
+`\left( ... \right)` based on precedence and source syntax) or `0`
+(never wrap — the operator's macro syntax already scopes this operand).
+
+| Operator                     | `paren_arg` | Why                                                                                                                                                         |
+| ---------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `add`, `mul`, `eq`, `cdot`   | `[1,1]`     | both operands may be wrapped                                                                                                                                |
+| `frac`                       | `[0,0]`     | both operands are inside `{...}` of the macro                                                                                                               |
+| `pow`                        | `[1,0]`     | base takes the next token (may wrap), exponent is inside `^{...}`                                                                                           |
+| `sin`, `cos`, `tan`           | `[1]`       | argument may wrap (`\sin{x+y}` reads ambiguously without scope)                                                                                             |
+| `overl`, `Delta`, `nabla`    | `[1]`       | argument may wrap (macro is a letter / token, but user source can still chain via mul)                                                                      |
+| `log`                        | `[0,0]`     | arity-2 infix `\log_{base}{arg}`; both operands are in macro scopes (base of `euler_e` emits `\ln{arg}`)                                                   |
+| `sqrt`                       | `[0,0]`     | arity-2 infix `\sqrt{radicand}` (or `\sqrt[index]{radicand}`); both operands are in macro scopes (index is omitted when literal 2)                          |
+| `sum`, `int`, `prod`, `oint` | `[0,0,0]`   | arity-3 infix `\sum_{from}^{to}{body}` / `\int_{from}^{to}{body}` / `\prod_{from}^{to}{body}` / `\oint_{from}^{to}{body}`; all operands are in macro scopes |
+| `lim`                        | `[0,0,0]`   | arity-3 infix `\lim_{var \to val}{body}`; all operands are in macro scopes                                                                                  |
+
+### Dropping operands with the `drop` quantity
+
+The `drop` quantity is a sentinel with an empty symbol and zero
+dimensions. Drop it into any operand slot to blank that slot out in
+the rendered output. The operator arity is fixed — `drop` is just a
+no-op operand. A `drop` on the left of `sub` is the unary minus (the
+former `neg` operator): `drop x sub` renders as `-x`.
+
+| Source                            | Renders as                |
+| --------------------------------- | ------------------------- |
+| `drop x sub`                      | `-x` (unary minus)        |
+| `log drop x`                      | `\log{x}`                 |
+| `log b drop`                      | `\log_{b}`                |
+| `log b drop` (empty arg)          | (empty — guard in renderer) |
+| `log euler_e x`                   | `\ln{x}` (implicit euler-omission) |
+| `sqrt x 2`                        | `\sqrt{x}` (implicit 2-omission) |
+| `sqrt x 3`                        | `\sqrt[3]{x}`             |
+| `sqrt x drop`                     | `\sqrt{x}` (drop ≡ default 2) |
+| `sum 1 drop x`                    | `\sum_{1}{x}`             |
+| `sum drop 10 x`                   | `\sum^{10}{x}`            |
+| `sum drop drop x`                 | `\sum{x}`                 |
+| `sum 1 10 drop` (empty body)      | (empty — guard in renderer) |
+| `int 1 drop x`                    | `\int_{1}{x}`             |
+| `int drop 10 x`                   | `\int^{10}{x}`            |
+| `int drop drop x`                 | `\int{x}`                 |
+| `prod 1 drop x`                   | `\prod_{1}{x}`            |
+| `prod drop drop x`                | `\prod{x}`                |
+| `oint 1 10 x`                     | `\oint_{1}^{10}{x}`       |
+| `oint drop drop x`                | `\oint{x}`                |
+| `lim x drop body`                 | `\lim{body}` (one-sided limit — subscript dropped, not `\lim_{x \to}`) |
+| `lim drop x body`                 | `\lim{body}` (no variable — subscript dropped) |
+| `lim drop drop body`              | `\lim{body}`              |
+| `lim x 0 drop` (empty body)       | (empty — guard in renderer) |
+
+`drop` is filtered out of the variables list, the formula detail table,
+and the dimensional analysis, so it never appears as a "real" variable
+to the user.
+
+User-explicit parens in source equations (`(mass + mass) ^ 2`) are
+preserved end-to-end: the parser tags the operand that came from a
+`(...)` group, and the renderer respects the `paren_arg` opt-out. So
+`(m+m)^(m+m)` renders as `\left(m + m\right)^{m + m}` — the exponent
+parens are dropped because `pow.paren_arg[1]=0`, regardless of what
+the user wrote.
+
+The renderer also has refined rules for the invisible `mul` operator
+(no symbol). Implicit multiplication follows the standard LaTeX idiom:
+`3x` (number × variable), `xy` (variable × variable), `3×4`
+(number × number, `\times`), `3(x+1)` (number × expression),
+`3\,\frac{x}{y}` (number × fraction), `2\pi` (number × constant),
+`2\sin x` (number × function). Dot/cross products and scientific
+notation are not auto-detected — use the explicit `cdot` and `times`
+operators for those.
+
 ### Converting From Legacy `formula_item` Data
 
 If you have a one-off batch of legacy `formula_item` rows, the

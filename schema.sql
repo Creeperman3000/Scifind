@@ -35,16 +35,18 @@ CREATE TABLE IF NOT EXISTS operator (
     precedence    INTEGER NOT NULL,
     associativity TEXT NOT NULL CHECK (associativity IN ('left', 'right', 'none')),
     operator_type TEXT NOT NULL CHECK (operator_type IN ('infix', 'prefix', 'postfix', 'relational')),
-    -- Whether the operator's LaTeX syntax self-delimits its child(ren)
-    -- so no \left( ... \right) wrapper is needed for disambiguation.
-    -- True (default) is for prefix functions like \sin, \tan, \neg whose
-    -- macro argument is a bare group and would otherwise read
-    -- ambiguously against the surrounding context (e.g. -a+b vs -(a+b)).
-    -- False is for operators whose macro syntax already groups their
-    -- children: \sqrt{x}, \frac{x}{y}, x^{y} — the braces/brackets in
-    -- the macro argument are enough to scope the children, so wrapping
-    -- them in extra parens would be redundant noise.
-    parened_arg   INTEGER NOT NULL DEFAULT 1 CHECK (parened_arg IN (0, 1))
+    -- Per-operand "may this operand be wrapped in \left(...\right) by the
+    -- renderer?" JSON array of length = arity; each entry is 1 (allowed)
+    -- or 0 (never — the operator's macro syntax already scopes this operand).
+    -- Examples:
+    --   add, sub, mul, eq  -> '[1,1]'   both operands may be wrapped
+    --   frac, root         -> '[0,0]'   both scoped by macro (\frac{}{}, \sqrt[n]{})
+    --   pow                -> '[1,0]'   base takes next token (may wrap),
+    --                                  exponent is in ^{...} (never wraps)
+    --   sin, cos, tan -> '[1]'     argument may wrap (\sin{x+y} reads
+    --                                  ambiguously without the explicit scope)
+    --   sqrt, overl, sum   -> '[0]'     argument is in { ... } macro scope
+    paren_arg     TEXT NOT NULL DEFAULT '[1]' CHECK (paren_arg LIKE '[%' AND json_valid(paren_arg))
 );
 
 -- ============================================================

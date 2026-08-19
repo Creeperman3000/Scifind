@@ -1,3 +1,15 @@
+{% macro formula_card(href, latex, name, relation=None) -%}
+<div class="formula-card">
+  <a href="{{ href }}">
+    <div class="formula-eqn latex-observe" data-latex="{{ latex }}"></div>
+    <div class="formula-name">{{ name }}</div>
+    {%- if relation %}
+    <div class="formula-relation-label">{{ relation }}</div>
+    {%- endif %}
+  </a>
+</div>
+{%- endmacro %}
+
 <!DOCTYPE html>
 <html lang="{{ g.locale or 'en' }}">
 <head>

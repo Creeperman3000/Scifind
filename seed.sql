@@ -1,7 +1,4 @@
--- ============================================================
 -- Consolidated seed data
--- ============================================================
-
 INSERT OR IGNORE INTO quantity (id, name, symbol, symbol_overwrite, topic, difficulty, description, links, default_unit, dim_M, dim_L, dim_T, dim_I, dim_Θ, dim_N, dim_J) VALUES
   ('absorbance', '{"en-us": "Absorbance", "cs-cz": "Absorbance"}', 'A', NULL, 'analytical_chemistry', 3, NULL, NULL, NULL, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
   ('absorbed_dose', '{"en-us": "Absorbed dose", "cs-cz": "Absorbovaná dávka"}', 'D', NULL, 'nuclear_physics', 4, NULL, NULL, '[{"unit": "gray", "exponent": 1}]', 0.0, 2.0, -2.0, 0.0, 0.0, 0.0, 0.0),
@@ -29,6 +26,8 @@ INSERT OR IGNORE INTO quantity (id, name, symbol, symbol_overwrite, topic, diffi
   ('density', '{"en-us": "Density", "cs-cz": "Hustota"}', '\rho', NULL, 'fluid_mechanics', 2, NULL, NULL, '[{"unit":"kilogram","exponent":1},{"unit":"metre","exponent":-3}]', 1.0, -3.0, 0.0, 0.0, 0.0, 0.0, 0.0),
   ('dimensionless', '{"en-us": "Dimensionless", "cs-cz": "Bezrozměrné"}', '', NULL, NULL, NULL, NULL, NULL, NULL, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
   ('dose_equivalent', '{"en-us": "Dose equivalent", "cs-cz": "Dávkový ekvivalent"}', 'H', NULL, 'nuclear_physics', 4, NULL, NULL, '[{"unit": "sievert", "exponent": 1}]', 0.0, 2.0, -2.0, 0.0, 0.0, 0.0, 0.0),
+  -- drop: a sentinel quantity for dropping an operand of an operation
+  ('drop', '{"en-us": "Drop", "cs-cz": "Vynechat"}', '', NULL, NULL, 1, NULL, NULL, NULL, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
   ('dynamic_viscosity', '{"en-us": "Dynamic viscosity", "cs-cz": "Dynamická viskozita"}', '\eta', NULL, 'fluid_dynamics', 3, NULL, NULL, '[{"unit":"pascal","exponent":1},{"unit":"second","exponent":1}]', 1.0, -1.0, -1.0, 0.0, 0.0, 0.0, 0.0),
   ('electric_field_strength', '{"en-us": "Electric field strength", "cs-cz": "Intenzita elektrického pole"}', 'E', NULL, 'electrostatics', 3, NULL, NULL, '[{"unit":"volt","exponent":1},{"unit":"metre","exponent":-1}]', 1.0, 1.0, -3.0, -1.0, 0.0, 0.0, 0.0),
   ('electric_potential', '{"en-us": "Electric potential", "cs-cz": "Elektrický potenciál"}', 'V', NULL, 'electrostatics', 3, NULL, NULL, '[{"unit": "volt", "exponent": 1}]', 1.0, 2.0, -3.0, -1.0, 0.0, 0.0, 0.0),
@@ -40,8 +39,6 @@ INSERT OR IGNORE INTO quantity (id, name, symbol, symbol_overwrite, topic, diffi
   ('exposure', '{"en-us": "Exposure", "cs-cz": "Ozáření"}', 'X', NULL, 'nuclear_physics', 4, NULL, NULL, '[{"unit":"coulomb","exponent":1},{"unit":"kilogram","exponent":-1}]', -1.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0),
   ('force', '{"en-us": "Force", "cs-cz": "Síla"}', 'F', NULL, 'dynamics', 2, NULL, NULL, '[{"unit": "newton", "exponent": 1}]', 1.0, 1.0, -2.0, 0.0, 0.0, 0.0, 0.0),
   ('frequency', '{"en-us": "Frequency", "cs-cz": "Frekvence"}', 'f', NULL, 'oscillations_and_waves', 2, NULL, NULL, '[{"unit": "hertz", "exponent": 1}]', 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0),
-  ('gas_constant', '{"en-us": "Gas constant", "cs-cz": "Molární plynová konstanta"}', 'R', NULL, 'ideal_gases', 4, NULL, NULL, '[{"unit": "joule", "exponent": 1}, {"unit": "mole", "exponent": -1}, {"unit": "kelvin", "exponent": -1}]', 1.0, 2.0, -2.0, 0.0, 0.0, -1.0, 0.0),
-  ('gravitational_constant', '{"en-us": "Gravitational constant", "cs-cz": "Gravitační konstanta"}', 'G', NULL, 'gravitation', 4, NULL, NULL, '[{"unit": "metre", "exponent": 3}, {"unit": "kilogram", "exponent": -1}, {"unit": "second", "exponent": -2}]', -1.0, 3.0, -2.0, 0.0, 0.0, 0.0, 0.0),
   ('heat_engine_efficiency', '{"en-us": "Heat engine efficiency", "cs-cz": "Účinnost tepelného stroje"}', '\eta', NULL, 'heat_engines', 3, NULL, NULL, NULL, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
   ('illuminance', '{"en-us": "Illuminance", "cs-cz": "Osvětlení"}', 'E_v', NULL, 'electromagnetic_waves', 3, NULL, NULL, '[{"unit": "lux", "exponent": 1}]', 0.0, -2.0, 0.0, 0.0, 0.0, 0.0, 1.0),
   ('inductance', '{"en-us": "Inductance", "cs-cz": "Indukčnost"}', 'L', NULL, 'circuits', 3, NULL, NULL, '[{"unit": "henry", "exponent": 1}]', 1.0, 2.0, -2.0, -2.0, 0.0, 0.0, 0.0),
@@ -57,6 +54,7 @@ INSERT OR IGNORE INTO quantity (id, name, symbol, symbol_overwrite, topic, diffi
   ('magnetic_flux_density', '{"en-us": "Magnetic flux density", "cs-cz": "Magnetická indukce"}', 'B', NULL, 'magnetism', 3, NULL, NULL, '[{"unit": "tesla", "exponent": 1}]', 1.0, 0.0, -2.0, -1.0, 0.0, 0.0, 0.0),
   ('mass', '{"en-us": "Mass", "cs-cz": "Hmotnost"}', 'm', NULL, 'dynamics', 1, NULL, NULL, '[{"unit": "kilogram", "exponent": 1}]', 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
   ('mass_concentration', '{"en-us": "Mass concentration", "cs-cz": "Hmotnostní koncentrace"}', '\gamma', NULL, 'solutions', 3, NULL, NULL, '[{"unit":"kilogram","exponent":1},{"unit":"metre","exponent":-3}]', 1.0, -3.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+  ('molar_absorptivity', '{"en-us": "Molar absorptivity", "cs-cz": "Molární absorpční koeficient"}', '\varepsilon', NULL, 'analytical_chemistry', 3, NULL, NULL, '[{"unit":"mole","exponent":-1},{"unit":"metre","exponent":-1}]', 0.0, 2.0, 0.0, 0.0, 0.0, -1.0, 0.0),
   ('molar_energy', '{"en-us": "Molar energy", "cs-cz": "Molární energie"}', 'E_m', NULL, 'thermochemistry', 3, NULL, NULL, '[{"unit":"joule","exponent":1},{"unit":"mole","exponent":-1}]', 1.0, 2.0, -2.0, 0.0, 0.0, -1.0, 0.0),
   ('molar_entropy', '{"en-us": "Molar entropy", "cs-cz": "Molární entropie"}', 'S_m', NULL, 'thermochemistry', 3, NULL, NULL, '[{"unit":"joule","exponent":1},{"unit":"mole","exponent":-1},{"unit":"kelvin","exponent":-1}]', 1.0, 2.0, -2.0, 0.0, -1.0, -1.0, 0.0),
   ('molar_mass', '{"en-us": "Molar mass", "cs-cz": "Molární hmotnost"}', 'M', NULL, 'molar_mass', 2, NULL, NULL, '[{"unit":"kilogram","exponent":1},{"unit":"mole","exponent":-1}]', 1.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0),
@@ -141,9 +139,7 @@ INSERT OR IGNORE INTO unit VALUES('tonne','{"en-us": "Tonne", "cs-cz": "Tuna"}',
 INSERT OR IGNORE INTO unit VALUES('volt','{"en-us": "Volt", "cs-cz": "Volt"}','V','electric_potential',1,'SI',1.0,NULL,0.0);
 INSERT OR IGNORE INTO unit VALUES('watt','{"en-us": "Watt", "cs-cz": "Watt"}','W','power',1,'SI',1.0,NULL,0.0);
 INSERT OR IGNORE INTO unit VALUES('weber','{"en-us": "Weber", "cs-cz": "Weber"}','Wb','magnetic_flux',1,'SI',1.0,NULL,0.0);
--- ============================================================
 -- Operator catalogue
--- ============================================================
 -- An operator is a reusable symbol with fixed arity, precedence, and
 -- associativity. math is a Python expression template using operand names
 -- a, b, c, ... (NULL when not numerically computable, e.g. =, \propto).
@@ -152,51 +148,100 @@ INSERT OR IGNORE INTO unit VALUES('weber','{"en-us": "Weber", "cs-cz": "Weber"}'
 -- Precedence is the binding strength; higher = binds tighter.
 -- Special: relational operators use 5, arithmetic uses 10-30.
 
-INSERT OR IGNORE INTO operator (id, symbol, math, arity, precedence, associativity, operator_type, parened_arg) VALUES
-  -- Arithmetic (infix)
-  ('add',    '+',      'a+b',                 2, 10, 'left',  'infix',       1),
-  ('sub',    '-',      'a-b',                 2, 10, 'left',  'infix',       1),
-  ('mul',    NULL,     'a*b',                 2, 20, 'left',  'infix',       1),
-  ('cdot',   '\cdot',  'a*b',                 2, 20, 'left',  'infix',       1),
-  ('times',  '\times', 'a*b',                 2, 20, 'left',  'infix',       1),
-  ('div',    '/',      'a/b',                 2, 20, 'left',  'infix',       1),
-  -- frac and pow self-delimit via macro syntax (\frac{a}{b}, a^{b}); no extra parens.
-  ('frac',   '\frac',  'a/b',                 2, 20, 'left',  'infix',       0),
-  ('pow',    '^',      'a**b',                2, 30, 'right', 'infix',       0),
-  -- Unary (prefix)
-  ('neg',    '-',      '-a',                  1, 25, 'right', 'prefix',      1),
-  -- Functions (prefix)
-  ('sin',    '\sin',   'math.sin(a)',         1, 30, 'right', 'prefix',      1),
-  ('cos',    '\cos',   'math.cos(a)',         1, 30, 'right', 'prefix',      1),
-  ('tan',    '\tan',   'math.tan(a)',         1, 30, 'right', 'prefix',      1),
-  -- sqrt self-delimits via \sqrt{...}; no extra parens.
-  ('sqrt',   '\sqrt',  'math.sqrt(a)',        1, 30, 'right', 'prefix',      0),
-  -- Decorators (prefix, no math)
-  ('Delta',  '\Delta', NULL,                  1, 30, 'right', 'prefix',      1),
-  ('rmd',    '\mathrm{d}', NULL,              1, 30, 'right', 'prefix',      1),
-  ('overl',  '\overline', NULL,               1, 30, 'right', 'prefix',      1),
-  ('ln',     '\ln',     'math.log(a)',         1, 30, 'right', 'prefix',      1),
-  ('exp',    '\exp',    'math.exp(a)',         1, 30, 'right', 'prefix',      1),
-  ('log',    '\log',    'math.log10(a)',       1, 30, 'right', 'prefix',      1),
-  ('atan',   '\arctan', 'math.atan(a)',        1, 30, 'right', 'prefix',      1),
-  ('asin',   '\arcsin', 'math.asin(a)',        1, 30, 'right', 'prefix',      1),
-  ('acos',   '\arccos', 'math.acos(a)',        1, 30, 'right', 'prefix',      1),
-  ('abs',    NULL,      'abs(a)',              1, 30, 'right', 'prefix',      1),
-  ('factorial', '!',    'math.factorial(a)',   1, 30, 'right', 'prefix',      1),
-  ('root',   '\sqrt[n]','a**(1/b)',            2, 20, 'left',  'infix',       1),
-   ('sum',    '\sum',    NULL,                  1, 30, 'right', 'prefix',      1),
-   -- Relational
-  ('eq',     '=',      NULL,                  2,  5, 'none',  'relational',  1),
-  ('approx', '\approx', NULL,                 2,  5, 'none',  'relational',  1),
-  ('prop',   '\propto', NULL,                 2,  5, 'none',  'relational',  1),
-  ('gt',     '>',      NULL,                  2,  5, 'none',  'relational',  1),
-  ('lt',     '<',      NULL,                  2,  5, 'none',  'relational',  1)
+INSERT OR IGNORE INTO operator (id, symbol, math, arity, precedence, associativity, operator_type, paren_arg) VALUES
+  ('add',    '+',      'a+b',                 2, 10, 'left',  'infix',      '[1,1]'),
+  -- sub: arity-2 infix emitting `a - b`. When the left operand is the
+  -- `drop` sentinel quantity, this is the unary minus (replaces the old
+  -- `neg` prefix operator): `drop W sub` -> -W. Children: [a, b].
+  ('sub',    '-',      'a-b',                 2, 10, 'left',  'infix',      '[1,1]'),
+  ('pm',     '\pm',    'a',                   2, 10, 'left',  'infix',      '[1,1]'),
+  ('mp',     '\mp',    'a',                   2, 10, 'left',  'infix',      '[1,1]'),
+  ('mul',    NULL,     'a*b',                 2, 20, 'left',  'infix',      '[1,1]'),
+  ('cdot',   '\cdot',  'a*b',                 2, 20, 'left',  'infix',      '[1,1]'),
+  ('times',  '\times', 'a*b',                 2, 20, 'left',  'infix',      '[1,1]'),
+  ('div',    '/',      'a/b',                 2, 20, 'left',  'infix',      '[1,1]'),
+  ('frac',   '\frac',  'a/b',                 2, 20, 'left',  'infix',      '[0,0]'),
+  ('pow',    '^',      'a**b',                2, 30, 'right', 'infix',      '[1,0]'),
+  -- sqrt: arity-2 infix emitting \sqrt{radicand} (square root) or
+  -- \sqrt[index]{radicand} (n-th root). Children: [radicand, index].
+  -- paren_arg=[0,0]: both operands are inside the macro's {...} scopes.
+  -- If index is `drop` or the literal number 2, emit `\sqrt{radicand}`.
+  -- Otherwise emit `\sqrt[index]{radicand}`. With the implicit 2-omission,
+  -- `sqrt x 2` -> \sqrt{x}, `sqrt x 3` -> \sqrt[3]{x}, `sqrt x drop` -> \sqrt{x}.
+  ('sqrt',   '\sqrt',  'a**(1/b if b != 2 else 0.5)', 2, 30, 'right', 'infix', '[0,0]'),
+
+  ('sin',    '\sin',   'math.sin(a)',         1, 30, 'right', 'prefix',     '[1]'),
+  ('cos',    '\cos',   'math.cos(a)',         1, 30, 'right', 'prefix',     '[1]'),
+  ('tan',    '\tan',   'math.tan(a)',         1, 30, 'right', 'prefix',     '[1]'),
+  ('asin',   '\arcsin', 'math.asin(a)',       1, 30, 'right', 'prefix',     '[1]'),
+  ('acos',   '\arccos', 'math.acos(a)',       1, 30, 'right', 'prefix',     '[1]'),
+  ('atan',   '\arctan', 'math.atan(a)',       1, 30, 'right', 'prefix',     '[1]'),
+
+  ('Delta',  '\Delta', NULL,                  1, 30, 'right', 'prefix',     '[1]'),
+  ('nabla',  '\nabla', NULL,                  1, 30, 'right', 'prefix',     '[1]'),
+  ('rmd',    '\mathrm{d}', NULL,              1, 30, 'right', 'prefix',     '[1]'),
+  ('overl',  '\overline', NULL,               1, 30, 'right', 'prefix',     '[0]'),
+
+  ('abs',    NULL,      'abs(a)',             1, 30, 'right', 'prefix',     '[1]'),
+  ('factorial', '!',    'math.factorial(a)',  1, 30, 'right', 'postfix',    '[1]'),
+  ('exp',    '\exp',    'math.exp(a)',        1, 30, 'right', 'prefix',     '[1]'),
+  -- log: arity-2 infix emitting \log_{base}{arg}. Children: [base, arg].
+  -- paren_arg=[0,0]: both operands are inside the macro's {...} scopes, never
+  -- auto-wrapped. The math template uses Python's math.log(arg, base) so the
+  -- operand order matches the source (children[0]=base, children[1]=arg).
+  -- Pass any operand as the `drop` quantity to blank it out: `log drop x`
+  -- emits `\log x`, `log b drop` emits `\log_{b}`. With the implicit
+  -- euler-omission (mirroring sqrt's implicit 2-omission), a base of the
+  -- `euler_e` constant emits `\ln{arg}` rather than `\log_{e}{arg}`:
+  -- `log euler_e length` -> \ln l.
+  ('log',    '\log',    'math.log(b, a)',      2, 30, 'right', 'infix',      '[0,0]'),
+
+  -- sum: arity-3 infix emitting \sum_{from}^{to}{body}. Children: [from, to, body].
+  -- paren_arg=[0,0,0]: all three operands are inside the macro's {...} scopes.
+  -- Pass any operand as the `drop` quantity to blank it out: `sum drop 5 x`
+  -- emits `\sum^{5}{x}`, `sum 1 drop x` emits `\sum_{1}{x}` (or just `\sum{x}`
+  -- if both limits are dropped).
+  ('sum',    '\sum',    NULL,                  3, 30, 'right', 'infix',      '[0,0,0]'),
+  -- prod: arity-3 infix emitting \prod_{from}^{to}{body}. Children: [from, to, body].
+  -- paren_arg=[0,0,0]: same shape as `sum` and `int`. Drop in any slot
+  -- blanks it out: `prod 1 drop x` -> \prod_{1}{x}, `prod drop drop x` -> \prod{x}.
+  ('prod',   '\prod',   NULL,                  3, 30, 'right', 'infix',      '[0,0,0]'),
+
+  -- oint: arity-3 infix emitting \oint_{from}^{to}{body}. Children: [from, to, body].
+  -- paren_arg=[0,0,0]: feature-parity with `int`. Drop in any slot blanks it out.
+  ('oint',   '\oint',   NULL,                  3, 30, 'right', 'infix',      '[0,0,0]'),
+  -- lim: arity-3 infix emitting \lim_{var \to val}{body}. Children: [var, val, body].
+  -- paren_arg=[0,0,0]: all three operands are inside the macro's {...} scopes.
+  -- If either var or val is `drop`, the subscript is dropped entirely (a
+  -- one-sided limit like `\lim_{x \to}` reads as malformed LaTeX, so we
+  -- prefer `\lim{body}` rather than `\lim_{x \to}{body}`).
+  ('lim',    '\lim',      NULL,                  3, 30, 'right', 'infix',      '[0,0,0]'),
+  -- int: arity-3 infix emitting \int_{from}^{to}{body}. Children: [from, to, body].
+  -- paren_arg=[0,0,0]: all three operands are inside the macro's {...} scopes.
+  -- Symmetric with `sum`: any operand may be `drop` to blank it out.
+  ('int',    '\int',      NULL,                  3, 30, 'right', 'infix',      '[0,0,0]'),
+
+  ('newline','\\',        NULL,                  2,  2, 'left',  'infix',      '[0,0]'),
+
+  ('eq',     '=',      NULL,                  2,  5, 'none',  'relational', '[1,1]'),
+  ('neq',   '\neq',   NULL,                   2,  5, 'none',  'relational', '[1,1]'),
+  ('approx', '\approx', NULL,                 2,  5, 'none',  'relational', '[1,1]'),
+  ('prop',   '\propto', NULL,                 2,  5, 'none',  'relational', '[1,1]'),
+  ('gt',     '>',      NULL,                  2,  5, 'none',  'relational', '[1,1]'),
+  ('lt',     '<',      NULL,                  2,  5, 'none',  'relational', '[1,1]'),
+  ('ngt',     '\ngtr',      NULL,             2,  5, 'none',  'relational', '[1,1]'),
+  ('nlt',     '\nless',      NULL,            2,  5, 'none',  'relational', '[1,1]'),
+  ('geq',    '\geq',   '\geq',                2,  5, 'none',  'relational', '[1,1]'),
+  ('leq',    '\leq',   '\leq',                2,  5, 'none',  'relational', '[1,1]'),
+  ('ngeq',    '\ngeq',   '\ngeq',             2,  5, 'none',  'relational', '[1,1]'),
+  ('nleq',    '\nleq',   '\nleq',             2,  5, 'none',  'relational', '[1,1]'),
+  ('sim',    '\sim',   NULL,                  2,  5, 'none',  'relational', '[1,1]'),
+  ('perp',   '\perp',  NULL,                  2,  5, 'none',  'relational', '[1,1]'),
+  ('parallel', '\parallel', NULL,             2,  5, 'none',  'relational', '[1,1]')
 ;
 
 
--- ============================================================
 -- Constant catalogue
--- ============================================================
 -- Constants are reusable symbols that can appear in any formula. value is
 -- the numerical value (NULL for symbolic-only constants). default_unit
 -- is JSON like in quantity.default_unit, used for dimensional physical
@@ -206,6 +251,7 @@ INSERT OR IGNORE INTO constant (id, name, symbol, value, default_unit) VALUES
   -- Pure mathematical constants
   ('pi',       '{"en-us": "Pi", "cs-cz": "Pí"}',                 '\pi', 3.141592653589793, NULL),
   ('euler_e',  '{"en-us": "Euler''s number", "cs-cz": "Eulerovo číslo"}', 'e', 2.718281828459045, NULL),
+  ('infinity', '{"en-us": "Infinity", "cs-cz": "Nekonečno"}',     '\infty', NULL, NULL),
   -- Dimensional physical constants (treated as constants for formula inclusion)
   ('gravitational_constant', '{"en-us": "Gravitational constant", "cs-cz": "Gravitační konstanta"}', 'G', 6.67430e-11,
     '[{"unit":"metre","exponent":3},{"unit":"kilogram","exponent":-1},{"unit":"second","exponent":-2}]'),
@@ -247,7 +293,10 @@ INSERT OR IGNORE INTO constant (id, name, symbol, value, default_unit) VALUES
     '[{"unit":"metre","exponent":1}]')
 ;
 
-
+-- ============================================================
+-- Formulas migrated from /home/admin/equations/formulas/
+-- via build_create_sql (mirrors Scifind's /create page).
+-- ============================================================
 INSERT OR IGNORE INTO formula (id, name, topic, difficulty, description) VALUES
   ('acids_and_bases', '{"en-us": "Acids And Bases", "cs-cz": "Kyseliny a zásady"}', 'acids_and_bases', 2, '{"en-us": "The pH equals the negative logarithm of the hydrogen ion concentration.", "cs-cz": "pH se rovná zápornému logaritmu koncentrace vodíkových iontů."}'),
   ('angular_momentum', '{"en-us": "Angular Momentum", "cs-cz": "Moment hybnosti"}', 'angular_momentum', 2, '{"en-us": "Angular momentum equals the product of moment of inertia and angular velocity.", "cs-cz": "Úhlový moment se rovná součinu momentu setrvačnosti a úhlové rychlosti."}'),
@@ -349,7 +398,7 @@ INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('angular_momentum', 5, 'operator', NULL, NULL, 'eq', NULL, NULL, NULL, NULL);
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('archimedes_principle', 1, 'quantity', 'force', NULL, NULL, NULL, NULL, '{"en-us": "F_b"}', NULL);
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('archimedes_principle', 2, 'quantity', 'density', NULL, NULL, NULL, NULL, NULL, NULL);
-INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('archimedes_principle', 3, 'quantity', 'gravitational_constant', NULL, NULL, NULL, NULL, NULL, NULL);
+INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('archimedes_principle', 3, 'constant', NULL, 'gravitational_constant', NULL, NULL, NULL, NULL, NULL);
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('archimedes_principle', 4, 'operator', NULL, NULL, 'mul', NULL, NULL, NULL, NULL);
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('archimedes_principle', 5, 'quantity', 'volume', NULL, NULL, NULL, NULL, NULL, NULL);
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('archimedes_principle', 6, 'operator', NULL, NULL, 'mul', NULL, NULL, NULL, NULL);
@@ -472,7 +521,7 @@ INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('entropy', 6, 'operator', NULL, NULL, 'eq', NULL, NULL, NULL, NULL);
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('escape_velocity', 1, 'quantity', 'velocity', NULL, NULL, NULL, NULL, '{"en-us": "v_\mathrm{esc}"}', '{"en-us": "Escape [Velocity]", "cs-cz": "Úniková [Velocity]"}');
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('escape_velocity', 2, 'number', NULL, NULL, NULL, 2.0, NULL, NULL, NULL);
-INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('escape_velocity', 3, 'quantity', 'gravitational_constant', NULL, NULL, NULL, NULL, NULL, NULL);
+INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('escape_velocity', 3, 'constant', NULL, 'gravitational_constant', NULL, NULL, NULL, NULL, NULL);
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('escape_velocity', 4, 'operator', NULL, NULL, 'mul', NULL, NULL, NULL, NULL);
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('escape_velocity', 5, 'quantity', 'mass', NULL, NULL, NULL, NULL, NULL, NULL);
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('escape_velocity', 6, 'operator', NULL, NULL, 'mul', NULL, NULL, NULL, NULL);
@@ -485,11 +534,6 @@ INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('first_law_thermodynamics', 4, 'quantity', 'energy', NULL, NULL, NULL, NULL, '{"en-us": "W"}', '{"en-us": "Work", "cs-cz": "Práce"}');
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('first_law_thermodynamics', 5, 'operator', NULL, NULL, 'sub', NULL, NULL, NULL, NULL);
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('first_law_thermodynamics', 6, 'operator', NULL, NULL, 'eq', NULL, NULL, NULL, NULL);
-INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('first_law_thermodynamics_adiabatic', 1, 'quantity', 'energy', NULL, NULL, NULL, NULL, '{"en-us": "U"}', '{"en-us": "Internal [energy]", "cs-cz": "Vnitřní [energy|energie]"}');
-INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('first_law_thermodynamics_adiabatic', 2, 'operator', NULL, NULL, 'Delta', NULL, NULL, NULL, NULL);
-INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('first_law_thermodynamics_adiabatic', 3, 'quantity', 'energy', NULL, NULL, NULL, NULL, '{"en-us": "W"}', '{"en-us": "Work", "cs-cz": "Práce"}');
-INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('first_law_thermodynamics_adiabatic', 4, 'operator', NULL, NULL, 'neg', NULL, NULL, NULL, NULL);
-INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('first_law_thermodynamics_adiabatic', 5, 'operator', NULL, NULL, 'eq', NULL, NULL, NULL, NULL);
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('first_law_thermodynamics_isochoric', 1, 'quantity', 'energy', NULL, NULL, NULL, NULL, '{"en-us": "U"}', '{"en-us": "Internal [energy]", "cs-cz": "Vnitřní [energy|energie]"}');
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('first_law_thermodynamics_isochoric', 2, 'operator', NULL, NULL, 'Delta', NULL, NULL, NULL, NULL);
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('first_law_thermodynamics_isochoric', 3, 'quantity', 'energy', NULL, NULL, NULL, NULL, '{"en-us": "Q"}', '{"en-us": "Heat", "cs-cz": "Teplo"}');
@@ -534,7 +578,7 @@ INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('ideal_gas_law', 2, 'quantity', 'volume', NULL, NULL, NULL, NULL, NULL, NULL);
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('ideal_gas_law', 3, 'operator', NULL, NULL, 'mul', NULL, NULL, NULL, NULL);
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('ideal_gas_law', 4, 'quantity', 'amount', NULL, NULL, NULL, NULL, NULL, NULL);
-INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('ideal_gas_law', 5, 'quantity', 'gas_constant', NULL, NULL, NULL, NULL, NULL, NULL);
+INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('ideal_gas_law', 5, 'constant', NULL, 'gas_constant', NULL, NULL, NULL, NULL, NULL);
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('ideal_gas_law', 6, 'operator', NULL, NULL, 'mul', NULL, NULL, NULL, NULL);
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('ideal_gas_law', 7, 'quantity', 'temperature', NULL, NULL, NULL, NULL, NULL, NULL);
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('ideal_gas_law', 8, 'operator', NULL, NULL, 'mul', NULL, NULL, NULL, NULL);
@@ -562,7 +606,7 @@ INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('keplers_third_law', 10, 'number', NULL, NULL, NULL, 3.0, NULL, NULL, NULL);
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('keplers_third_law', 11, 'operator', NULL, NULL, 'pow', NULL, NULL, NULL, NULL);
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('keplers_third_law', 12, 'operator', NULL, NULL, 'mul', NULL, NULL, NULL, NULL);
-INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('keplers_third_law', 13, 'quantity', 'gravitational_constant', NULL, NULL, NULL, NULL, NULL, NULL);
+INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('keplers_third_law', 13, 'constant', NULL, 'gravitational_constant', NULL, NULL, NULL, NULL, NULL);
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('keplers_third_law', 14, 'quantity', 'mass', NULL, NULL, NULL, NULL, NULL, NULL);
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('keplers_third_law', 15, 'operator', NULL, NULL, 'mul', NULL, NULL, NULL, NULL);
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('keplers_third_law', 16, 'operator', NULL, NULL, 'frac', NULL, NULL, NULL, NULL);
@@ -622,7 +666,7 @@ INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('newton_second_law_of_motion', 4, 'operator', NULL, NULL, 'mul', NULL, NULL, NULL, NULL);
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('newton_second_law_of_motion', 5, 'operator', NULL, NULL, 'eq', NULL, NULL, NULL, NULL);
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('newtons_law_of_gravitation', 1, 'quantity', 'force', NULL, NULL, NULL, NULL, NULL, NULL);
-INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('newtons_law_of_gravitation', 2, 'quantity', 'gravitational_constant', NULL, NULL, NULL, NULL, NULL, NULL);
+INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('newtons_law_of_gravitation', 2, 'constant', NULL, 'gravitational_constant', NULL, NULL, NULL, NULL, NULL);
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('newtons_law_of_gravitation', 3, 'quantity', 'mass', NULL, NULL, NULL, '{"en-us": "1"}', NULL, NULL);
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('newtons_law_of_gravitation', 4, 'operator', NULL, NULL, 'mul', NULL, NULL, NULL, NULL);
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('newtons_law_of_gravitation', 5, 'quantity', 'mass', NULL, NULL, NULL, '{"en-us": "2"}', NULL, NULL);
@@ -670,7 +714,7 @@ INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('pascals_principle', 5, 'operator', NULL, NULL, 'mul', NULL, NULL, NULL, NULL);
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('pascals_principle', 6, 'operator', NULL, NULL, 'frac', NULL, NULL, NULL, NULL);
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('pascals_principle', 7, 'quantity', 'density', NULL, NULL, NULL, NULL, NULL, NULL);
-INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('pascals_principle', 8, 'quantity', 'gravitational_constant', NULL, NULL, NULL, NULL, NULL, NULL);
+INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('pascals_principle', 8, 'constant', NULL, 'gravitational_constant', NULL, NULL, NULL, NULL, NULL);
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('pascals_principle', 9, 'operator', NULL, NULL, 'mul', NULL, NULL, NULL, NULL);
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('pascals_principle', 10, 'quantity', 'length', NULL, NULL, NULL, NULL, NULL, NULL);
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('pascals_principle', 11, 'operator', NULL, NULL, 'Delta', NULL, NULL, NULL, NULL);
@@ -817,6 +861,12 @@ INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_
 INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('work_formula', 8, 'operator', NULL, NULL, 'eq', NULL, NULL, NULL, NULL);
 
 
+INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('first_law_thermodynamics_adiabatic', 1, 'quantity', 'energy', NULL, NULL, NULL, NULL, '{"en-us": "U"}', '{"en-us": "Internal [energy]", "cs-cz": "Vnitřní [energy|energie]"}');
+INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('first_law_thermodynamics_adiabatic', 2, 'operator', NULL, NULL, 'Delta', NULL, NULL, NULL, NULL);
+INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('first_law_thermodynamics_adiabatic', 3, 'quantity', 'drop', NULL, NULL, NULL, NULL, NULL, NULL);
+INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('first_law_thermodynamics_adiabatic', 4, 'quantity', 'energy', NULL, NULL, NULL, NULL, '{"en-us": "W"}', '{"en-us": "Work", "cs-cz": "Práce"}');
+INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('first_law_thermodynamics_adiabatic', 5, 'operator', NULL, NULL, 'sub', NULL, NULL, NULL, NULL);
+INSERT OR IGNORE INTO formula_token (formula_id, position, token_kind, quantity_id, constant_id, operator_id, value, label, symbol_overwrite, quantity_name_overwrite) VALUES ('first_law_thermodynamics_adiabatic', 6, 'operator', NULL, NULL, 'eq', NULL, NULL, NULL, NULL);
 INSERT OR IGNORE INTO formula_relation VALUES('first_law_thermodynamics','first_law_thermodynamics_adiabatic','condition','{"en-us": "Adiabatic process (Q = 0)"}');
 INSERT OR IGNORE INTO formula_relation VALUES('first_law_thermodynamics','first_law_thermodynamics_isochoric','condition','{"en-us": "Isochoric process (W = 0)"}');
 INSERT OR IGNORE INTO formula_relation VALUES('first_law_thermodynamics','kinetic_energy','derivation','{"en-us": "Changes in internal energy via heat and work encompass kinetic energy as a component of total energy."}');

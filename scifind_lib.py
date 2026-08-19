@@ -493,6 +493,22 @@ def render_formula(conn, formula_id, locale="en-us"):
 
 @dataclass
 class _Node:
+    r"""A node in the parsed formula tree.
+
+    Four kinds: operand leaves (quantity, constant, number) and operator
+    nodes that carry children + precedence metadata. Two fields drive
+    the renderer's paren wrapping:
+
+    - `paren_arg` (operator nodes only): per-operand opt-in copied from
+      `operator.paren_arg` at construction. Length == arity; True means
+      the operand may be wrapped in \left(...\right) by the precedence
+      rule or a source `(...)` group, False means the operator's macro
+      syntax already scopes the operand (e.g. \frac{a}{b}, \sqrt{a},
+      a^{b}) and no wrap is allowed.
+    - `_paren_wrap`: True when this node's source position was inside a
+      `(...)` group. Used by `_wrap` to force-wrap a multi-token child
+      even if the precedence rule wouldn't otherwise ask for it.
+    """
     kind: str  # "quantity" | "constant" | "number" | "operator"
     children: list["_Node"] = field(default_factory=list)
     # operand metadata
@@ -501,6 +517,8 @@ class _Node:
     value: Optional[float] = None
     label: Optional[str] = None
     symbol_overwrite: Optional[str] = None
+    name_overwrite: Optional[str] = None
+    name_overwrite: Optional[str] = None
     # operator metadata
     operator_id: Optional[str] = None
     symbol: Optional[str] = None
@@ -508,7 +526,8 @@ class _Node:
     precedence: int = 0
     associativity: str = "left"
     operator_type: str = "infix"
-    parened_arg: bool = True  # True: child may need \left(...\right); False: never
+    paren_arg: Optional[list] = None
+    _paren_wrap: bool = False
 
 
 def _fetch(conn, table: str, columns: str, key: str) -> dict:
@@ -522,7 +541,7 @@ def _fetch(conn, table: str, columns: str, key: str) -> dict:
 
 def _load_operator(conn, operator_id: str) -> dict:
     return _fetch(conn, "operator",
-                  "id, symbol, arity, precedence, associativity, operator_type, parened_arg",
+                  "id, symbol, arity, precedence, associativity, operator_type, paren_arg",
                   operator_id)
 
 
@@ -536,6 +555,30 @@ def _load_quantity(conn, quantity_id: str) -> dict:
     return _fetch(conn, "quantity",
                   "id, name, symbol, symbol_overwrite, default_unit",
                   quantity_id)
+
+
+def _parse_paren_arg(raw, arity, op_id):
+    """Parse the operator.paren_arg JSON column into [bool].
+
+    Returns the parsed list of length == arity. The column has a NOT NULL
+    DEFAULT '[1]' and a json_valid CHECK at the schema level, so a malformed
+    value here is a programmer error and raises loudly.
+    """
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        raise ValueError(
+            f"paren_arg for {op_id} must be a JSON list of {arity} 0/1 values; got {raw!r}"
+        )
+    if not isinstance(parsed, list) or len(parsed) != arity:
+        raise ValueError(
+            f"paren_arg for {op_id} must be a JSON list of {arity} 0/1 values; got {raw!r}"
+        )
+    if not all(p in (0, 1, True, False) for p in parsed):
+        raise ValueError(
+            f"paren_arg for {op_id} must contain only 0/1; got {parsed!r}"
+        )
+    return [bool(p) for p in parsed]
 
 
 # Per-connection caches for the equation parser. These are populated lazily on
@@ -554,7 +597,7 @@ def _parser_caches(conn):
         by_id = {}
         symbol_to_id = {}
         for r in conn.execute(
-            "SELECT id, symbol, math, arity, precedence, associativity, operator_type, parened_arg "
+            "SELECT id, symbol, math, arity, precedence, associativity, operator_type, paren_arg "
             "FROM operator"
         ):
             by_id[r["id"]] = dict(r)
@@ -687,22 +730,75 @@ def _shunting_yard_to_rpn(tokens, op_by_id):
     associativity from the operator table. Prefix operators are pushed
     directly onto the operator stack; relational operators (which form
     equations) terminate the LHS at the first one we encounter.
+
+    Paren-group tracking: when `)` closes a `(...)` group, the result of
+    the group (the outermost token emitted for that group) gets a
+    `_paren_wrap=True` marker on the token dict. The RPN evaluator copies
+    that marker onto the resulting `_Node`; the renderer (`_wrap`) uses
+    it to force-wrap a multi-token child operand — preserving the user's
+    explicit parens end-to-end as long as `paren_arg` allows`.
+
+    Operand-count tracking: each operator stack entry carries a `consumed`
+    counter. An operator is "complete" once `consumed == arity`; only
+    complete operators are eligible to be popped by the precedence rule.
+    Without this, an n-ary infix operator (e.g. arity-2 `log base arg`,
+    arity-3 `sum from to body`) would greedily steal the first few
+    operands, then be popped as soon as the next lower-precedence infix
+    operator arrived — leaving later operands stranded and silently
+    re-binding to operators below it. With the gate, `log euler_e amount
+    1 add` parses as `add(log(e, n), 1)` (the textbook binary behaviour
+    once `log` is complete) rather than `add(e, log(n, 1))`. To group
+    the right operand the user must write parens: `log euler_e (amount
+    1 add)` -> `add(1, log(e, n))`.
+
+    An operand emitted to `output` is also bound to the topmost "open"
+    operator on the stack (the one immediately above `paren_open`,
+    skipping prefix/postfix ops which consume their operands directly).
+    Only open, non-complete operators receive the bump.
     """
     output = []
     stack = []
+
+    def _bump_operand_count():
+        """The operand just emitted on `output` belongs to the topmost
+        operator stack entry that isn't `paren_open` AND isn't already
+        complete. Operators that have already consumed `arity` operands
+        are no longer accepting more, so the operand skips them and
+        binds to the next open operator below. This is what makes
+        `log euler_e amount 1 add` parse as `add(log_b(n), 1)` rather
+        than `add(e, log(n, 1))`."""
+        for entry in reversed(stack):
+            if entry["operator_id"] == "paren_open":
+                continue
+            op_meta = op_by_id.get(entry["operator_id"])
+            if op_meta is None:
+                continue
+            if entry["consumed"] >= op_meta["arity"]:
+                # Already complete; skip to the next open operator below.
+                continue
+            entry["consumed"] += 1
+            return
+
     for tok in tokens:
         kind = tok["token_kind"]
         if kind in ("number", "quantity", "constant"):
             output.append(tok)
+            # A freshly emitted operand belongs to the topmost "open"
+            # operator on the stack. Eagerly drain any prefix/postfix
+            # operators sitting on top of that — they consume the operand
+            # immediately. The operand's slot on the topmost open infix/
+            # relational operator is bumped via _bump_operand_count
+            # (called below).
             while stack and stack[-1]["operator_id"] in op_by_id:
                 top = op_by_id[stack[-1]["operator_id"]]
                 if top["operator_type"] not in ("prefix", "postfix"):
                     break
                 output.append(stack.pop())
+            _bump_operand_count()
             continue
         op_id = tok["operator_id"]
         if op_id == "paren_open":
-            stack.append(tok)
+            stack.append({**tok, "consumed": 0})
             continue
         if op_id == "paren_close":
             while stack and stack[-1]["operator_id"] != "paren_open":
@@ -710,6 +806,11 @@ def _shunting_yard_to_rpn(tokens, op_by_id):
             if not stack:
                 raise ValueError("unmatched ')'")
             stack.pop()
+            # Mark the outermost token of the group as source-wrapped.
+            # `output[-1]` is the group's result after draining the operators
+            # between the matching `(` and `)`.
+            if output:
+                output[-1]["_paren_wrap"] = True
             # A prefix (function) operator pushed just before the '(' has
             # now consumed its parenthesized argument and must be applied
             # before any following infix/relational operator. Without this
@@ -722,6 +823,9 @@ def _shunting_yard_to_rpn(tokens, op_by_id):
                 if top_op is None or top_op["operator_type"] != "prefix":
                     break
                 output.append(stack.pop())
+            # The (...) group's result counts as one operand for whichever
+            # operator is now on top of the stack.
+            _bump_operand_count()
             continue
         op = op_by_id.get(op_id)
         if op is None:
@@ -730,7 +834,7 @@ def _shunting_yard_to_rpn(tokens, op_by_id):
         prec = op["precedence"]
         assoc = op["associativity"]
         if op_type in ("prefix", "postfix"):
-            stack.append(tok)
+            stack.append({**tok, "consumed": 0})
             continue
         if assoc == "none" and op_type == "relational":
             while stack and stack[-1]["operator_id"] != "paren_open":
@@ -739,14 +843,21 @@ def _shunting_yard_to_rpn(tokens, op_by_id):
                 if top and top["operator_type"] == "relational":
                     break
                 output.append(stack.pop())
-            stack.append(tok)
+            stack.append({**tok, "consumed": 0})
             continue
         while stack:
-            top_id = stack[-1]["operator_id"]
+            top_entry = stack[-1]
+            top_id = top_entry["operator_id"]
             if top_id == "paren_open":
                 break
             top = op_by_id.get(top_id)
             if top is None or top["operator_type"] in ("prefix", "postfix"):
+                break
+            # Only a complete operator (consumed == arity) is eligible to
+            # be popped by the precedence rule. An incomplete operator on
+            # top of the stack is still waiting for more operands — let it
+            # stay so its later operand(s) can be read.
+            if top_entry["consumed"] < top["arity"]:
                 break
             if top["precedence"] > prec or (
                 top["precedence"] == prec and assoc == "left"
@@ -754,7 +865,27 @@ def _shunting_yard_to_rpn(tokens, op_by_id):
                 output.append(stack.pop())
             else:
                 break
-        stack.append(tok)
+        # Push the new infix operator. By the textbook shunting-yard
+        # contract, an infix operator on the stack "owns" the LAST
+        # `arity` operands already on the output queue — they are its
+        # arguments, popped together when the operator is later moved to
+        # output. Initialise `consumed` to `arity` so:
+        #   * The completeness gate above treats this operator as ready
+        #     to be popped as soon as the next operator arrives (or at end
+        #     of input), instead of greedily consuming additional operands
+        #     that belong to operators later in the source.
+        #   * The next operand arrival correctly skips this operator and
+        #     bumps the operator below it (when there is one).
+        # Without this, an n-ary infix operator (sqrt, log, sum, ...)
+        # would arrive AFTER more operands than its arity and the
+        # bump logic would silently assign them all to it, leaving the
+        # real operands orphaned on the output.
+        # The actual arity-aware claiming still happens at pop time in
+        # `_evaluate_rpn`, which pops exactly `arity` operands from the
+        # tail of the output queue; this initial `consumed = arity` just
+        # makes the completeness gate and the operand-bump loop agree
+        # with that contract.
+        stack.append({**tok, "consumed": 0})
 
     while stack:
         top = stack.pop()
@@ -827,8 +958,12 @@ def preview_equation(conn, equation, locale="en-us", dim_caches=None, overrides=
     for tok in tokens:
         if tok["token_kind"] != "quantity":
             continue
-        pos = tok["pos"]
         qid = tok["quantity_id"]
+        # The `drop` sentinel is a placeholder for an operand slot the user
+        # wants to blank out — it has no real quantity to surface in the UI.
+        if qid == "drop":
+            continue
+        pos = tok["pos"]
         qrow = _load_quantity(conn, qid)
         key = qid + "|" + (tok.get("label") or "") + "|" + str(pos)
         ov = (overrides or {}).get(key) or {}
@@ -863,7 +998,7 @@ def _evaluate_rpn(conn, tokens: list[dict]) -> Optional[_Node]:
                     f"RPN underflow at {t['operator_id']}: need {op['arity']}, have {len(stack)}"
                 )
             args = [stack.pop() for _ in range(op["arity"])][::-1]
-            stack.append(_Node(
+            new_node = _Node(
                 kind="operator",
                 children=args,
                 operator_id=op["id"],
@@ -872,21 +1007,59 @@ def _evaluate_rpn(conn, tokens: list[dict]) -> Optional[_Node]:
                 precedence=op["precedence"],
                 associativity=op["associativity"],
                 operator_type=op["operator_type"],
-                parened_arg=bool(op.get("parened_arg", 1)),
-            ))
+                paren_arg=_parse_paren_arg(op["paren_arg"], op["arity"], op["id"]),
+                # Propagate the source-group wrap marker from the token
+                # (the parser marks only the outermost token of each (...)).
+                _paren_wrap=bool(t.get("_paren_wrap")),
+            )
+            # Chainable relationals: with `assoc='none'` the shunting-yard
+            # treats `a = b = c` as `a = (b = c)` in source, which after RPN
+            # reduction becomes `eq(a, eq(b, c))` — the inner eq is the
+            # RIGHT operand. Flatten such nested chains into a single node
+            # with N children so the renderer emits `a = b = c` instead of
+            # `a = (b = c)`. The list of chainable operators lives here
+            # (not in the DB) because the semantics are "this operator is
+            # associative in the rendering sense" — true for every
+            # relational we ship today.
+            if (
+                op["operator_type"] == "relational"
+                and op["id"] in _CHAINABLE_RELATIONALS
+                and len(args) == 2
+                and args[1].kind == "operator"
+                and args[1].operator_id == op["id"]
+                and args[1].operator_type == "relational"
+            ):
+                # new children in source order: leftmost operand first, then
+                # the inner chain's terms. The inner chain preserves its own
+                # source order; the new leftmost becomes index 0.
+                inner = args[1]
+                new_node.children = [args[0]] + list(inner.children)
+                new_node.arity = len(new_node.children)
+                new_node._paren_wrap = inner._paren_wrap
+            stack.append(new_node)
         elif kind == "quantity":
             stack.append(_Node(
                 kind="quantity",
                 quantity_id=t["quantity_id"],
                 label=t.get("label"),
                 symbol_overwrite=t.get("symbol_overwrite"),
+                name_overwrite=t.get("name_overwrite"),
+                _paren_wrap=bool(t.get("_paren_wrap")),
             ))
         elif kind == "constant":
-            stack.append(_Node(kind="constant", constant_id=t["constant_id"]))
+            stack.append(_Node(
+                kind="constant",
+                constant_id=t["constant_id"],
+                _paren_wrap=bool(t.get("_paren_wrap")),
+            ))
         elif kind == "number":
-            stack.append(_Node(kind="number", value=t["value"]))
+            stack.append(_Node(
+                kind="number",
+                value=t["value"],
+                _paren_wrap=bool(t.get("_paren_wrap")),
+            ))
         else:
-            raise ValueError(f"unknown token kind: {kind!r}")
+            raise ValueError(f"unknown token kind: {t!r}")
     if not stack:
         return None
     if len(stack) > 1:
@@ -894,14 +1067,41 @@ def _evaluate_rpn(conn, tokens: list[dict]) -> Optional[_Node]:
     return stack[0]
 
 
+# Relational operators that chain associatively in source (a OP b OP c is
+# interpreted as a chain of equalities/inequalities, not as a nested binary
+# tree). This matches the convention used by `law_of_sines`,
+# `bernoulli_pressure_velocity_horizontal`, `kelvin_planck_statement`, etc.
+_CHAINABLE_RELATIONALS = {
+    "eq", "approx", "neq", "ngeq", "sim", "perp", "parallel",
+    "lt", "gt", "leq", "geq",
+}
+
+
 def _latex_quantity(node: _Node, conn, locale: str) -> str:
     if not node.quantity_id:
         return "?"
+    # `drop` is a sentinel quantity whose only purpose is to blank out an
+    # operand slot in the rendered output. It has an empty symbol and zero
+    # dimensions, so it contributes nothing to either the LaTeX or the
+    # dimensional analysis. The caller (operator-specific render paths like
+    # log/sum) is responsible for collapsing the surrounding braces and
+    # subscript/superscript markers when an operand is dropped.
+    if node.quantity_id == "drop":
+        return ""
     q = _load_quantity(conn, node.quantity_id)
     var = localise(node.symbol_overwrite or "", locale) or q["symbol"] or node.quantity_id
     label = localise(node.label or "", locale)
     if label and "_" not in var:
         var += "_{" + label + "}"
+    # If the quantity row has no default symbol (e.g. `dimensionless` is
+    # intentionally a slot-only quantity for the dimensional analysis)
+    # and no override was supplied, drop the literal id token in the
+    # rendered output. Treating it as `drop`-style empty is the only
+    # thing that makes sense for a row with no glyph: its job is to consume
+    # a slot in the dimensional analysis without contributing a visible
+    # character.
+    if not (localise(node.symbol_overwrite or "", locale) or q["symbol"]):
+        return ""
     return var
 
 
@@ -928,20 +1128,22 @@ def _latex_number(node: _Node) -> str:
 
 
 def _needs_paren(child: _Node, parent: _Node, side: str) -> bool:
+    """Should this child be wrapped by the precedence rule under `parent`?
+
+    Pure precedence/associativity check — returns True only when leaving
+    the child bare would make the rendered output ambiguous (e.g. a + b * c
+    needs parens around `b * c` when it's the right operand of `+`).
+
+    The actual wrap is gated by `parent.paren_arg[i]` in `_wrap`, so this
+    function does not need to know about operator-specific scoping; it just
+    reports what the precedence rule says.
+    """
     if child.kind != "operator":
         return False
+    # Equations (`a = b`, `a ∝ b`) need parens around sub-equations, since
+    # `a = b = c` is genuinely ambiguous. Wrap any relational child.
     if child.operator_type == "relational":
         return True
-    # Prefix operators with parened_arg=False (e.g. \sqrt, whose macro is
-    # \sqrt{...}) already scope their argument via the macro's own braces,
-    # so no extra \left(...\right) wrapper is needed. Other prefix operators
-    # (\sin, \cos, \tan, \neg, ...) set parened_arg=True and wrap a
-    # binary-infix child for unambiguous reading: neg(add(a,b)) must be
-    # -(a+b), not -a+b.
-    if parent.operator_type in ("prefix", "postfix"):
-        if not parent.parened_arg:
-            return False
-        return child.operator_type == "infix"
     if child.precedence < parent.precedence:
         return True
     if child.precedence == parent.precedence:
@@ -955,7 +1157,29 @@ def _needs_paren(child: _Node, parent: _Node, side: str) -> bool:
 
 
 def _wrap(child_str: str, child: _Node, parent: _Node, side: str) -> str:
+    """Wrap child in \\left(...\\right) per `paren_arg` and the precedence rule.
+
+    Three gates, in order:
+      1. `paren_arg[i]` — per-operand opt-in from the operator. False means
+         the operator's macro syntax already scopes this operand
+         (\\frac{a}{b}, \\sqrt{a}, a^{b}, \\overline{a}, \\sum); never wrap.
+      2. Precedence rule (`_needs_paren`) — demands parens for unambiguous
+         reading (e.g. a * (b + c)).
+      3. Source-group override — child came from a `(...)` group in the
+         source equation (`child._paren_wrap`), so the user asked for parens;
+         force-wrap a multi-token child. Atomic operands (single quantity /
+         number) are left bare since wrapping would be visual noise.
+    """
+    # Map side to the operand index in paren_arg. "child" is used by
+    # arity-1 prefix/postfix operators — their only operand sits at index 0.
+    side_idx = 0 if side == "child" else (0 if side == "left" else 1)
+    paren_arg = parent.paren_arg or [True] * parent.arity
+    if side_idx >= len(paren_arg) or not paren_arg[side_idx]:
+        return child_str
     if _needs_paren(child, parent, side):
+        return "\\left(" + child_str + "\\right)"
+    if child._paren_wrap and child.kind == "operator" \
+            and not child_str.startswith("\\left("):
         return "\\left(" + child_str + "\\right)"
     return child_str
 
@@ -972,20 +1196,187 @@ def _render_binary(node: _Node, conn, locale: str) -> tuple[str, str]:
 
 
 def _latex_infix(node: _Node, conn, locale: str) -> str:
+    # sqrt: arity-2 infix that emits \sqrt{radicand} (square root) or
+    # \sqrt[index]{radicand} (n-th root). Children: [radicand, index].
+    # paren_arg=[0,0]: both operands are inside the macro's {...} scopes.
+    # Implicit 2-omission: if the index is the literal number 2 (or `drop`),
+    # emit `\sqrt{radicand}` rather than `\sqrt[2]{radicand}`. The math
+    # template `a**(1/b if b != 2 else 0.5)` short-circuits to .5 (= 1/2)
+    # when b is 2, so the same shape covers both square and n-th roots.
+    if node.operator_id == "sqrt":
+        radicand = _latex_node(node.children[0], conn, locale)
+        index = node.children[1]
+        if not radicand:
+            return ""
+        # Implicit 2-omission: skip the [2] when the index is the literal 2.
+        is_default = (index.kind == "number" and index.value == 2)
+        if is_default:
+            return f"\\sqrt{{{radicand}}}"
+        idx = _latex_node(index, conn, locale)
+        if not idx:
+            return f"\\sqrt{{{radicand}}}"
+        return f"\\sqrt[{idx}]{{{radicand}}}"
+    # sub: arity-2 infix emitting `a - b`. When the left operand is the
+    # `drop` sentinel quantity this is the unary minus (replaces the old
+    # `neg` prefix operator): `drop x sub` -> `-x`. Children: [a, b].
+    if node.operator_id == "sub":
+        left, right = node.children
+        l = _latex_node(left, conn, locale)
+        r = _latex_node(right, conn, locale)
+        if left.kind == "quantity" and left.quantity_id == "drop":
+            r = _wrap(r, right, node, "right")
+            return f"-{r}"
+        l = _wrap(l, left, node, "left")
+        r = _wrap(r, right, node, "right")
+        return f"{l} - {r}"
+    # log: arity-2 infix that emits \log_{base}{arg}. Children: [base, arg].
+    # paren_arg=[0,0]: both operands are inside the macro's {...} scopes, never
+    # auto-wrapped. Either operand may be the `drop` quantity, which renders
+    # to an empty string — so `log drop x` -> \log x and `log b drop` ->
+    # \log_{b}. When both operands are dropped, both braces collapse and we
+    # emit just `\log{arg}` to avoid `_{}^{}`. Implicit euler-omission
+    # (mirroring sqrt's implicit 2-omission): a base of the `euler_e`
+    # constant emits `\ln{arg}` rather than `\log_{e}{arg}` — so
+    # `log euler_e length` -> \ln l.
+    if node.operator_id == "log":
+        base_node = node.children[0]
+        arg = _latex_node(node.children[1], conn, locale)
+        if not arg:
+            return ""
+        if base_node.kind == "constant" and base_node.constant_id == "euler_e":
+            return f"\\ln{{{arg}}}"
+        base = _latex_node(base_node, conn, locale)
+        if not base:
+            return f"\\log{{{arg}}}"
+        return f"\\log_{{{base}}}{{{arg}}}"
+    # sum: arity-3 infix that emits \sum_{from}^{to}{body}. Children:
+    # [from, to, body]. paren_arg=[0,0,0]: all three operands are inside
+    # the macro's {...} scopes. Any operand may be the `drop` quantity,
+    # which renders to an empty string — so `sum 1 drop x` -> \sum_{1}{x},
+    # `sum drop 5 x` -> \sum^{5}{x}, `sum drop drop x` -> \sum{x}.
+    if node.operator_id == "sum":
+        lo = _latex_node(node.children[0], conn, locale)
+        hi = _latex_node(node.children[1], conn, locale)
+        body = _latex_node(node.children[2], conn, locale)
+        if not body:
+            return ""
+        if not lo and not hi:
+            return f"\\sum{{{body}}}"
+        if not lo:
+            return f"\\sum^{{{hi}}}{{{body}}}"
+        if not hi:
+            return f"\\sum_{{{lo}}}{{{body}}}"
+        return f"\\sum_{{{lo}}}^{{{hi}}}{{{body}}}"
+    # lim: arity-3 infix that emits \lim_{var \to val}{body}. Children:
+    # [var, val, body]. paren_arg=[0,0,0]: all three operands are inside
+    # the macro's {...} scopes. Either var or val may be `drop` — if any
+    # part of the subscript is missing, the subscript is dropped entirely.
+    # A one-sided limit like `\lim_{x \to}` is malformed LaTeX, so we
+    # prefer `\lim{body}` over emitting a broken arrow.
+    if node.operator_id == "lim":
+        var = _latex_node(node.children[0], conn, locale)
+        val = _latex_node(node.children[1], conn, locale)
+        body = _latex_node(node.children[2], conn, locale)
+        if not body:
+            return ""
+        if not var or not val:
+            return f"\\lim{{{body}}}"
+        return f"\\lim_{{{var} \\to {val}}}{{{body}}}"
+    # int: arity-3 infix that emits \int_{from}^{to}{body}. Children:
+    # [from, to, body]. paren_arg=[0,0,0]: all three operands are inside
+    # the macro's {...} scopes. Symmetric with `sum`: any operand may be
+    # `drop` to blank it out.
+    if node.operator_id == "int":
+        lo = _latex_node(node.children[0], conn, locale)
+        hi = _latex_node(node.children[1], conn, locale)
+        body = _latex_node(node.children[2], conn, locale)
+        if not body:
+            return ""
+        if not lo and not hi:
+            return f"\\int{{{body}}}"
+        if not lo:
+            return f"\\int^{{{hi}}}{{{body}}}"
+        if not hi:
+            return f"\\int_{{{lo}}}{{{body}}}"
+        return f"\\int_{{{lo}}}^{{{hi}}}{{{body}}}"
+    # prod: arity-3 infix that emits \prod_{from}^{to}{body}. Children:
+    # [from, to, body]. paren_arg=[0,0,0]: same shape as `sum` and `int`.
+    if node.operator_id == "prod":
+        lo = _latex_node(node.children[0], conn, locale)
+        hi = _latex_node(node.children[1], conn, locale)
+        body = _latex_node(node.children[2], conn, locale)
+        if not body:
+            return ""
+        if not lo and not hi:
+            return f"\\prod{{{body}}}"
+        if not lo:
+            return f"\\prod^{{{hi}}}{{{body}}}"
+        if not hi:
+            return f"\\prod_{{{lo}}}{{{body}}}"
+        return f"\\prod_{{{lo}}}^{{{hi}}}{{{body}}}"
+    # oint: arity-3 infix that emits \oint_{from}^{to}{body}. Children:
+    # [from, to, body]. paren_arg=[0,0,0]: same shape as `int`, the
+    # contour-integral counterpart.
+    if node.operator_id == "oint":
+        lo = _latex_node(node.children[0], conn, locale)
+        hi = _latex_node(node.children[1], conn, locale)
+        body = _latex_node(node.children[2], conn, locale)
+        if not body:
+            return ""
+        if not lo and not hi:
+            return f"\\oint{{{body}}}"
+        if not lo:
+            return f"\\oint^{{{hi}}}{{{body}}}"
+        if not hi:
+            return f"\\oint_{{{lo}}}{{{body}}}"
+        return f"\\oint_{{{lo}}}^{{{hi}}}{{{body}}}"
     left, right = node.children
-    # frac and pow self-delimit via macro syntax (\frac{a}{b}, a^{b}) —
-    # their child arguments are already scoped by braces/superscript, so
-    # no extra \left(...\right) wrapper is needed around either operand.
+    # frac self-delimits via macro syntax (\frac{a}{b}) — both operands are
+    # in {...}, never wrapped. paren_arg=[0,0] encodes this.
     if node.operator_id == "frac":
-        return f"\\frac{{{_latex_node(left, conn, locale)}}}{{{_latex_node(right, conn, locale)}}}"
+        l = _latex_node(left, conn, locale)
+        r = _latex_node(right, conn, locale)
+        return f"\\frac{{{l}}}{{{r}}}"
+    # pow: base takes the next token (paren_arg[0]=1, may wrap for the
+    # `add` base case like (m+m)^c). Exponent is in ^{...} (paren_arg[1]=0,
+    # never auto-wrap); the braces are sufficient scope. Both are still
+    # subject to _wrap so source (a+b)^(c+d) wraps both per user intent.
     if node.operator_id == "pow":
-        return f"{_latex_node(left, conn, locale)}^{{{_latex_node(right, conn, locale)}}}"
+        l = _latex_node(left, conn, locale)
+        r = _latex_node(right, conn, locale)
+        l = _wrap(l, left, node, "left")
+        r = _wrap(r, right, node, "right")
+        return f"{l}^{{{r}}}"
     l, r = _render_binary(node, conn, locale)
     if node.symbol:
         return f"{l} {node.symbol} {r}"
+    # Implicit multiplication (the `mul` operator with no symbol). Render per
+    # the situation table:
+    #   number × number  -> a \times b
+    #   number × fraction / function / constant / variable / expression
+    #                     -> concat (optionally with thin space for \frac)
+    #   variable × variable / constant -> concat
+    #   expression × ... -> concat (no inner parens added; caller-controlled)
     if left.kind == "number" and right.kind == "number":
-        return f"{l} \\cdot {r}"
-    if left.kind == "number" or right.kind == "number":
+        return f"{l} \\times {r}"
+    if left.kind == "number":
+        if right.kind == "operator" and right.operator_id == "frac":
+            return f"{l}\\,\\frac{{{_latex_node(right.children[0], conn, locale)}}}{{{_latex_node(right.children[1], conn, locale)}}}"
+        # Constants/quantities whose LaTeX form ends in a control sequence
+        # (e.g. `\pi`, `\theta`) need a thin space after a leading number
+        # so the result reads `2 \pi` rather than `2\pi` (which visually
+        # collides the digit with the symbol).
+        if right.kind in ("constant", "quantity") and r.startswith("\\"):
+            return f"{l}\\,{r}"
+        return f"{l}{r}"
+    if right.kind == "number":
+        # If the left operand is a constant or quantity (whose LaTeX form
+        # is a single symbol like G or a control sequence like \pi) and the
+        # right is a number, the digit would visually collide with the
+        # symbol — insert a thin space. (e.g. `\pi 2` rather than `\pi2`,
+        # `G 2` rather than `G2`).
+        if left.kind in ("constant", "quantity"):
+            return f"{l}\\,{r}"
         return f"{l}{r}"
     return f"{l} {r}"
 
@@ -996,17 +1387,24 @@ def _render_child(node: _Node, conn, locale: str) -> str:
 
 
 def _latex_prefix(node: _Node, conn, locale: str) -> str:
+    # `abs` has no symbol and its operand must be scoped by `\left|...\right|`
+    # rather than the usual `{...}` macro brace — `\left|` is itself an
+    # opening delimiter, so wrapping the operand again would emit `\left|{{x}}\right|`.
+    if node.operator_id == "abs":
+        a = _render_child(node, conn, locale)
+        return f"\\left|{a}\\right|"
     a = _render_child(node, conn, locale)
     sym = node.symbol or ""
     if sym == "-":
         return f"-{a}"
-    # All non-`neg` prefix operators in the seed (\sqrt, \sin, \cos, \Delta,
-    # \mathrm{d}, \overline, \ln, ...) are LaTeX macros whose argument is the
-    # next token (single char or `{...}`). Without braces, `\sqrt \left(a+b\right)`
-    # would greedily grab `\left` and leave the real argument dangling outside
-    # the sqrt's scope. Wrap the argument in `{...}` so the macro always sees
-    # the correct scope. Redundant braces (when the argument is already a
-    # single token like `\sin a`) are stripped by TeX at render time.
+    # All prefix operators in the seed (\sin, \cos, \Delta,
+    # \nabla, \mathrm{d}, \overline, \exp, ...) are LaTeX macros whose
+    # argument is the next token (single char or `{...}`). Without braces,
+    # `\sin \left(a+b\right)` would greedily grab `\left` and leave the real
+    # argument dangling outside the macro's scope. Wrap the argument in
+    # `{...}` so the macro always sees the correct scope. Redundant braces
+    # (when the argument is already a single token like `\sin a`) are
+    # stripped by TeX at render time.
     return f"{sym} {{{a}}}"
 
 
@@ -1016,6 +1414,19 @@ def _latex_postfix(node: _Node, conn, locale: str) -> str:
 
 
 def _latex_relational(node: _Node, conn, locale: str) -> str:
+    sym = node.symbol or "="
+    # Chain (N-ary relational): emit `child0 sym child1 sym child2 ...` with
+    # _wrap applied per pair. Operands wrap individually per the precedence
+    # rule; the operator itself never wraps (it's just text between terms).
+    if len(node.children) > 2:
+        parts = []
+        for i, child in enumerate(node.children):
+            child_str = _latex_node(child, conn, locale)
+            child_str = _wrap(child_str, child, node, "left" if i == 0 else "right")
+            parts.append(child_str)
+            if i < len(node.children) - 1:
+                parts.append(f" {sym} ")
+        return "".join(parts)
     l, r = _render_binary(node, conn, locale)
     return f"{l} {node.symbol} {r}"
 
@@ -1069,14 +1480,19 @@ def fetch_formula_related(conn, formula_id):
 
 
 def fetch_formula_detail_items(conn, formula_id):
-    """Return all formula_token rows for a formula, joined with quantity metadata."""
+    """Return all formula_token rows for a formula, joined with quantity metadata.
+
+    The `drop` sentinel quantity is filtered out — it has no real symbol,
+    name, or unit to surface in the detail table; it only exists to blank
+    out an operand slot in the rendered LaTeX.
+    """
     return conn.execute(
         """
         SELECT ft.*, q.symbol AS quantity_symbol, q.default_unit,
                json_extract(q.name, '$.en-us') AS quantity_name
         FROM formula_token ft
         LEFT JOIN quantity q ON q.id = ft.quantity_id
-        WHERE ft.formula_id = ?
+        WHERE ft.formula_id = ? AND ft.quantity_id != 'drop'
         ORDER BY ft.position
         """,
         (formula_id,),
