@@ -1,7 +1,6 @@
 __pycache__/
 *.pyc
-*.db*
 instance/
 .env
-check_formula.py
-_macros.html
+scifind.db
+seed.sql.bak*
