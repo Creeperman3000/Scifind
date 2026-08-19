@@ -1,11 +1,10 @@
 {% extends "base.html" %}
-{% import "_macros.html" as ui %}
 {% block title %}{{ _(q.name) }}{% endblock %}
 {% block content %}
 
 <h2>{% if q.symbol %}${{ q.symbol }}$ {% endif %}{{ _(q.name) }}</h2>
 
-<div class="detail-desc">{{ _('list.quantity') }}</div>
+<div class="detail-desc">{{ _('detail.quantity') }}</div>
 
 {% if q.breadcrumbs %}
 <div class="breadcrumb-bar">
@@ -26,7 +25,11 @@
 </div>
 
 {% if q.description and q.description != '' %}
-<div class="detail-desc">{{ _(q.description) }}</div>
+<div class="detail-desc-list">
+{% for para in _(q.description).split('\n') if para.strip() %}
+<p class="detail-desc">{{ para }}</p>
+{% endfor %}
+</div>
 {% endif %}
 
 {% if units %}
@@ -35,7 +38,7 @@
   <table class="units-table">
     <thead>
       <tr>
-        <th>{{ _('list.unit') }}</th>
+        <th>{{ _('detail.unit') }}</th>
         <th>{{ _('detail.system') }}</th>
         {% if show_factor %}<th>{{ _('detail.factor_to') }} ${{ default_unit_symbol_latex }}$</th>{% endif %}
         {% if show_offset %}<th>{{ _('detail.offset_from') }} ${{ default_unit_symbol_latex }}$</th>{% endif %}
@@ -64,7 +67,7 @@
   <h3>{{ _('detail.primary_formulas') }}</h3>
   <div class="formula-grid">
   {% for f in primary_formulas %}
-    {{ ui.formula_card('/formula/' ~ f.id, f.latex, _(f.name)) }}
+    {{ formula_card('/formula/' ~ f.id, f.latex, _(f.name)) }}
   {% endfor %}
   </div>
 </div>
@@ -75,7 +78,7 @@
   <h3>{{ _('detail.also_appears_in') }}</h3>
   <div class="formula-grid">
   {% for f in nonprimary_formulas %}
-    {{ ui.formula_card('/formula/' ~ f.id, f.latex, _(f.name)) }}
+    {{ formula_card('/formula/' ~ f.id, f.latex, _(f.name)) }}
   {% endfor %}
   </div>
 </div>
@@ -86,7 +89,7 @@
   <h3>{{ _('detail.related_formulas') }}</h3>
   <div class="formula-grid">
   {% for r in related_formulas %}
-    {{ ui.formula_card('/formula/' ~ r.id, r.latex, _(r.name), relation=_('relation.' ~ r.relation_type)) }}
+    {{ formula_card('/formula/' ~ r.id, r.latex, _(r.name), relation=_('relation.' ~ r.relation_type)) }}
   {% endfor %}
   </div>
 </div>

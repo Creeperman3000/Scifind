@@ -35,7 +35,11 @@
 </div>
 
 {% if formula.description and formula.description != '' %}
-<div class="detail-desc">{{ _(formula.description) }}</div>
+<div class="detail-desc-list">
+{% for para in _(formula.description).split('\n') if para.strip() %}
+<p class="detail-desc">{{ para }}</p>
+{% endfor %}
+</div>
 {% endif %}
 
 {% if detail_items %}

@@ -1,5 +1,4 @@
 {% extends "base.html" %}
-{% import "_macros.html" as ui %}
 {% block title %}{{ heading }}{% endblock %}
 {% block content %}
 
@@ -8,11 +7,11 @@
 {% if formulas %}
 <div class="formula-grid">
 {% for f in formulas %}
-  {{ ui.formula_card('/formula/' ~ f.id, f.latex, _(f.name)) }}
+  {{ formula_card('/formula/' ~ f.id, f.latex, _(f.name)) }}
 {% endfor %}
 </div>
 {% else %}
-<p>{{ _('list.formulas_no_results') }}</p>
+<p>{{ _('detail.formulas_no_results') }}</p>
 {% endif %}
 
 {% endblock %}
