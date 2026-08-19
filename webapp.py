@@ -55,6 +55,15 @@ from scifind_lib import (
     fetch_all_formulas,
     search_headings,
     suggest_headings,
+    FORMULA_SORT_KEYS,
+    QUANTITY_SORT_KEYS,
+    SEARCH_SORT_KEYS,
+    DEFAULT_FORMULA_SORT,
+    DEFAULT_QUANTITY_SORT,
+    DEFAULT_SEARCH_SORT,
+    sort_formulas,
+    sort_quantities,
+    sort_search_rows,
     export_to_csv_directory,
     export_to_xlsx,
     export_to_ods,
@@ -147,6 +156,13 @@ def _safe_int(value, default=None):
 def _csv_list(value):
     """Split a comma-separated query value into a list of stripped non-empty parts."""
     return [part.strip() for part in value.split(",") if part.strip()]
+
+
+def _resolve_sort(value, allowed, default):
+    """Validate a `sort` query param against the page's allowed set."""
+    if value and value in allowed:
+        return value
+    return default
 
 
 def parse_filter_state(args, path="") -> FilterState:
@@ -766,6 +782,7 @@ def inject_globals():
     locale_ui = _build_ui_with_fallback(locale)
     is_qty_page = (request.path == "/quantities"
                    or request.path.startswith(("/quantity/", "/unit/")))
+    sort_context = _sort_context_for(request.path, request.args.get("sort"))
 
     return dict(
         tree_json=_jstree_data(tree, name_map, compressed, fs.exclude_all, ids_provided=fs.ids_provided),
@@ -780,7 +797,31 @@ def inject_globals():
         dimension_symbol_list=DIMENSION_SYMBOLS() if db else [],
         available_locales=locale_list,
         locale_ui=locale_ui,
+        sort=sort_context["sort"],
+        available_sorts=sort_context["available_sorts"],
+        default_sort=sort_context["default_sort"],
     )
+
+
+def _sort_context_for(path, raw_value):
+    """Pick allowed sort keys + the active sort for the current page."""
+    if path.startswith("/search"):
+        return {
+            "available_sorts": SEARCH_SORT_KEYS,
+            "default_sort": DEFAULT_SEARCH_SORT,
+            "sort": _resolve_sort(raw_value, SEARCH_SORT_KEYS, DEFAULT_SEARCH_SORT),
+        }
+    if path.startswith("/quantities"):
+        return {
+            "available_sorts": QUANTITY_SORT_KEYS,
+            "default_sort": DEFAULT_QUANTITY_SORT,
+            "sort": _resolve_sort(raw_value, QUANTITY_SORT_KEYS, DEFAULT_QUANTITY_SORT),
+        }
+    return {
+        "available_sorts": FORMULA_SORT_KEYS,
+        "default_sort": DEFAULT_FORMULA_SORT,
+        "sort": _resolve_sort(raw_value, FORMULA_SORT_KEYS, DEFAULT_FORMULA_SORT),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1054,8 +1095,18 @@ def unit_detail(unit_id):
 @app.route("/search")
 def search_page():
     query = request.args.get("q", "").strip()[:SEARCH_QUERY_MAX_LENGTH]
-    results = search_headings(get_db(), query) if query else []
-    return render_template("search.html", query=query, results=results)
+    db = get_db()
+    locale = g.locale
+    sort_key = _resolve_sort(request.args.get("sort"), SEARCH_SORT_KEYS, DEFAULT_SEARCH_SORT)
+    results = search_headings(db, query) if query else []
+    results = sort_search_rows(db, results, sort_key, locale)
+    return render_template(
+        "search.html",
+        query=query,
+        results=results,
+        sort=sort_key,
+        available_sorts=SEARCH_SORT_KEYS,
+    )
 
 
 @app.route("/api/search-suggestions")
@@ -1517,6 +1568,7 @@ def all_quantities():
     locale = g.locale
     fs = parse_filter_state(request.args, request.path)
     fs.quantity_mode = "or"
+    sort_key = _resolve_sort(request.args.get("sort"), QUANTITY_SORT_KEYS, DEFAULT_QUANTITY_SORT)
     tree = load_tree()
     compressed = _compress_selection(tree, fs.ids)
     if compressed == _all_tree_root_ids(tree):
@@ -1526,7 +1578,9 @@ def all_quantities():
         return render_template(
             "quantities.html",
             quantities=[],
-            heading=_("list.quantities_no_results"),
+            heading=_("detail.quantities_no_results"),
+            sort=sort_key,
+            available_sorts=QUANTITY_SORT_KEYS,
         )
 
     raw_quantities = list(fetch_all_quantities(db))
@@ -1554,12 +1608,20 @@ def all_quantities():
         q["default_unit_symbol_latex"] = _render_unit_symbol(q["default_unit"])
         filtered.append(q)
 
+    filtered = sort_quantities(filtered, sort_key, locale)
+
     heading = _render_list_heading(
         _("detail.quantities"), tree, compressed, fs, db, locale,
     )
     if fs.base_quantity_only:
         heading = _("detail.base_quantities")
-    return render_template("quantities.html", quantities=filtered, heading=heading)
+    return render_template(
+        "quantities.html",
+        quantities=filtered,
+        heading=heading,
+        sort=sort_key,
+        available_sorts=QUANTITY_SORT_KEYS,
+    )
 
 
 @app.route("/formulas")
@@ -1572,11 +1634,15 @@ def all_formulas():
     if compressed == _all_tree_root_ids(tree):
         return redirect("/formulas")
 
+    sort_key = _resolve_sort(request.args.get("sort"), FORMULA_SORT_KEYS, DEFAULT_FORMULA_SORT)
+
     if fs.exclude_all or (fs.ids_provided and not fs.ids):
         return render_template(
             "formulas.html",
             formulas=[],
-            heading=_("list.formulas_no_results"),
+            heading=_("detail.formulas_no_results"),
+            sort=sort_key,
+            available_sorts=FORMULA_SORT_KEYS,
         )
 
     formulas = [dict(f) for f in fetch_all_formulas(db)]
@@ -1606,6 +1672,8 @@ def all_formulas():
         if matching_ids is not None:
             formulas = [f for f in formulas if f["id"] in matching_ids]
 
+    formulas = sort_formulas(db, formulas, sort_key, locale)
+
     for f in formulas:
         _attach_breadcrumbs(f, locale)
         f["latex"] = render_formula(db, f["id"], locale=locale)
@@ -1613,7 +1681,13 @@ def all_formulas():
     heading = _render_list_heading(
         _("nav.formulas"), tree, compressed, fs, db, locale,
     )
-    return render_template("formulas.html", formulas=formulas, heading=heading)
+    return render_template(
+        "formulas.html",
+        formulas=formulas,
+        heading=heading,
+        sort=sort_key,
+        available_sorts=FORMULA_SORT_KEYS,
+    )
 
 
 # ---------------------------------------------------------------------------

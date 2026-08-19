@@ -220,6 +220,20 @@
     .diff-fill { position: absolute; top: 8px; height: var(--track-height); background: var(--accent); border-radius: 3px; }
     .diff-vals { display: flex; justify-content: space-between; font-size: 0.7rem; color: var(--text-secondary); }
 
+    /* Sort section in the left sidebar */
+    .sort-wrap { margin-top: 12px; }
+    .sort-select {
+      width: 100%;
+      font-size: 0.82rem;
+      padding: 4px 8px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: inherit;
+    }
+    .sort-select:focus { outline: none; border-color: var(--accent); }
+
     /* ============================================================
        Right sidebar (jsTree)
        ============================================================ */
@@ -769,6 +783,15 @@
           <div class="qty-chips" id="qty-chips"></div>
         </div>
 
+        <div class="sort-wrap" id="sort-wrap">
+          <div class="section-label">{{ locale_ui.sort.section }}</div>
+          <select id="sort-select" class="sort-select" data-action="sort-change" aria-label="{{ locale_ui.sort.section }}">
+          {% for key in available_sorts %}
+            <option value="{{ key }}"{{ ' selected' if sort == key }}>{{ locale_ui.sort[key] }}</option>
+          {% endfor %}
+          </select>
+        </div>
+
         <div class="diff-wrap">
           <div class="section-label-row">
             <div class="diff-label">{{ _('detail.difficulty') }}</div>
@@ -889,6 +912,8 @@
 
     window._dimensionSymbols = {{ dimension_symbol_list|tojson|safe }};
     window._localeUI = {{ locale_ui|tojson|safe }};
+    window._availableSorts = {{ available_sorts|tojson|safe }};
+    window._defaultSort = {{ default_sort|tojson|safe }};
 
     // jsTree-backed topic filter
     (function() {
@@ -1120,6 +1145,40 @@
         var dMax = document.getElementById('diff-max');
         var isDefault = dMin && dMax && parseInt(dMin.value) === 1 && parseInt(dMax.value) === 10;
         diffReset.classList.toggle('disabled', isDefault);
+      }
+
+      // Sort dropdown — rebuild options to match the current page's
+      // allowed keys, then sync the value from the URL.
+      var sortEl = document.getElementById('sort-select');
+      var allowed = window._availableSorts || [];
+      var defaultSort = window._defaultSort || null;
+      if (sortEl && allowed.length) {
+        var wantValue = url.searchParams.get('sort');
+        if (wantValue === null || allowed.indexOf(wantValue) === -1) {
+          wantValue = defaultSort;
+        }
+        if (sortEl.value !== wantValue) sortEl.value = wantValue;
+        var labels = (window._localeUI && window._localeUI.sort) || {};
+        var needsRebuild = sortEl.options.length !== allowed.length;
+        if (!needsRebuild) {
+          for (var i = 0; i < allowed.length; i++) {
+            if (sortEl.options[i].value !== allowed[i]) { needsRebuild = true; break; }
+          }
+        }
+        if (needsRebuild) {
+          sortEl.innerHTML = '';
+          allowed.forEach(function(key) {
+            var opt = document.createElement('option');
+            opt.value = key;
+            opt.textContent = labels[key] || key;
+            if (key === wantValue) opt.selected = true;
+            sortEl.appendChild(opt);
+          });
+        } else {
+          for (var j = 0; j < allowed.length; j++) {
+            sortEl.options[j].textContent = labels[allowed[j]] || allowed[j];
+          }
+        }
       }
     }
 
@@ -1396,6 +1455,22 @@
       var qtySelected = window._qtySelected || [];
       if (qtySelected.length > 0) url.searchParams.set('qty', qtySelected.join(','));
       else url.searchParams.delete('qty');
+
+      // Sort — only include when it differs from the current page's default
+      var sortEl = document.getElementById('sort-select');
+      var sortAllowed = (window._availableSorts || []);
+      var sortDefault = window._defaultSort || null;
+      if (sortEl && sortAllowed.length) {
+        if (sortAllowed.indexOf(sortEl.value) === -1) {
+          url.searchParams.delete('sort');
+        } else if (sortEl.value && sortEl.value !== sortDefault) {
+          url.searchParams.set('sort', sortEl.value);
+        } else {
+          url.searchParams.delete('sort');
+        }
+      } else {
+        url.searchParams.delete('sort');
+      }
 
       var path = url.pathname;
       if (path !== '/formulas' && path !== '/quantities' && path !== '/search') {
@@ -1728,6 +1803,7 @@
         case 'switch-dim-mode': switchDimMode(el.value); break;
         case 'switch-wait-latex': switchWaitLatex(el.checked); break;
         case 'dim-filter-change': dimFilterChange(); break;
+        case 'sort-change': applyFilters(); break;
         case 'set-export-format': document.cookie = 'sf_export_format=' + el.value + '; path=/; max-age=31536000'; break;
       }
     });
