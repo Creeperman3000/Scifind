@@ -23,8 +23,8 @@ Flask web app at `webapp.py`. Run with `python webapp.py` and open
 ### Filtering
 - **Science/Branch/Topic** — Checkboxes in right sidebar. URL param: `ids=id1,id2,…`
 - **Difficulty** — Range slider. Params: `diff_min`, `diff_max`
-- **Dimension** — Per-dimension operator filter (eq / ≥ / ≤). Params: `<symbol>_eq`, `<symbol>_geq`, `<symbol>_leq`. Combine with `dim_mode=and|or`.
-- **Quantity** — Filter formulas by which quantities they contain. Params: `qty=id1,id2`. Combine with `qty_mode=and|or` (or `fml_mode` on `/formulas`).
+- **Dimension** — Per-dimension operator filter (eq / ≥ / ≤). Params: `<symbol>_eq`, `<symbol>_geq`, `<symbol>_leq`. Combine with `dim_mode=and|or`. The AND↔OR toggle button flips the mode at runtime by adding `dim` to the `mode_switched` URL param.
+- **Quantity** — Filter formulas by which quantities they contain. Params: `qty=id1,id2`. The AND↔OR toggle button flips the mode by adding `fml` (on `/formulas`) or `qty` (on `/quantities`) to the `mode_switched` URL param.
 - **Base quantities** — `is_dim=1` filter on `/quantities` shows only SI base quantities.
 
 ### Locale Toggle

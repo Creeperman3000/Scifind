@@ -27,10 +27,11 @@ if str(_PROJECT_DIR) not in sys.path:
 from scifind_lib import (
     database_path,
     open_database,
+    database_has_formula_table,
+    init_database,
     render_formula,
     format_dimensions_plain,
     extract_dimensions_from_row,
-    parse_default_unit,
     search_headings,
     difficulty_to_stars,
     localise_english,
@@ -40,12 +41,14 @@ from scifind_lib import (
     fetch_quantity,
     fetch_quantity_units,
     fetch_quantity_formulas,
+    fetch_all_quantities,
     export_to_csv,
     export_to_csv_directory,
     export_to_xlsx,
     export_to_ods,
-    DIMENSION_COLUMNS,
     topic_name,
+    format_unit_str,
+    group_by_topic,
 )
 
 
@@ -63,62 +66,35 @@ def _styled(style, text):
 
 
 def _wrap(text):
-    """Indent-wrap a description string at 72 columns."""
     return textwrap.fill(text, width=72, initial_indent="  ", subsequent_indent="  ")
 
 
-def _format_unit_str(default_unit_json):
-    """Render a default_unit JSON list as e.g. 'm·s⁻¹' for the CLI."""
-    parts = parse_default_unit(default_unit_json)
-    return "\u00b7".join(f"{uid}^{exp}" for uid, exp in parts) if parts else ""
+def _print_unit_row(u):
+    mark = "\u2713" if u["default_unit"] else " "
+    offset_str = f" + {u['offset']}" if u["offset"] else ""
+    print(
+        f"  [{mark}] ${u['symbol']}$  {_styled("bold", u['id'])}  "
+        f"[{u['unit_system'] or 'any'}]  \u00d7{u['factor']}{offset_str} \u2192 SI"
+    )
 
-
-# ---------------------------------------------------------------------------
-# Commands
-# ---------------------------------------------------------------------------
 
 def command_init(args):
-    schema_path = _PROJECT_DIR / "schema.sql"
-    if schema_path.exists() and not args.force:
+    if not args.force:
         existing = open_database()
         try:
-            row = existing.execute(
-                "SELECT count(*) AS c FROM sqlite_master WHERE type='table' AND name='formula'"
-            ).fetchone()
+            if database_has_formula_table(existing):
+                _exit_with_error(
+                    "database already initialised. Pass --force to re-initialise "
+                    "(this will wipe existing data).",
+                    code=2,
+                )
         finally:
             existing.close()
-        if row and row["c"]:
-            _exit_with_error(
-                "database already initialised. Pass --force to re-initialise "
-                "(this will wipe existing data).",
-                code=2,
-            )
 
-    conn = open_database()
     try:
-        # Seed data has pre-existing FK issues (logarithmic_ratio quantity
-        # referenced by units but not in the quantity seed). Disable FK
-        # enforcement for the seed load.
-        conn.execute("PRAGMA foreign_keys = OFF")
-        if args.force:
-            for table in (
-                "formula_relation", "formula_token",
-                "formula", "operator", "constant", "unit", "quantity",
-            ):
-                conn.execute(f"DROP TABLE IF EXISTS {table}")
-
-        conn.executescript(schema_path.read_text(encoding="utf-8"))
-        conn.executescript((_PROJECT_DIR / "seed.sql").read_text(encoding="utf-8"))
-
-        change_count = conn.total_changes
+        change_count = init_database(force=args.force)
     except (sqlite3.Error, OSError) as exc:
-        try:
-            conn.rollback()
-        except sqlite3.Error:
-            pass
         _exit_with_error(f"initialisation failed: {exc}")
-    finally:
-        conn.close()
 
     print(f"Database initialised at {database_path()}")
     print(f"  {change_count} SQL statements executed.")
@@ -156,14 +132,9 @@ def command_list(args):
         print("No formulas found.")
         return
 
-    by_topic = {}
-    for row in rows:
-        topic = topic_name(row["topic_id"]) or "General"
-        by_topic.setdefault(topic, []).append(row)
-
-    for topic, topic_formulas in by_topic.items():
+    for topic, items in group_by_topic(rows).items():
         print(f"\n  {_styled("yellow", topic)}:")
-        for f in topic_formulas:
+        for f in items:
             stars = difficulty_to_stars(f["difficulty"])
             print(f"    {f['id']:40s} {stars}  {f['name_en']}")
     print()
@@ -229,13 +200,7 @@ def command_quantities(args):
     if args.formula:
         rows = fetch_formula_quantities(conn, args.formula)
     else:
-        dim_cols = DIMENSION_COLUMNS()
-        rows = conn.execute(f"""
-            SELECT q.id, q.symbol, json_extract(q.name, '$.en-us') AS name_en,
-                   q.default_unit,
-                   {', '.join(f'q.{c}' for c in dim_cols)}
-            FROM quantity q ORDER BY q.id
-        """).fetchall()
+        rows = fetch_all_quantities(conn)
     if not rows:
         conn.close()
         print("No quantities found.")
@@ -248,7 +213,7 @@ def command_quantities(args):
 
     for q in rows:
         dimensions = format_dimensions_plain(*extract_dimensions_from_row(q))
-        unit_str = _format_unit_str(q["default_unit"])
+        unit_str = format_unit_str(q["default_unit"])
         print(f"  ${q['symbol']}$  {_styled("bold", q['name_en'])}  ({_styled("dim", q['id'])})")
         if unit_str:
             print(f"      Dimensions: {_styled("dim", dimensions)}  default unit: {unit_str}")
@@ -271,7 +236,7 @@ def command_quantity(args):
     description = localise_english(q["description"])
     dimensions = format_dimensions_plain(*extract_dimensions_from_row(q))
     conn.close()
-    unit_str = _format_unit_str(q["default_unit"])
+    unit_str = format_unit_str(q["default_unit"])
 
     label = f"${q['symbol']}$ \u2014 {name}"
     print(f"\n  {_styled("bold", label)}  ({_styled("dim", q['id'])})")
@@ -286,9 +251,7 @@ def command_quantity(args):
     if units:
         print(f"\n  {_styled("bold", 'Units:')}")
         for u in units:
-            mark = "\u2713" if u["default_unit"] else " "
-            offset_str = f" + {u['offset']}" if u["offset"] else ""
-            print(f"    [{mark}] ${u['symbol']}$  {u['id']}  [{u['unit_system'] or 'any'}]  \u00d7{u['factor']}{offset_str} \u2192 SI")
+            _print_unit_row(u)
 
     if formulas:
         print(f"\n  {_styled("bold", 'Appears in formulas:')}")
@@ -324,9 +287,7 @@ def command_units(args):
     print(header + "\n")
 
     for u in rows:
-        mark = "\u2713" if u["default_unit"] else " "
-        offset_str = f" + {u['offset']}" if u["offset"] else ""
-        print(f"  [{mark}] ${u['symbol']}$  {_styled("bold", u['id'])}  [{u['unit_system'] or 'any'}]  \u00d7{u['factor']}{offset_str} \u2192 SI")
+        _print_unit_row(u)
     print()
 
 
@@ -339,14 +300,9 @@ def command_browse(args):
     """).fetchall()
     conn.close()
 
-    tree = {}
-    for row in rows:
-        topic = topic_name(row["topic_id"]) or "General"
-        tree.setdefault(topic, []).append(row)
-
-    for topic, topic_formulas in tree.items():
+    for topic, items in group_by_topic(rows).items():
         print(f"\n  {_styled("yellow", topic)}")
-        for f in topic_formulas:
+        for f in items:
             stars = difficulty_to_stars(f["difficulty"])
             print(f"      {f['id']:38s} {stars}  {f['name_en']}")
     print()
@@ -376,10 +332,6 @@ def command_export(args):
             sys.stdout.write(data)
     conn.close()
 
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 def main():
     default_database = database_path()

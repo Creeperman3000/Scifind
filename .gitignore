@@ -2,5 +2,5 @@ __pycache__/
 *.pyc
 instance/
 .env
-scifind.db
+scifind.db*
 seed.sql.bak*

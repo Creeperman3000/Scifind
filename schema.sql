@@ -1,8 +1,5 @@
 PRAGMA journal_mode = WAL;
 
--- ============================================================
--- 1. formula
--- ============================================================
 CREATE TABLE IF NOT EXISTS formula (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL,       -- JSON i18n: {"en-us":"...","en-uk":"..."}
@@ -14,19 +11,6 @@ CREATE TABLE IF NOT EXISTS formula (
     modified    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
--- ============================================================
--- 2. operator
--- ============================================================
--- Operators are reusable building blocks. Each has an arity, precedence,
--- and associativity. symbol is the LaTeX display form (e.g. \cdot, \sin, =).
--- math is a Python expression template (e.g. "a+b", "math.sin(a)", NULL if
--- the operator is not numerically computable, e.g. =, \propto).
---
--- operator_type:
---   infix       binary or n-ary: a OP b OP c         (+, -, *, /, =)
---   prefix      function-style:  OP a                 (\sin, \cos, \sqrt, \Delta)
---   postfix                       a OP                (n!)
---   relational  forms an equation: a = b, a ∝ b       (=, \approx, \propto, <, >)
 CREATE TABLE IF NOT EXISTS operator (
     id            TEXT PRIMARY KEY,
     symbol        TEXT,               -- LaTeX display; NULL means invisible
@@ -35,27 +19,9 @@ CREATE TABLE IF NOT EXISTS operator (
     precedence    INTEGER NOT NULL,
     associativity TEXT NOT NULL CHECK (associativity IN ('left', 'right', 'none')),
     operator_type TEXT NOT NULL CHECK (operator_type IN ('infix', 'prefix', 'postfix', 'relational')),
-    -- Per-operand "may this operand be wrapped in \left(...\right) by the
-    -- renderer?" JSON array of length = arity; each entry is 1 (allowed)
-    -- or 0 (never — the operator's macro syntax already scopes this operand).
-    -- Examples:
-    --   add, sub, mul, eq  -> '[1,1]'   both operands may be wrapped
-    --   frac, root         -> '[0,0]'   both scoped by macro (\frac{}{}, \sqrt[n]{})
-    --   pow                -> '[1,0]'   base takes next token (may wrap),
-    --                                  exponent is in ^{...} (never wraps)
-    --   sin, cos, tan -> '[1]'     argument may wrap (\sin{x+y} reads
-    --                                  ambiguously without the explicit scope)
-    --   sqrt, overl, sum   -> '[0]'     argument is in { ... } macro scope
     paren_arg     TEXT NOT NULL DEFAULT '[1]' CHECK (paren_arg LIKE '[%' AND json_valid(paren_arg))
 );
 
--- ============================================================
--- 3. constant
--- ============================================================
--- Dimensionless or constant-valued symbols like pi, e, Euler's gamma.
--- default_unit follows the same JSON array shape as quantity.default_unit
--- (used for dimensional constants like gravitational_constant, gas_constant
--- which are physical constants rather than pure numbers).
 CREATE TABLE IF NOT EXISTS constant (
     id           TEXT PRIMARY KEY,
     name         TEXT NOT NULL,      -- JSON i18n: {"en-us": "Pi"}
@@ -64,23 +30,6 @@ CREATE TABLE IF NOT EXISTS constant (
     default_unit TEXT                -- JSON array: [{"unit":"<id>","exponent":<n>},...]
 );
 
--- ============================================================
--- 4. formula_token
--- ============================================================
--- An RPN-encoded formula. Tokens are read in `position` order, evaluated
--- onto a stack: operands push, operators pop their arity-many operands and
--- push a result. After the last token, the stack should hold a single node
--- which is the expression tree root.
---
--- token_kind:
---   quantity    operand; quantity_id is set
---   constant    operand; constant_id is set
---   number      operand; value is set
---   operator    arity-many operands are popped, the operator is applied
---
--- label is a JSON i18n array used for composite subscripts (e.g. ["1","2"]
--- -> v_{12}). symbol_overwrite and quantity_name_overwrite override the
--- referenced quantity's defaults for display only.
 CREATE TABLE IF NOT EXISTS formula_token (
     formula_id               TEXT NOT NULL REFERENCES formula(id) ON DELETE CASCADE,
     position                 INTEGER NOT NULL,
@@ -107,9 +56,6 @@ CREATE TABLE IF NOT EXISTS formula_token (
     )
 );
 
--- ============================================================
--- 5. formula_relation (includes conditions)
--- ============================================================
 CREATE TABLE IF NOT EXISTS formula_relation (
     formula_id    TEXT NOT NULL REFERENCES formula(id),
     related_id    TEXT NOT NULL REFERENCES formula(id),
@@ -122,9 +68,6 @@ CREATE TABLE IF NOT EXISTS formula_relation (
     UNIQUE (formula_id, related_id)
 );
 
--- ============================================================
--- 6. quantity
--- ============================================================
 CREATE TABLE IF NOT EXISTS quantity (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL,       -- JSON i18n
@@ -146,9 +89,6 @@ CREATE TABLE IF NOT EXISTS quantity (
     modified    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
--- ============================================================
--- 7. unit
--- ============================================================
 CREATE TABLE IF NOT EXISTS unit (
     id           TEXT PRIMARY KEY,
     name         TEXT NOT NULL,        -- JSON i18n: {"en-us":"Meter","en-uk":"Metre"}
@@ -161,9 +101,6 @@ CREATE TABLE IF NOT EXISTS unit (
     offset       REAL NOT NULL DEFAULT 0
 );
 
--- ============================================================
--- Indexes
--- ============================================================
 CREATE INDEX IF NOT EXISTS idx_formula_token_formula  ON formula_token(formula_id);
 CREATE INDEX IF NOT EXISTS idx_formula_token_quantity ON formula_token(quantity_id);
 CREATE INDEX IF NOT EXISTS idx_formula_token_constant ON formula_token(constant_id);

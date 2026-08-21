@@ -112,8 +112,8 @@ in the seed for the seven base dimensions (M, L, T, I, Θ, N, J).
 
 The `dim_*` column order is fixed at M, L, T, I, Θ, N, J. To add a new
 base dimension you would alter the table to add the column; the
-canonical list in `scifind_lib._BASE_DIMENSION_ORDER` must be updated
-in lockstep.
+canonical list in `scifind_lib.constants._BASE_DIMENSION_ORDER` must be
+updated in lockstep.
 
 ### `unit`
 Units with conversion factors.
@@ -132,31 +132,16 @@ Units with conversion factors.
 
 ## Seed Data
 
-A single `seed.sql` file plus two helper files contain the initial data:
-
-- `seed.sql` — quantities, units, formulas, formula tokens, formula
-  relations.
-- `operators.sql` — the operator catalogue (reusable across formulas).
-- `constants.sql` — the constant catalogue (reusable across formulas).
+The single `seed.sql` file contains all initial data: operators,
+constants, quantities, units, formulas, formula tokens, and formula
+relations.
 
 Run `python scifind_cli.py init` (or `init --force` to wipe) after
 editing the schema or seed data.
 
-## Conversion
-
-The conversion script lives in `tools/convert_formulas.py`. It reads a
-legacy `seed.sql.old` (with `formula_item` rows) and emits equivalent
-`formula_token` rows. It is a one-off migration tool kept for reference
-and re-runs; it is not part of the runtime. The current `seed.sql`
-already contains the converted `formula_token` INSERTs; the script is
-only needed if you have new legacy data to migrate.
-
-The script encapsulates every quirk of the legacy encoding (implicit
-`c²`, implicit `pi`, missing `\cos` in the work formula, etc.).
-
 ## Rendering
 
-`scifind_lib.render_formula` reads ordered `formula_token` rows for one
+`scifind_lib.renderer.render_formula` reads ordered `formula_token` rows for one
 formula, evaluates them onto a stack to build an expression tree, and
 renders the tree as LaTeX with the minimum required parentheses. The
 renderer recognises a few display idioms:
