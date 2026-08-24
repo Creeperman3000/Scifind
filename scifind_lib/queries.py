@@ -156,48 +156,82 @@ def fetch_quantity_formulas(conn, quantity_id):
 
 
 def fetch_quantity_formulas_by_side(conn, quantity_id):
-    """Return (primary, non_primary) formulas for a quantity."""
-    primary = conn.execute(
+    """Return (primary, non_primary) formulas for a quantity.
+
+    Formulas are stored as RPN token streams, so side membership cannot
+    be decided from raw token positions (every operand precedes its
+    trailing operator). Instead each stream is evaluated with a stack of
+    per-subtree quantity-id sets: a formula is primary when the quantity
+    occurs in the left operand of the first relational operator
+    (=, ≈, ∝, <, >, …); everything else (right side only, or formulas
+    without a relational operator at all) is non-primary.
+    """
+    arities = {}
+    rel_arities = {}
+    for op in conn.execute("SELECT id, arity, operator_type FROM operator"):
+        arities[op["id"]] = op["arity"]
+        if op["operator_type"] == "relational":
+            rel_arities[op["id"]] = op["arity"]
+
+    def _left_of_first_relational(token_rows):
+        stack = []
+        for row in token_rows:
+            kind = row["token_kind"]
+            if kind != "operator":
+                stack.append({row["quantity_id"]} if kind == "quantity" else set())
+                continue
+            op_id = row["operator_id"]
+            if op_id in rel_arities:
+                # operands pop right-first, so the left operand sits at -arity
+                arity = rel_arities[op_id]
+                return set(stack[-arity]) if len(stack) >= arity else set()
+            arity = arities.get(op_id)
+            if arity and len(stack) >= arity:
+                merged = set().union(*stack[-arity:])
+                del stack[-arity:]
+                stack.append(merged)
+        return set()
+
+    rows = conn.execute(
         """
-        SELECT DISTINCT f.id, f.name,
+        SELECT f.id, f.name,
                json_extract(f.name, '$.en-us') AS name_en,
-               f.topic AS topic_id, f.difficulty
-        FROM formula_token ft
-        JOIN formula f ON f.id = ft.formula_id
-        WHERE ft.quantity_id = ?
-          AND ft.token_kind = 'quantity'
-          AND ft.position < COALESCE(
-            (SELECT MIN(position) FROM formula_token
-             WHERE formula_id = ft.formula_id AND operator_id = 'eq'),
-            99999
-          )
-        ORDER BY f.topic, f.difficulty, f.id
+               f.topic AS topic_id, f.difficulty,
+               ft.token_kind, ft.quantity_id, ft.operator_id
+        FROM formula f
+        JOIN formula_token ft ON ft.formula_id = f.id
+        WHERE f.id IN (
+            SELECT DISTINCT formula_id FROM formula_token
+            WHERE quantity_id = ? AND token_kind = 'quantity'
+        )
+        ORDER BY f.topic, f.difficulty, f.id, ft.position
         """,
         (quantity_id,),
     ).fetchall()
-    non_primary = conn.execute(
-        """
-        SELECT DISTINCT f.id, f.name,
-               json_extract(f.name, '$.en-us') AS name_en,
-               f.topic AS topic_id, f.difficulty
-        FROM formula_token ft
-        JOIN formula f ON f.id = ft.formula_id
-        WHERE ft.quantity_id = ?
-          AND f.id NOT IN (
-            SELECT ft2.formula_id FROM formula_token ft2
-            WHERE ft2.quantity_id = ?
-              AND ft2.token_kind = 'quantity'
-              AND ft2.position < COALESCE(
-                (SELECT MIN(position) FROM formula_token
-                 WHERE formula_id = ft2.formula_id AND operator_id = 'eq'),
-                99999
-              )
-          )
-        ORDER BY f.topic, f.difficulty, f.id
-        """,
-        (quantity_id, quantity_id),
-    ).fetchall()
-    return primary, non_primary
+
+    primary, non_primary = [], []
+    current = None
+    for row in rows:
+        fid = row["id"]
+        if current is None or current["id"] != fid:
+            current = {
+                "id": fid,
+                "name": row["name"],
+                "name_en": row["name_en"],
+                "topic_id": row["topic_id"],
+                "difficulty": row["difficulty"],
+                "_tokens": [],
+            }
+            primary.append(current)
+        current["_tokens"].append(row)
+
+    def _is_primary(formula):
+        return quantity_id in _left_of_first_relational(formula.pop("_tokens"))
+
+    primary_out, non_primary_out = [], []
+    for f in primary:
+        (primary_out if _is_primary(f) else non_primary_out).append(f)
+    return primary_out, non_primary_out
 
 
 def fetch_quantity_related_formulas(conn, quantity_id):

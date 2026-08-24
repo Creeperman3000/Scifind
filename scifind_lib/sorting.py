@@ -134,14 +134,17 @@ def sort_search_rows(conn, rows, sort_key, locale="en-us"):
             return (topic, kind, ent_id)
         if sort_key == "qty":
             if kind == "formula":
-                tokens = qty_const_tokens.get(ent_id, [])
+                tokens = [
+                    f"{position:06d} {token_kind} {ident}"
+                    for position, token_kind, ident in qty_const_tokens.get(ent_id, [])
+                ]
                 return (tokens, kind, ent_id)
             if kind == "quantity":
-                return (["quantity:" + ent_id], kind, ent_id)
+                return ([f"quantity {ent_id}"], kind, ent_id)
             if kind == "unit":
                 meta = unit_meta.get(ent_id)
                 qid = meta["quantity_id"] if meta else None
-                return (["quantity:" + qid] if qid else [], kind, ent_id)
+                return ([f"quantity {qid}"] if qid else [], kind, ent_id)
             return ([], kind, ent_id)
         return (kind, ent_id)
 
