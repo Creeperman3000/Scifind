@@ -20,6 +20,8 @@ from scifind_lib.dimensions import (  # noqa: F401
     format_dimensions_plain,
 )
 
+from scifind_lib.constants import is_hidden_quantity  # noqa: F401
+
 from scifind_lib.i18n import (  # noqa: F401
     difficulty_to_stars,
     locale_sibilants,

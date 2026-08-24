@@ -78,6 +78,7 @@ from scifind_lib import (
     dimension_symbols,
     dimension_quantity_ids,
     extract_dimensions_from_row,
+    is_hidden_quantity,
     locale_sibilants,
     load_tree,
     topic_name_map,
@@ -555,6 +556,7 @@ def inject_globals():
             all_quantities_for_filter = [
                 {"id": q["id"], "name": localise(q["name"], locale), "symbol": q["symbol"] or ""}
                 for q in fetch_all_quantities(db)
+                if not is_hidden_quantity(q)
             ]
         except sqlite3.OperationalError as exc:
             logger.warning("Quantity table unavailable: %s", exc)
@@ -1222,7 +1224,7 @@ def all_quantities():
             available_sorts=QUANTITY_SORT_KEYS,
         )
 
-    raw_quantities = list(fetch_all_quantities(db))
+    raw_quantities = [q for q in fetch_all_quantities(db) if not is_hidden_quantity(q)]
     topic_filter = _filtered_ids_for_query(tree, fs.ids)
     dim_qty_ids = set(dimension_quantity_ids().values()) if fs.base_quantity_only else None
     filtered = []
@@ -1232,7 +1234,8 @@ def all_quantities():
 
         if topic_filter and q.get("topic_id") not in topic_filter:
             continue
-        if (q.get("difficulty") or 0) < fs.diff_min or (q.get("difficulty") or 0) > fs.diff_max:
+        q_difficulty = q.get("difficulty")
+        if q_difficulty is not None and not (fs.diff_min <= q_difficulty <= fs.diff_max):
             continue
         if fs.has_dimension_filter and not dimension_matches(q, fs.dimension_filter, fs.dim_mode):
             continue
@@ -1287,7 +1290,8 @@ def all_formulas():
         formulas = [f for f in formulas if f["topic_id"] in topic_filter]
     formulas = [
         f for f in formulas
-        if fs.diff_min <= (f.get("difficulty") or 0) <= fs.diff_max
+        if f.get("difficulty") is None
+        or fs.diff_min <= f["difficulty"] <= fs.diff_max
     ]
 
     if fs.has_dimension_filter:
