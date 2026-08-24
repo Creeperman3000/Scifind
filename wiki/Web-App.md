@@ -16,7 +16,7 @@ Flask web app at `webapp.py`. Run with `python webapp.py` and open
 | `/search?q=<query>` | Substring search |
 | `/api/search-suggestions?q=<query>` | JSON suggestions for autocomplete |
 | `/base-units` | Redirect to `/quantities?is_dim=1` |
-| `/export?format=<fmt>` | Download database export (csv, xlsx, ods) |
+| `/export?format=<fmt>` | Download database export (csv, xlsx, ods, sql) |
 
 ## Features
 

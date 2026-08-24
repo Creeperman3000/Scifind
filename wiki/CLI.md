@@ -66,7 +66,7 @@ Tree browser for exploring formulas by topic.
 Export the entire database.
 
 ```bash
-python scifind_cli.py export --format csv|csvdir|xlsx|ods [--output <path>]
+python scifind_cli.py export --format csv|csvdir|xlsx|ods|sql [--output <path>]
 ```
 
 ## Options
@@ -74,7 +74,7 @@ python scifind_cli.py export --format csv|csvdir|xlsx|ods [--output <path>]
 | Flag                   | Description                            |
 | ---------------------- | -------------------------------------- |
 | `--db <path>`          | Override database path                 |
-| `--format <fmt>`       | Export format (csv, csvdir, xlsx, ods) |
+| `--format <fmt>`       | Export format (csv, csvdir, xlsx, ods, sql) |
 | `--output <path>`      | Export output path                     |
 | `--topic <name>`       | Filter by topic                        |
 | `--difficulty <range>` | Difficulty range: N or N-M             |

@@ -1,10 +1,11 @@
-"""CSV / XLSX / ODS export of all tables."""
+"""CSV / XLSX / ODS / SQL export of all tables."""
 # Licensed under the LICENSE file in the project root.
 
 import csv
 import io
 from pathlib import Path
 
+from scifind_lib.constants import PROJECT_DIR
 from scifind_lib.dimensions import dimension_columns
 
 
@@ -104,3 +105,38 @@ def export_to_ods(conn, output):
                 row.addElement(cell)
             sheet.addElement(row)
     document.save(output)
+
+
+def _sql_literal(value):
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if isinstance(value, float):
+        return repr(value)
+    if isinstance(value, int):
+        return str(value)
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def export_to_sql(conn):
+    """Export the schema and all table contents as a SQL script string."""
+    schema = (PROJECT_DIR / "schema.sql").read_text(encoding="utf-8")
+    out = [
+        "-- Scifind SQL export\n",
+        "-- Restore with: sqlite3 scifind.db < this_file.sql\n",
+        "\n",
+        schema.rstrip("\n"),
+        "\nPRAGMA foreign_keys = OFF;\n",
+        "BEGIN TRANSACTION;\n",
+    ]
+    for table, columns, rows in _each_table(conn):
+        col_list = ", ".join(columns)
+        out.append(f"\n-- table: {table}\n")
+        for row in rows:
+            values = ", ".join(_sql_literal(v) for v in row)
+            out.append(
+                f"INSERT OR IGNORE INTO {table} ({col_list}) VALUES ({values});\n"
+            )
+    out.append("\nCOMMIT;\n")
+    return "".join(out)

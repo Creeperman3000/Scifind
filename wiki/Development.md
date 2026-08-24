@@ -207,7 +207,7 @@ python scifind_cli.py init --force   # drops and recreates DB
 python scifind_cli.py export --format csv --output formulas.csv
 ```
 
-Supported formats: `csv`, `csvdir`, `xlsx`, `ods`.
+Supported formats: `csv`, `csvdir`, `xlsx`, `ods`, `sql`.
 
 ## Edge Cases
 

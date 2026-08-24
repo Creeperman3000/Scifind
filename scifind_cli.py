@@ -46,6 +46,7 @@ from scifind_lib import (
     export_to_csv_directory,
     export_to_xlsx,
     export_to_ods,
+    export_to_sql,
     topic_name,
     format_unit_str,
     group_by_topic,
@@ -329,6 +330,10 @@ def command_export(args):
         target = args.output or "."
         export_to_csv_directory(conn, target)
         print(f"Exported per-table CSV files to {target}/")
+    elif fmt == "sql":
+        output = args.output or "scifind.sql"
+        Path(output).write_text(export_to_sql(conn), encoding="utf-8")
+        print(f"Exported to {output}")
     elif fmt in ("xlsx", "ods"):
         output = args.output or f"scifind.{fmt}"
         if fmt == "xlsx":
@@ -364,6 +369,7 @@ def main():
               scifind_cli export --format csvdir -o ./backup
               scifind_cli export --format xlsx -o scifind.xlsx
               scifind_cli export --format ods -o scifind.ods
+              scifind_cli export --format sql -o scifind.sql
         """),
     )
     parser.add_argument("--db", help=f"Database path (default: {default_database})")
@@ -399,7 +405,7 @@ def main():
 
     p_export = subcommands.add_parser("export", help="Export all tables")
     p_export.add_argument(
-        "--format", "-f", choices=["csv", "csvdir", "xlsx", "ods"],
+        "--format", "-f", choices=["csv", "csvdir", "xlsx", "ods", "sql"],
         default="csv", help="Output format (default: csv)",
     )
     p_export.add_argument("--output", "-o", help="Output file or directory")

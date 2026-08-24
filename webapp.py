@@ -68,6 +68,7 @@ from scifind_lib import (
     export_to_csv_directory,
     export_to_xlsx,
     export_to_ods,
+    export_to_sql,
     preview_equation,
     build_create_sql,
     unit_name_map,
@@ -1345,6 +1346,10 @@ def export():
         export_fn(db, buffer)
         buffer.seek(0)
         return _respond(buffer.getvalue(), mimetype, filename)
+
+    if fmt == "sql":
+        return _respond(export_to_sql(db).encode("utf-8"),
+                        "application/sql", "scifind.sql")
 
     if fmt == "xlsx":
         return _binary_export(export_to_xlsx,
