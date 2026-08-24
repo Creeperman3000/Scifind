@@ -733,16 +733,6 @@
   }
 
   function init() {
-    if (typeof window.hasActiveFilters === 'function') {
-      const baseHasActiveFilters = window.hasActiveFilters;
-      window.hasActiveFilters = function() {
-        const dimMin = document.getElementById('diff-min');
-        const dimMax = document.getElementById('diff-max');
-        if (!dimMin || !dimMax) return false;
-        return baseHasActiveFilters();
-      };
-    }
-
     loadTokenSidebar();
     loadBreadcrumb('');
     syncTreeResetBtn(false);

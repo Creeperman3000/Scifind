@@ -12,6 +12,19 @@ def database_path():
     return os.environ.get("SCIFIND_DB", DEFAULT_DATABASE_PATH)
 
 
+def sql_literal(value):
+    """Render a Python value as a SQL literal string (single quotes doubled)."""
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if isinstance(value, float):
+        return repr(value)
+    if isinstance(value, int):
+        return str(value)
+    return "'" + str(value).replace("'", "''") + "'"
+
+
 def open_database():
     path = database_path()
     parent = os.path.dirname(path)

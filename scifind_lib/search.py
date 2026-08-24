@@ -63,5 +63,5 @@ def search_headings(conn, query, limit=30):
 
 def suggest_headings(conn, query, limit=8):
     """Prefix-matched autocomplete suggestions (same data as search_headings)."""
-    return [(100, kind_id, kind, name) for kind, kind_id, name
+    return [(kind_id, kind, name) for kind, kind_id, name
             in search_headings(conn, query, limit=limit)]

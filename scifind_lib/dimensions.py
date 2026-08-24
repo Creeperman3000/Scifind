@@ -104,11 +104,12 @@ def _walk_dimensions(node, qid_to_dims, dims):
         return
     op = node.operator_id
     if op in ("div", "frac"):
-        _walk_dimensions(node.children[0], qid_to_dims, dims)
-        before = list(dims)
-        _walk_dimensions(node.children[1], qid_to_dims, dims)
+        lhs = [0.0] * len(dims)
+        rhs = [0.0] * len(dims)
+        _walk_dimensions(node.children[0], qid_to_dims, lhs)
+        _walk_dimensions(node.children[1], qid_to_dims, rhs)
         for i in range(len(dims)):
-            dims[i] = before[i] - (dims[i] - before[i])
+            dims[i] += lhs[i] - rhs[i]
     elif op == "pow":
         base, exp = node.children
         scale = exp.value if exp.kind == "number" and exp.value is not None else 1
@@ -176,18 +177,12 @@ def compute_rpn_dimensions(conn, tokens):
 def compute_all_formula_dimensions(conn, formula_ids=None):
     """{formula_id: {dim_M, dim_L, ...}} for all or given formulas."""
     cols = dimension_columns()
-    if formula_ids is not None:
-        all_ids = formula_ids
-    else:
-        all_ids = {r["id"] for r in conn.execute("SELECT id FROM formula").fetchall()}
-    zero_row = {c: 0 for c in cols}
+    ids = formula_ids if formula_ids is not None else {
+        r["id"] for r in conn.execute("SELECT id FROM formula")}
     result = {}
-    for fid in all_ids:
+    for fid in ids:
         dims = compute_formula_dimensions(conn, fid)
-        if dims:
-            result[fid] = dict(zip(cols, dims))
-        else:
-            result[fid] = dict(zero_row)
+        result[fid] = dict(zip(cols, dims)) if dims else dict.fromkeys(cols, 0)
     return result
 
 

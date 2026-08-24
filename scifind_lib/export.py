@@ -6,6 +6,7 @@ import io
 from pathlib import Path
 
 from scifind_lib.constants import PROJECT_DIR
+from scifind_lib.db import sql_literal
 from scifind_lib.dimensions import dimension_columns
 
 
@@ -107,18 +108,6 @@ def export_to_ods(conn, output):
     document.save(output)
 
 
-def _sql_literal(value):
-    if value is None:
-        return "NULL"
-    if isinstance(value, bool):
-        return "1" if value else "0"
-    if isinstance(value, float):
-        return repr(value)
-    if isinstance(value, int):
-        return str(value)
-    return "'" + str(value).replace("'", "''") + "'"
-
-
 def export_to_sql(conn):
     """Export the schema and all table contents as a SQL script string."""
     schema = (PROJECT_DIR / "schema.sql").read_text(encoding="utf-8")
@@ -134,7 +123,7 @@ def export_to_sql(conn):
         col_list = ", ".join(columns)
         out.append(f"\n-- table: {table}\n")
         for row in rows:
-            values = ", ".join(_sql_literal(v) for v in row)
+            values = ", ".join(sql_literal(v) for v in row)
             out.append(
                 f"INSERT OR IGNORE INTO {table} ({col_list}) VALUES ({values});\n"
             )

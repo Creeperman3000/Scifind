@@ -42,14 +42,13 @@ def csv_list(value):
     return [part.strip() for part in value.split(",") if part.strip()]
 
 
-def parse_filter_state(args, path=""):
+def parse_filter_state(args):
     """Parse query-string args into a FilterState for the list pages."""
     mode_switched_raw = args.get("mode_switched", "")
     mode_switched = set(csv_list(mode_switched_raw)) if mode_switched_raw else set()
-    is_qty_page = "/quantities" in path or "/quantity/" in path or "/unit/" in path
     if mode_switched:
         dim_mode = "or" if "dim" in mode_switched else "and"
-        quantity_mode = "or" if ("qty" if is_qty_page else "fml") in mode_switched else "and"
+        quantity_mode = "or" if "fml" in mode_switched else "and"
     else:
         dim_mode = args.get("dim_mode", "and")
         if dim_mode not in ("and", "or"):

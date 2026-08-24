@@ -1,7 +1,8 @@
 """Display helpers shared between the CLI and the web app."""
 # Licensed under the LICENSE file in the project root.
 
-from scifind_lib.tree import load_tree, topic_name as _topic_name
+from scifind_lib.constants import SUPERSCRIPT_DIGITS
+from scifind_lib.tree import topic_name as _topic_name
 
 
 def format_unit_str(default_unit_json):
@@ -10,8 +11,7 @@ def format_unit_str(default_unit_json):
     parts = parse_default_unit(default_unit_json)
     if not parts:
         return ""
-    SUPERSCRIPT = str.maketrans("0123456789-", "⁰¹²³⁴⁵⁶⁷⁸⁹⁻")
-    return "·".join(f"{uid}{str(exp).translate(SUPERSCRIPT)}"
+    return "·".join(f"{uid}{str(exp).translate(SUPERSCRIPT_DIGITS)}"
                     for uid, exp in parts)
 
 

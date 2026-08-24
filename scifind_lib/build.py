@@ -4,6 +4,7 @@
 import json
 import re
 
+from scifind_lib.db import sql_literal as sql_str
 from scifind_lib.dimensions import format_number
 from scifind_lib.parser import parse_equation
 
@@ -45,9 +46,6 @@ def build_create_sql(
     overrides = overrides or {}
     translations = translations or {}
 
-    def sql_str(s):
-        return "NULL" if s is None else "'" + str(s).replace("'", "''") + "'"
-
     def add_locale(blob, value, locale):
         """Return a JSON dict string with `locale: value` merged into `blob`."""
         obj = {}
@@ -61,7 +59,7 @@ def build_create_sql(
         obj[locale] = value
         return json.dumps(obj, ensure_ascii=False)
 
-    name_json = json.dumps({"en-us": name_en.strip()}, ensure_ascii=False) if name_en else None
+    name_json = json.dumps({"en-us": name_en.strip()}, ensure_ascii=False)
     desc_json = json.dumps({"en-us": description}, ensure_ascii=False) if description else None
     links_json = json.dumps(links, ensure_ascii=False) if links else None
     tr_overrides_by_loc = {}

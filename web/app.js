@@ -609,12 +609,6 @@
     });
   }
 
-  /* The sort dropdown applies to the formula/quantities/search lists */
-  function syncSortVisibility() {
-    var wrap = document.getElementById('sort-wrap');
-    if (wrap) wrap.classList.remove('hidden');
-  }
-
   function isFormulasView() {
     var p = window.location.pathname;
     return p.indexOf('/quantities') === -1 && p.indexOf('/quantity/') === -1 && p.indexOf('/unit/') === -1;
@@ -962,7 +956,7 @@
       var rows = document.querySelectorAll('.filter-dim-row[data-dim="' + d + '"]');
       if (rows.length === 0) return;
       var row = rows[0];
-      ['_o','_v','_eq','_geq','_leq'].forEach(function(s) { url.searchParams.delete(d + s); });
+      ['_eq','_geq','_leq'].forEach(function(s) { url.searchParams.delete(d + s); });
       var op = row.querySelector('.dim-op').value;
       var parsed = evalDimExpr(row.querySelector('.dim-val').value);
       if (parsed !== null) url.searchParams.set(d + '_' + op, parsed);
@@ -1014,7 +1008,6 @@
         updateDimNameFits();
         syncDockPills();
         syncViewTabLinks();
-        syncSortVisibility();
       })
       .catch(function(err) { if (err.name !== 'AbortError') console.warn('fetchContent error', err); })
       .then(function() { if (_pendingFetch === controller) _pendingFetch = null; });
@@ -1687,7 +1680,6 @@
   refreshIcons();
   initCSelects();
   syncSearchCancel();
-  syncSortVisibility();
   (function() {
     var sortMenu = document.getElementById('sort-menu');
     var sortTrigger = document.getElementById('sort-trigger');
@@ -1984,14 +1976,14 @@
         updateOverflowPadding();
         updateDimNameFits();
         syncDockPills();
-        syncSortVisibility();
       }).catch(function() { window.location.href = url; });
     }
     document.body.addEventListener('click', function(e) {
       var link = e.target.closest('a');
       if (!link) return;
       var href = link.getAttribute('href');
-      if (!href || href.startsWith('http') || href.startsWith('//') || href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('javascript:') || link.hasAttribute('download') || link.getAttribute('target') === '_blank') return;
+      /* data-spa-full opts the link out of SPA navigation (full reload) */
+      if (!href || href.startsWith('http') || href.startsWith('//') || href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('javascript:') || link.hasAttribute('download') || link.getAttribute('target') === '_blank' || link.hasAttribute('data-spa-full')) return;
       if (e.button === 1 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
       if (href === '/') { e.preventDefault(); navigateTo('/formulas'); return; }
       e.preventDefault();

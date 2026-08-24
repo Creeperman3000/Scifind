@@ -20,6 +20,15 @@ DEFAULT_QUANTITY_SORT = "id"
 DEFAULT_SEARCH_SORT = "relevance"
 
 
+def _meta_by_id(conn, sql, ids):
+    """{id: row-dict} for `sql` (containing an `{}` slot for the IN list)."""
+    if not ids:
+        return {}
+    placeholders, params = _in_clause(ids)
+    return {r["id"]: dict(r)
+            for r in conn.execute(sql.format(placeholders), params).fetchall()}
+
+
 def entity_sort_key(row, sort_key, locale, tree_order, qty_const_tokens=None):
     """Sort key shared by formulas and quantities."""
     if sort_key == "name":
@@ -69,40 +78,29 @@ def sort_search_rows(conn, rows, sort_key, locale="en-us"):
     quantity_ids = [r[1] for r in rows if r[0] == "quantity"]
     unit_ids = [r[1] for r in rows if r[0] == "unit"]
 
-    formula_meta = {}
-    if formula_ids:
-        placeholders, params = _in_clause(formula_ids)
-        for fr in conn.execute(
-            f"SELECT id, name, topic, difficulty FROM formula WHERE id IN ({placeholders})",
-            params,
-        ).fetchall():
-            formula_meta[fr["id"]] = dict(fr)
-
-    quantity_meta = {}
-    if quantity_ids:
-        placeholders, params = _in_clause(quantity_ids)
-        for qr in conn.execute(
-            f"SELECT id, name, topic, difficulty FROM quantity WHERE id IN ({placeholders})",
-            params,
-        ).fetchall():
-            quantity_meta[qr["id"]] = dict(qr)
-
-    unit_meta = {}
-    if unit_ids:
-        placeholders, params = _in_clause(unit_ids)
-        for ur in conn.execute(
-            f"""
-            SELECT u.id, u.name, u.quantity_id, q.name AS quantity_name,
-                   q.topic AS quantity_topic, q.difficulty AS quantity_difficulty
-            FROM unit u LEFT JOIN quantity q ON q.id = u.quantity_id
-            WHERE u.id IN ({placeholders})
-            """,
-            params,
-        ).fetchall():
-            unit_meta[ur["id"]] = dict(ur)
+    formula_meta = _meta_by_id(
+        conn,
+        "SELECT id, name, topic, difficulty FROM formula WHERE id IN ({})",
+        formula_ids,
+    )
+    quantity_meta = _meta_by_id(
+        conn,
+        "SELECT id, name, topic, difficulty FROM quantity WHERE id IN ({})",
+        quantity_ids,
+    )
+    unit_meta = _meta_by_id(
+        conn,
+        """
+        SELECT u.id, u.name, u.quantity_id, q.name AS quantity_name,
+               q.topic AS quantity_topic, q.difficulty AS quantity_difficulty
+        FROM unit u LEFT JOIN quantity q ON q.id = u.quantity_id
+        WHERE u.id IN ({})
+        """,
+        unit_ids,
+    )
 
     qty_const_tokens = fetch_formula_qty_const_tokens(conn)
-    tree_order = topic_tree_order() if sort_key in ("topic_tree", "topic_alpha") else {}
+    tree_order = topic_tree_order() if sort_key == "topic_tree" else {}
 
     def key(row):
         kind, ent_id, display_name = row[0], row[1], row[2]

@@ -114,16 +114,13 @@ def _parse_difficulty_range(raw):
     _exit_with_error(f"invalid difficulty range {raw!r} (expected N or N-M)")
 
 
-def command_list(args):
-    conn = open_database()
-    where_clauses = []
-    params = []
-    if args.topic:
+def _query_formulas(conn, topic=None, difficulty=None):
+    where_clauses, params = [], []
+    if topic:
         where_clauses.append("f.topic = ?")
-        params.append(args.topic)
-
-    if args.difficulty:
-        diff_min, diff_max = _parse_difficulty_range(args.difficulty)
+        params.append(topic)
+    if difficulty:
+        diff_min, diff_max = _parse_difficulty_range(difficulty)
         if diff_min == diff_max:
             where_clauses.append("f.difficulty = ?")
             params.append(diff_min)
@@ -139,19 +136,26 @@ def command_list(args):
     if where_clauses:
         sql += " WHERE " + " AND ".join(where_clauses)
     sql += " ORDER BY f.topic, f.difficulty, f.id"
+    return conn.execute(sql, params).fetchall()
 
-    rows = conn.execute(sql, params).fetchall()
+
+def _print_formulas(rows, id_width=40, row_indent="    ", topic_suffix=":"):
+    for topic, items in group_by_topic(rows).items():
+        print(f"\n  {_styled("yellow", topic)}{topic_suffix}")
+        for f in items:
+            stars = difficulty_to_stars(f["difficulty"])
+            print(f"{row_indent}{f['id']:{id_width}s} {stars}  {f['name_en']}")
+    print()
+
+
+def command_list(args):
+    conn = open_database()
+    rows = _query_formulas(conn, topic=args.topic, difficulty=args.difficulty)
     conn.close()
     if not rows:
         print("No formulas found.")
         return
-
-    for topic, items in group_by_topic(rows).items():
-        print(f"\n  {_styled("yellow", topic)}:")
-        for f in items:
-            stars = difficulty_to_stars(f["difficulty"])
-            print(f"    {f['id']:40s} {stars}  {f['name_en']}")
-    print()
+    _print_formulas(rows)
 
 
 def command_show(args):
@@ -197,7 +201,7 @@ def command_show(args):
 
 def command_search(args):
     conn = open_database()
-    rows = search_headings(conn, args.query, args.limit or 20)
+    rows = search_headings(conn, args.query, args.limit)
     conn.close()
     if not rows:
         print("No results.")
@@ -307,19 +311,12 @@ def command_units(args):
 
 def command_browse(args):
     conn = open_database()
-    rows = conn.execute("""
-        SELECT f.id, json_extract(f.name, '$.en-us') AS name_en,
-               f.topic AS topic_id, f.difficulty
-        FROM formula f ORDER BY f.topic, f.difficulty, f.id
-    """).fetchall()
+    rows = _query_formulas(conn)
     conn.close()
-
-    for topic, items in group_by_topic(rows).items():
-        print(f"\n  {_styled("yellow", topic)}")
-        for f in items:
-            stars = difficulty_to_stars(f["difficulty"])
-            print(f"      {f['id']:38s} {stars}  {f['name_en']}")
-    print()
+    if not rows:
+        print("No formulas found.")
+        return
+    _print_formulas(rows, id_width=38, row_indent="      ", topic_suffix="")
 
 
 def command_export(args):

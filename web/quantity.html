@@ -24,13 +24,7 @@
   {% endif %}
 </div>
 
-{% if q.description and q.description != '' %}
-<div class="detail-desc-list">
-{% for para in _(q.description).split('\n') if para.strip() %}
-<p class="detail-desc">{{ para }}</p>
-{% endfor %}
-</div>
-{% endif %}
+{{ description_paras(q.description) }}
 
 {% if units %}
 <div class="detail-section">

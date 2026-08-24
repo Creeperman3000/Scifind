@@ -30,11 +30,19 @@ def _parse_paren_arg(raw, arity, op_id):
 
 
 _PARSER_CACHE = {}
+# The web app opens a fresh connection per request, and id(conn) is
+# eventually recycled — cap the cache (FIFO) so a long-running server
+# doesn't accumulate one entry per request.
+_PARSER_CACHE_MAX = 64
 
 
 def _parser_caches(conn):
-    cache = _PARSER_CACHE.setdefault(id(conn), {})
-    if "qty_ids" not in cache:
+    cache = _PARSER_CACHE.get(id(conn))
+    if cache is None:
+        if len(_PARSER_CACHE) >= _PARSER_CACHE_MAX:
+            for stale in list(_PARSER_CACHE)[:len(_PARSER_CACHE) - _PARSER_CACHE_MAX + 1]:
+                del _PARSER_CACHE[stale]
+        cache = _PARSER_CACHE[id(conn)] = {}
         cache["qty_ids"] = {r["id"] for r in conn.execute("SELECT id FROM quantity")}
         cache["const_ids"] = {r["id"] for r in conn.execute("SELECT id FROM constant")}
         by_id = {}

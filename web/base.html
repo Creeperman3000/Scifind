@@ -10,6 +10,16 @@
 </div>
 {%- endmacro %}
 
+{% macro description_paras(description_json) -%}
+{% if description_json %}
+<div class="detail-desc-list">
+{% for para in _(description_json).split('\n') if para.strip() %}
+<p class="detail-desc">{{ para }}</p>
+{% endfor %}
+</div>
+{% endif %}
+{%- endmacro %}
+
 <!DOCTYPE html>
 <html lang="{{ g.locale or 'en' }}">
 <head>
@@ -144,7 +154,7 @@
     <div class="sidebar left" id="sidebar-left">
       <div class="sidebar-resize left-edge" id="sidebar-resize-left"></div>
       <div class="sidebar-scroll">
-      <div class="sheet-handle" data-sheet-target="left" role="button" tabindex="0" aria-label="{{ _('tooltip.drag_dismiss') }}"></div>
+      <div class="sheet-handle" role="button" tabindex="0" aria-label="{{ _('tooltip.drag_dismiss') }}"></div>
       <div class="sidebar-inner" id="sidebar-left-inner">
         <div class="view-tabs">
            <a class="view-tab {{ 'active' if current_view == 'formulas' and request.path != '/create' else '' }}" href="/formulas{{ '?' + request.query_string.decode() if request.query_string.decode() else '' }}"><i data-lucide="sigma" width="14" height="14"></i> {{ _('nav.formulas') }}</a>
@@ -243,7 +253,7 @@
     <div class="sidebar right" id="sidebar-right">
       <div class="sidebar-resize right-edge" id="sidebar-resize-right"></div>
       <div class="sidebar-scroll">
-      <div class="sheet-handle" data-sheet-target="right" role="button" tabindex="0" aria-label="{{ _('tooltip.drag_dismiss') }}"></div>
+      <div class="sheet-handle" role="button" tabindex="0" aria-label="{{ _('tooltip.drag_dismiss') }}"></div>
       <div class="sidebar-inner" id="sidebar-right-inner">
         <div class="section-label-row">
           <div class="section-label">{{ _('nav.tree') }}</div>

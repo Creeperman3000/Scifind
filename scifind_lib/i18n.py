@@ -3,7 +3,6 @@
 
 import json
 import re
-from pathlib import Path
 
 from scifind_lib.constants import _LOCALE_DIR
 

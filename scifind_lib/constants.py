@@ -25,6 +25,9 @@ _BASE_DIMENSION_QTY_IDS = {
 # meta-quantity with no own dimension.
 _HIDDEN_QUANTITY_IDS = frozenset({"drop", "dimensionless"})
 
+# ASCII digits and minus -> Unicode superscripts, for compact unit strings.
+SUPERSCRIPT_DIGITS = str.maketrans("0123456789-", "⁰¹²³⁴⁵⁶⁷⁸⁹⁻")
+
 
 def is_hidden_quantity(q):
     """Return True when a quantity's id is in _HIDDEN_QUANTITY_IDS.

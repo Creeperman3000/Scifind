@@ -91,7 +91,9 @@ from scifind_lib import (
     walk_tree,
     _in_clause,
 )
+from scifind_lib.constants import SUPERSCRIPT_DIGITS
 from scifind_lib.filter import MIN_DIFFICULTY, MAX_DIFFICULTY, parse_filter_state
+from scifind_lib.units import parse_default_unit
 
 app = Flask(
     __name__,
@@ -233,8 +235,6 @@ def _localised_quantity_names(db, quantity_ids, locale):
     return [localise(names_by_id[qid], locale) for qid in quantity_ids
             if qid in names_by_id]
 
-
-SUPERSCRIPT_DIGITS = str.maketrans("0123456789-", "⁰¹²³⁴⁵⁶⁷⁸⁹⁻")
 
 _LATEX_TEXTCMD_RE = re.compile(r"\\(?:mathrm|text)\{([^}]*)\}")
 
@@ -620,7 +620,7 @@ def inject_globals():
         db = get_db()
     except sqlite3.OperationalError as exc:
         logger.warning("Database unavailable: %s", exc)
-    fs = parse_filter_state(request.args, request.path)
+    fs = parse_filter_state(request.args)
     name_map = topic_name_map(tree, locale)
     compressed = compress_selection(tree, fs.ids)
 
@@ -871,34 +871,26 @@ def quantity_detail(quantity_id):
     default_unit_html, default_unit_symbol_latex = _render_default_unit(q["default_unit"], locale)
 
     units = []
-    du_ids = set()
     unit_system = "SI"
-    if q.get("default_unit"):
-        try:
-            du = json.loads(q["default_unit"])
-        except (json.JSONDecodeError, TypeError):
-            du = []
-        if not isinstance(du, list):
-            du = []
-        du_ids = {e["unit"] for e in du
-                  if isinstance(e, dict) and e.get("unit")}
-        if du_ids:
-            placeholders, duparams = _in_clause(tuple(du_ids))
-            unit_system_row = db.execute(
-                f"SELECT unit_system FROM unit WHERE id IN ({placeholders}) "
-                f"AND unit_system != 'SI' LIMIT 1",
-                duparams,
-            ).fetchone()
-            unit_system = unit_system_row["unit_system"] if unit_system_row else "SI"
-        if du:
-            units.append({
-                "symbol_latex": default_unit_symbol_latex,
-                "name_html": default_unit_html,
-                "unit_system": unit_system,
-                "factor": 1,
-                "offset": 0,
-                "latex_factor": None,
-            })
+    default_parts = parse_default_unit(q.get("default_unit"))
+    du_ids = {uid for uid, _ in default_parts}
+    if du_ids:
+        placeholders, duparams = _in_clause(tuple(du_ids))
+        unit_system_row = db.execute(
+            f"SELECT unit_system FROM unit WHERE id IN ({placeholders}) "
+            f"AND unit_system != 'SI' LIMIT 1",
+            duparams,
+        ).fetchone()
+        unit_system = unit_system_row["unit_system"] if unit_system_row else "SI"
+    if default_parts:
+        units.append({
+            "symbol_latex": default_unit_symbol_latex,
+            "name_html": default_unit_html,
+            "unit_system": unit_system,
+            "factor": 1,
+            "offset": 0,
+            "latex_factor": None,
+        })
 
     for eu in (dict(u) for u in fetch_quantity_units(db, quantity_id)):
         if eu["id"] in du_ids:
@@ -957,7 +949,7 @@ def search_page():
     db = get_db()
     locale = g.locale
     sort_key = _resolve_sort(request.args.get("sort"), SEARCH_SORT_KEYS, DEFAULT_SEARCH_SORT)
-    hits = search_headings(db, query) if query else []
+    hits = search_headings(db, query)
     hits = sort_search_rows(db, hits, sort_key, locale)
     results = _enrich_search_hits(db, hits, locale)
     return render_template(
@@ -1041,9 +1033,9 @@ def _enrich_search_hits(db, hits, locale):
 @app.route("/api/search-suggestions")
 def search_suggestions():
     query = request.args.get("q", "").strip()[:SUGGEST_QUERY_MAX_LENGTH]
-    suggestions = suggest_headings(get_db(), query) if query else []
+    suggestions = suggest_headings(get_db(), query)
     return {"suggestions": [
-        {"id": s[1], "kind": s[2], "heading": s[3]} for s in suggestions
+        {"id": s[0], "kind": s[1], "heading": s[2]} for s in suggestions
     ]}
 
 
@@ -1179,10 +1171,10 @@ def _render_breadcrumb(selected_id, tree, name_map):
     """Server-rendered topic breadcrumb (root > ... > selected > child trigger)."""
     selected_node = _find_node(tree, selected_id) if selected_id else None
     if selected_node is not None:
-        current_kids = [c["id"] for c in (selected_node.get("children") or [])]
+        current_kids = selected_node.get("children") or []
         path = topic_path(tree, selected_id) or [selected_id]
     else:
-        current_kids = [r["id"] for r in tree]
+        current_kids = tree
         path = None
 
     parts = []
@@ -1201,7 +1193,7 @@ def _render_breadcrumb(selected_id, tree, name_map):
             parts.append(' &gt; ')
         trigger_label = _("create.topic")
         menu_items = "".join(
-            _render_menu_item(cid, tree, name_map) for cid in current_kids
+            _render_menu_item(kid, name_map) for kid in current_kids
         )
         parts.append(
             f'<span class="topic-current has-menu" data-text="{html_module.escape(trigger_label)}">'
@@ -1210,11 +1202,6 @@ def _render_breadcrumb(selected_id, tree, name_map):
             f'<div class="topic-children-menu">{menu_items}</div>'
             f'</span>'
         )
-
-    parts.append(
-        f'<input type="hidden" id="topic" name="topic" form="create-form"'
-        f' value="{html_module.escape(selected_id or "")}">'
-    )
     return Markup("".join(parts))
 
 
@@ -1227,12 +1214,13 @@ def _find_node(tree, node_id):
     return found[0] if found else None
 
 
-def _render_menu_item(node_id, tree, name_map):
-    node = _find_node(tree, node_id)
-    name = name_map.get(node_id, node_id) if node else node_id
-    kids = (node.get("children") or []) if node else []
+def _render_menu_item(node, name_map):
+    """One entry of the topic dropdown; `node` is a tree.json node dict."""
+    node_id = node["id"]
+    name = name_map.get(node_id, node_id)
+    kids = node.get("children") or []
     if kids:
-        sub = "".join(_render_menu_item(c["id"], tree, name_map) for c in kids)
+        sub = "".join(_render_menu_item(c, name_map) for c in kids)
         return (
             f'<div class="topic-menu-item" data-id="{html_module.escape(node_id)}">'
             f'<span>{html_module.escape(name)}</span>'
@@ -1368,7 +1356,7 @@ def create_build_sql():
 def all_quantities():
     db = get_db()
     locale = g.locale
-    fs = parse_filter_state(request.args, request.path)
+    fs = parse_filter_state(request.args)
     fs.quantity_mode = "or"
     sort_key = _resolve_sort(request.args.get("sort"), QUANTITY_SORT_KEYS, DEFAULT_QUANTITY_SORT)
     tree = load_tree()
@@ -1428,7 +1416,7 @@ def all_quantities():
 def all_formulas():
     db = get_db()
     locale = g.locale
-    fs = parse_filter_state(request.args, request.path)
+    fs = parse_filter_state(request.args)
     tree = load_tree()
     compressed = compress_selection(tree, fs.ids)
     if compressed == _all_tree_root_ids(tree):

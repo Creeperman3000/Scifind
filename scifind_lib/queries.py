@@ -3,7 +3,9 @@
 
 import html
 import re
+from itertools import groupby
 
+from scifind_lib.constants import _BASE_DIMENSION_QTY_IDS
 from scifind_lib.dimensions import (
     dimension_columns,
     extract_dimensions_from_row,
@@ -166,12 +168,11 @@ def fetch_quantity_formulas_by_side(conn, quantity_id):
     (=, ≈, ∝, <, >, …); everything else (right side only, or formulas
     without a relational operator at all) is non-primary.
     """
-    arities = {}
-    rel_arities = {}
-    for op in conn.execute("SELECT id, arity, operator_type FROM operator"):
-        arities[op["id"]] = op["arity"]
-        if op["operator_type"] == "relational":
-            rel_arities[op["id"]] = op["arity"]
+    # (arity, is_relational) per operator id
+    op_meta = {
+        r["id"]: (r["arity"], r["operator_type"] == "relational")
+        for r in conn.execute("SELECT id, arity, operator_type FROM operator")
+    }
 
     def _left_of_first_relational(token_rows):
         stack = []
@@ -180,13 +181,14 @@ def fetch_quantity_formulas_by_side(conn, quantity_id):
             if kind != "operator":
                 stack.append({row["quantity_id"]} if kind == "quantity" else set())
                 continue
-            op_id = row["operator_id"]
-            if op_id in rel_arities:
+            meta = op_meta.get(row["operator_id"])
+            if meta is None:
+                continue
+            arity, relational = meta
+            if relational:
                 # operands pop right-first, so the left operand sits at -arity
-                arity = rel_arities[op_id]
                 return set(stack[-arity]) if len(stack) >= arity else set()
-            arity = arities.get(op_id)
-            if arity and len(stack) >= arity:
+            if len(stack) >= arity:
                 merged = set().union(*stack[-arity:])
                 del stack[-arity:]
                 stack.append(merged)
@@ -209,28 +211,23 @@ def fetch_quantity_formulas_by_side(conn, quantity_id):
         (quantity_id,),
     ).fetchall()
 
-    primary, non_primary = [], []
-    current = None
-    for row in rows:
-        fid = row["id"]
-        if current is None or current["id"] != fid:
-            current = {
-                "id": fid,
-                "name": row["name"],
-                "name_en": row["name_en"],
-                "topic_id": row["topic_id"],
-                "difficulty": row["difficulty"],
-                "_tokens": [],
-            }
-            primary.append(current)
-        current["_tokens"].append(row)
-
-    def _is_primary(formula):
-        return quantity_id in _left_of_first_relational(formula.pop("_tokens"))
+    formulas = []
+    for fid, token_rows in groupby(rows, key=lambda r: r["id"]):
+        token_rows = list(token_rows)
+        meta = token_rows[0]
+        formulas.append({
+            "id": fid,
+            "name": meta["name"],
+            "name_en": meta["name_en"],
+            "topic_id": meta["topic_id"],
+            "difficulty": meta["difficulty"],
+            "_tokens": token_rows,
+        })
 
     primary_out, non_primary_out = [], []
-    for f in primary:
-        (primary_out if _is_primary(f) else non_primary_out).append(f)
+    for formula in formulas:
+        is_primary = quantity_id in _left_of_first_relational(formula.pop("_tokens"))
+        (primary_out if is_primary else non_primary_out).append(formula)
     return primary_out, non_primary_out
 
 
@@ -357,17 +354,12 @@ def fetch_all_formulas(conn):
     ).fetchall()
 
 
-def _base_dimension_order():
-    return {qid: i for i, qid in enumerate([
-        "mass", "length", "time", "current",
-        "temperature", "amount", "luminous_intensity",
-    ])}
-
-
 def sort_quantities_by_dimension(quantity_rows):
     """Sort quantities: base dimensions first, rest by id."""
-    base_order = _base_dimension_order()
+    # Canonical base-dimension ordering lives in constants.py; the index
+    # doubles as the "is a base quantity" marker (len = not one).
+    base_order = {qid: i for i, qid in enumerate(_BASE_DIMENSION_QTY_IDS.values())}
     def key(quantity):
-        base_index = base_order.get(quantity["id"], 99)
-        return (0 if base_index < 99 else 1, base_index, quantity["id"])
+        base_index = base_order.get(quantity["id"], len(base_order))
+        return (0 if base_index < len(base_order) else 1, base_index, quantity["id"])
     return sorted(quantity_rows, key=key)

@@ -87,12 +87,8 @@ def compress_selection(tree, ids):
 
 
 def all_tree_ids(tree):
-    return {node["id"] for node in tree} | _all_descendants(tree)
-
-
-def _all_descendants(tree):
     out = set()
-    walk_tree(tree, lambda n: out.update(descendant_ids(n)))
+    walk_tree(tree, lambda n: out.add(n["id"]))
     return out
 
 

@@ -37,23 +37,24 @@ def format_default_unit_html(
     parts = parse_default_unit(json_text)
     if not parts:
         return ""
+    words = locale_words(locale)
     numerators, denominators = split_numerator_denominator(parts)
     num_html = render_unit_group(numerators, unit_url, unit_name, locale)
     if not denominators:
         return num_html
-    per_word = locale_words(locale)["per"]
+    per_word = words["per"]
     use_special = False
     if unit_quantity_map:
         special = locale_quantities_special(locale)
         for uid, _ in denominators:
             if unit_quantity_map.get(uid) in special:
-                per_word = locale_words(locale).get("perSpecial", per_word)
+                per_word = words.get("perSpecial", per_word)
                 use_special = True
                 break
     den_html = render_unit_group(denominators, unit_url, unit_name, locale,
                                  use_special_exponents=use_special)
     if not num_html:
-        return f"{locale_words(locale)['reciprocal']} {den_html}"
+        return f"{words['reciprocal']} {den_html}"
     return f"{num_html} {per_word} {den_html}"
 
 

@@ -4,6 +4,12 @@
 from dataclasses import dataclass, field
 from typing import Optional
 
+from scifind_lib.dimensions import (
+    build_dimension_symbol_maps,
+    compute_rpn_dimensions,
+    format_number,
+    format_dimensions_latex,
+)
 from scifind_lib.i18n import localise
 from scifind_lib.parser import _CHAINABLE_RELATIONALS, _parse_paren_arg, parse_equation
 
@@ -137,13 +143,15 @@ def _latex_quantity(node, conn, locale):
     if node.quantity_id == "drop":
         return ""
     q = _load_quantity(conn, node.quantity_id)
-    var = localise(node.symbol_overwrite or "", locale) or q["symbol"] or node.quantity_id
-    label = localise(node.label or "", locale)
-    if label and "_" not in var:
-        var += "_{" + label + "}"
-    if not (localise(node.symbol_overwrite or "", locale) or q["symbol"]):
+    sym = localise(node.symbol_overwrite or "", locale) or q["symbol"]
+    if not sym:
+        # Neither an override nor a stored symbol: render nothing rather
+        # than leaking the raw quantity id into the formula.
         return ""
-    return var
+    label = localise(node.label or "", locale)
+    if label and "_" not in sym:
+        return sym + "_{" + label + "}"
+    return sym
 
 
 def _latex_constant(node, conn):
@@ -162,12 +170,10 @@ def _latex_number(node):
     from fractions import Fraction
     try:
         f = Fraction(v).limit_denominator(100)
-    except (ValueError, ZeroDivisionError):
-        from scifind_lib.dimensions import format_number
+    except (ValueError, ZeroDivisionError, OverflowError):
         return format_number(v)
     if f.denominator != 1 and f.numerator == 1 and f.denominator < 20:
         return "\\frac{1}{" + str(f.denominator) + "}"
-    from scifind_lib.dimensions import format_number
     return format_number(v)
 
 
@@ -377,10 +383,6 @@ def preview_equation(conn, equation, locale="en-us", dim_caches=None, overrides=
 
     Returns {tokens, latex, dim_latex, variables, error}.
     """
-    from scifind_lib.dimensions import (
-        dimension_columns, format_dimensions_latex, compute_rpn_dimensions,
-        build_dimension_symbol_maps,
-    )
     if not equation or not equation.strip():
         return {"tokens": [], "latex": "", "dim_latex": "",
                 "variables": [], "error": ""}
