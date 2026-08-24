@@ -42,7 +42,6 @@
       "dim_mode_quantities": "Quantities",
       "dim_mode_units": "Units",
       "export_download": "Download",
-      "wait_latex": "Wait for LaTeX",
       "found_bug": "Found a bug?",
       "report_bug": "Report",
       "missing_formula": "Missing formula?",
@@ -133,7 +132,8 @@
       "toggle_sidebar": "Toggle sidebar",
       "settings": "Settings",
       "toggle_tree": "Toggle tree",
-      "cancel_search": "Cancel search"
+      "cancel_search": "Cancel search",
+      "drag_dismiss": "Drag to dismiss"
     },
     "create": {
       "title": "Create Formula",

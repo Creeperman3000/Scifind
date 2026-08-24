@@ -1,12 +1,12 @@
 {% extends "base.html" %}
-{% block title %}{{ _('create.title') }} — Scifind{% endblock %}
+{% block title %}{{ _('create.title') }}{% endblock %}
+{% block styles %}<link rel="stylesheet" href="{{ static_v('create.css') }}">{% endblock %}
 {% block content %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/create.css') }}">
 
 <form id="create-form" onsubmit="return false">
   <input id="topic" type="hidden" name="topic" value="">
   <input id="name_en" class="borderless-input" name="name_en" placeholder="{{ _('create.name') }}" autocomplete="off">
-  <input id="formula_id" class="borderless-input detail-desc" name="formula_id_display" placeholder="{{ _('create.formula_id') }}" autocomplete="off">
+  <input id="formula_id" class="borderless-input detail-desc" name="formula_id" placeholder="{{ _('create.formula_id') }}" autocomplete="off">
 
   <div class="breadcrumb-bar" id="topic-bar">
     <span>{{ _('create.topic') }}</span>
@@ -43,11 +43,11 @@
 
   <textarea id="equation" name="equation" class="text-field auto-grow" rows="2" placeholder="force = mass mul acceleration" spellcheck="false"></textarea>
 
-  <textarea id="description" name="description" class="text-field auto-grow" style="margin-top: 8px" rows="2" placeholder="{{ _('create.description') }}" spellcheck="false"></textarea>
+  <textarea id="description" name="description" class="text-field auto-grow" rows="2" placeholder="{{ _('create.description') }}" spellcheck="false"></textarea>
 
-  <textarea id="links" name="links" class="text-field auto-grow" style="margin-top: 8px" rows="2" placeholder="{{ _('create.links') }}" spellcheck="false"></textarea>
+  <textarea id="links" name="links" class="text-field auto-grow" rows="2" placeholder="{{ _('create.links') }}" spellcheck="false"></textarea>
 
-  <div class="detail-section" style="margin-top: 12px;">
+  <div class="detail-section" id="var-overrides-section">
     <div id="var-overrides"></div>
   </div>
 
@@ -69,5 +69,5 @@
   </div>
 </div>
 
-<script src="{{ url_for('static', filename='js/create.js') }}"></script>
+<script src="{{ static_v('create.js') }}"></script>
 {% endblock %}

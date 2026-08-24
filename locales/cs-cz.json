@@ -50,7 +50,6 @@
       "dim_mode_quantities": "Veličiny",
       "dim_mode_units": "Jednotky",
       "export_download": "Stáhnout",
-      "wait_latex": "Čekat na LaTeX",
       "found_bug": "Našel jsi chybu?",
       "report_bug": "Nahlásit",
       "missing_formula": "Chybí vzorec?",
@@ -141,7 +140,8 @@
       "toggle_sidebar": "Přepnout boční panel",
       "settings": "Nastavení",
       "toggle_tree": "Přepnout strom",
-      "cancel_search": "Zrušit hledání"
+      "cancel_search": "Zrušit hledání",
+      "drag_dismiss": "Zavřete tažením"
     },
     "create": {
       "title": "Vytvořit vzorec",

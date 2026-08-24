@@ -15,7 +15,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from flask import Flask, render_template, request, g, Response, redirect, session
+from flask import Flask, render_template, request, g, Response, redirect, session, url_for
 from markupsafe import Markup
 
 _PROJECT_DIR = Path(__file__).resolve().parent
@@ -91,14 +91,52 @@ from scifind_lib import (
     walk_tree,
     _in_clause,
 )
-from scifind_lib.filter import (
-    MIN_DIFFICULTY, MAX_DIFFICULTY,
-    parse_filter_state,
-    csv_list, safe_int,
+from scifind_lib.filter import MIN_DIFFICULTY, MAX_DIFFICULTY, parse_filter_state
+
+app = Flask(
+    __name__,
+    static_folder="web",
+    template_folder="web",
 )
 
-app = Flask(__name__)
-app.secret_key = os.environ.get("SCIFIND_SECRET_KEY") or secrets.token_hex(24)
+
+@app.before_request
+def _hide_templates_from_static():
+    if request.path.startswith(f"{app.static_url_path}/") and request.path.endswith(
+        ".html"
+    ):
+        return Response("Not Found", status=404)
+
+
+def _secret_key():
+    env_key = os.environ.get("SCIFIND_SECRET_KEY")
+    if env_key:
+        return env_key
+    key_file = Path(app.instance_path) / "secret_key"
+    fallback = secrets.token_hex(24)
+    for _ in range(2):
+        try:
+            stored = key_file.read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            stored = None
+        except OSError:
+            return fallback
+        if stored:
+            return stored
+        try:
+            key_file.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            continue
+        except OSError:
+            return fallback
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(secrets.token_hex(32))
+        return key_file.read_text(encoding="utf-8").strip()
+    return fallback
+
+
+app.secret_key = _secret_key()
 app.config["MAX_CONTENT_LENGTH"] = (
     int(os.environ.get("SCIFIND_MAX_UPLOAD_MB", "32")) * 1024 * 1024
 )
@@ -108,10 +146,25 @@ app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 365 * 86400
 _GZIP_TYPES = ('text/', 'application/json', 'application/javascript')
 
 
+def _accepts_gzip(header_value):
+    for part in header_value.split(","):
+        token, _, params = part.partition(";")
+        if token.strip().lower() != "gzip":
+            continue
+        q = params.strip().lower()
+        if q.startswith("q="):
+            try:
+                return float(q[2:]) > 0
+            except ValueError:
+                return True
+        return True
+    return False
+
+
 @app.after_request
 def gzip_response(response):
-    accept = request.headers.get('Accept-Encoding', '')
-    if 'gzip' not in accept:
+    response.vary.add("Accept-Encoding")
+    if not _accepts_gzip(request.headers.get("Accept-Encoding", "")):
         return response
     ct = response.content_type or ''
     if not ct.startswith(_GZIP_TYPES):
@@ -139,14 +192,14 @@ def _resolve_sort(value, allowed, default):
     return default
 
 
-def _jstree_data(tree, name_map, compressed, exclude_all=False, ids_provided=False):
+def _topic_tree_data(tree, name_map, compressed, exclude_all=False, ids_provided=False):
     if not compressed and not exclude_all and not ids_provided:
         compressed = {r["id"] for r in tree} if tree else set()
     def conv(node):
         return {
             "id": node["id"],
-            "text": name_map.get(node["id"], node["id"]),
-            "state": {"checked": node["id"] in compressed, "opened": True},
+            "name": name_map.get(node["id"], node["id"]),
+            "state": {"checked": node["id"] in compressed},
             "children": [conv(c) for c in (node.get("children") or [])],
         }
     return [conv(r) for r in tree] if tree else []
@@ -400,6 +453,27 @@ def _(data):
 app.template_global()(render_symbol)
 
 
+_STATIC_VERSION_CACHE: dict = {}
+
+
+def _static_version(filename):
+    if filename not in _STATIC_VERSION_CACHE:
+        try:
+            st = (Path(app.static_folder) / filename).stat()
+            _STATIC_VERSION_CACHE[filename] = f"{int(st.st_mtime):x}{st.st_size:x}"
+        except OSError:
+            _STATIC_VERSION_CACHE[filename] = ""
+    return _STATIC_VERSION_CACHE[filename]
+
+
+@app.template_global()
+def static_v(filename):
+    """Static URL with an mtime/size version for cache busting."""
+    url = url_for("static", filename=filename)
+    v = _static_version(filename)
+    return f"{url}?v={v}" if v else url
+
+
 @app.before_request
 def detect_locale():
     locale = request.args.get("locale") or request.cookies.get("sf_locale")
@@ -552,6 +626,7 @@ def inject_globals():
 
     all_quantities_for_filter = []
     dimension_caches = {"var": {}, "unit": {}, "dim": {}}
+    dim_qty_names = {}
     if db is not None:
         try:
             all_quantities_for_filter = [
@@ -562,6 +637,18 @@ def inject_globals():
         except sqlite3.OperationalError as exc:
             logger.warning("Quantity table unavailable: %s", exc)
         dimension_caches = _get_dimension_caches()
+        try:
+            qid_to_name = {
+                q["id"]: localise(q["name"], locale)
+                for q in db.execute(
+                    f"SELECT id, name FROM quantity WHERE id IN ({','.join('?' * len(dimension_quantity_ids()))})",
+                    tuple(dimension_quantity_ids().values()),
+                ).fetchall()
+            }
+            for sym, qid in dimension_quantity_ids().items():
+                dim_qty_names[sym] = qid_to_name.get(qid, "")
+        except sqlite3.OperationalError as exc:
+            logger.warning("Base dimension names unavailable: %s", exc)
 
     dim_mode = g.get("dim_mode", "dim")
     dim_symbols = dimension_caches.get(dim_mode, dimension_caches.get("dim", {}))
@@ -576,7 +663,7 @@ def inject_globals():
     sort_context = _sort_context_for(request.path, request.args.get("sort"))
 
     return dict(
-        tree_json=_jstree_data(tree, name_map, compressed, fs.exclude_all, ids_provided=fs.ids_provided),
+        tree_json=_topic_tree_data(tree, name_map, compressed, fs.exclude_all, ids_provided=fs.ids_provided),
         diff_min=fs.diff_min,
         diff_max=fs.diff_max,
         current_view="quantities" if is_qty_page else "formulas",
@@ -585,6 +672,7 @@ def inject_globals():
         qty_mode=fs.quantity_mode,
         all_quantities_for_filter=all_quantities_for_filter,
         dim_symbols=dim_symbols,
+        dim_qty_names=dim_qty_names,
         dimension_symbol_list=dimension_symbols() if db else [],
         available_locales=locale_list,
         locale_ui=locale_ui,
@@ -784,20 +872,25 @@ def quantity_detail(quantity_id):
 
     units = []
     du_ids = set()
+    unit_system = "SI"
     if q.get("default_unit"):
         try:
             du = json.loads(q["default_unit"])
         except (json.JSONDecodeError, TypeError):
             du = []
-        if du:
-            du_ids = {e["unit"] for e in du}
-            placeholders, duparams = _in_clause(tuple(e["unit"] for e in du))
+        if not isinstance(du, list):
+            du = []
+        du_ids = {e["unit"] for e in du
+                  if isinstance(e, dict) and e.get("unit")}
+        if du_ids:
+            placeholders, duparams = _in_clause(tuple(du_ids))
             unit_system_row = db.execute(
                 f"SELECT unit_system FROM unit WHERE id IN ({placeholders}) "
                 f"AND unit_system != 'SI' LIMIT 1",
                 duparams,
             ).fetchone()
             unit_system = unit_system_row["unit_system"] if unit_system_row else "SI"
+        if du:
             units.append({
                 "symbol_latex": default_unit_symbol_latex,
                 "name_html": default_unit_html,
@@ -806,10 +899,6 @@ def quantity_detail(quantity_id):
                 "offset": 0,
                 "latex_factor": None,
             })
-        else:
-            unit_system = "SI"
-    else:
-        unit_system = "SI"
 
     for eu in (dict(u) for u in fetch_quantity_units(db, quantity_id)):
         if eu["id"] in du_ids:
@@ -868,8 +957,9 @@ def search_page():
     db = get_db()
     locale = g.locale
     sort_key = _resolve_sort(request.args.get("sort"), SEARCH_SORT_KEYS, DEFAULT_SEARCH_SORT)
-    results = search_headings(db, query) if query else []
-    results = sort_search_rows(db, results, sort_key, locale)
+    hits = search_headings(db, query) if query else []
+    hits = sort_search_rows(db, hits, sort_key, locale)
+    results = _enrich_search_hits(db, hits, locale)
     return render_template(
         "search.html",
         query=query,
@@ -877,6 +967,75 @@ def search_page():
         sort=sort_key,
         available_sorts=SEARCH_SORT_KEYS,
     )
+
+
+def _enrich_search_hits(db, hits, locale):
+    """Attach latex / symbol data to each search hit so the template can
+    render formula-card style entries."""
+    formula_ids = [h[1] for h in hits if h[0] == "formula"]
+    quantity_ids = [h[1] for h in hits if h[0] == "quantity"]
+    unit_ids = [h[1] for h in hits if h[0] == "unit"]
+
+    formula_meta = {}
+    if formula_ids:
+        placeholder, params = _in_clause(formula_ids)
+        for r in db.execute(
+            f"SELECT id, json_extract(name, '$.en-us') AS name_en FROM formula WHERE id IN ({placeholder})",
+            params,
+        ).fetchall():
+            formula_meta[r["id"]] = {"name_en": r["name_en"] or r["id"]}
+
+    quantity_meta = {}
+    if quantity_ids:
+        placeholder, params = _in_clause(quantity_ids)
+        for r in db.execute(
+            f"SELECT id, symbol FROM quantity WHERE id IN ({placeholder})",
+            params,
+        ).fetchall():
+            quantity_meta[r["id"]] = {"symbol": r["symbol"] or ""}
+
+    unit_meta = {}
+    if unit_ids:
+        placeholder, params = _in_clause(unit_ids)
+        for r in db.execute(
+            f"SELECT u.id, u.symbol, u.name FROM unit u WHERE u.id IN ({placeholder})",
+            params,
+        ).fetchall():
+            unit_meta[r["id"]] = {
+                "symbol": r["symbol"] or "",
+                "name": localise(r["name"], locale) if r["name"] else r["id"],
+            }
+
+    enriched = []
+    for kind, ent_id, display_name in hits:
+        if kind == "formula":
+            meta = formula_meta.get(ent_id, {})
+            enriched.append({
+                "kind": kind, "id": ent_id,
+                "href": f"/formula/{ent_id}",
+                "latex": render_formula(db, ent_id, locale),
+                "name": display_name or meta.get("name_en", ent_id),
+                "relation": _("detail.formula"),
+            })
+        elif kind == "quantity":
+            meta = quantity_meta.get(ent_id, {})
+            enriched.append({
+                "kind": kind, "id": ent_id,
+                "href": f"/quantity/{ent_id}",
+                "symbol": meta.get("symbol", ""),
+                "name": display_name or ent_id,
+                "relation": _("detail.quantity"),
+            })
+        elif kind == "unit":
+            meta = unit_meta.get(ent_id, {})
+            enriched.append({
+                "kind": kind, "id": ent_id,
+                "href": f"/unit/{ent_id}",
+                "symbol": meta.get("symbol", ""),
+                "name": display_name or meta.get("name", ent_id),
+                "relation": _("detail.unit"),
+            })
+    return enriched
 
 
 @app.route("/api/search-suggestions")
@@ -929,8 +1088,7 @@ def _operator_latex(item):
     op_id = item["id"]
     symbol = item.get("symbol") or ""
     op_type = item["operator_type"]
-    placeholders = list("xyz") + [chr(c) for c in range(ord("a"), ord("z"))]
-    x, y = placeholders[0], placeholders[1]
+    x, y = "x", "y"
     if op_type in ("infix", "relational"):
         if op_id == "frac":
             return f"\\frac{{{x}}}{{{y}}}"
@@ -1011,7 +1169,7 @@ def create_token_sidebar():
 
     return Markup(
         '<div class="filter-qty-search-wrap">'
-        f'<div class="qty-search-wrap"><input type="text" class="qty-search text-field" id="token-search" placeholder="{html_module.escape(_("create.search_placeholder"))}" autocomplete="off"></div>'
+        f'<input type="text" class="text-field" id="token-search" placeholder="{html_module.escape(_("create.search_placeholder"))}" autocomplete="off">'
         '</div>'
         f'<div class="token-sidebar">{"".join(sections)}</div>'
     )
@@ -1031,7 +1189,7 @@ def _render_breadcrumb(selected_id, tree, name_map):
     if path:
         for i, tid in enumerate(path):
             if i > 0:
-                parts.append(' <span class="breadcrumb-sep">&gt;</span> ')
+                parts.append(' &gt; ')
             parts.append(
                 f'<span class="topic-current"'
                 f' data-id="{html_module.escape(tid)}">'
@@ -1040,7 +1198,7 @@ def _render_breadcrumb(selected_id, tree, name_map):
 
     if current_kids:
         if parts:
-            parts.append(' <span class="breadcrumb-sep">&gt;</span> ')
+            parts.append(' &gt; ')
         trigger_label = _("create.topic")
         menu_items = "".join(
             _render_menu_item(cid, tree, name_map) for cid in current_kids

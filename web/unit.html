@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}{{ _(unit.name) or unit.id }}{% endblock %}
+{% block content %}
+
+<h2>{% if unit.symbol %}${{ render_symbol(unit.symbol) }}$ {% endif %}{{ _(unit.name) or unit.id }}</h2>
+
+<div class="detail-desc">{{ _('detail.unit') }}</div>
+
+{% if unit.quantity_id %}
+<div class="breadcrumb-bar">
+  {% if unit.breadcrumbs %}
+  {% for crumb in unit.breadcrumbs %}
+    {% if not loop.first %} &gt; {% endif %}
+    <a href="/quantities?ids={{ crumb.id }}">{{ crumb.name }}</a>
+  {% endfor %}
+  &gt;
+  {% endif %}
+  <a href="/quantity/{{ unit.quantity_id }}">{{ unit.quantity_name_localized }}</a>
+</div>
+{% endif %}
+
+<div class="detail-meta">
+{% if unit.default_unit == 1 %}
+  <span>{{ _('unit.si_base_unit') }} <a href="/quantity/{{ unit.quantity_id }}">{{ unit.quantity_name_localized }}</a>.</span>
+  <span>{{ _('unit.symbol') }}: ${{ render_symbol(unit.symbol) }}$</span>
+{% else %}
+  <span>{{ _('detail.quantity') }}: <a href="/quantity/{{ unit.quantity_id }}">{{ unit.quantity_name_localized }}</a></span>
+  <span>{{ _('detail.system') }}: {{ unit.unit_system or _('unit.system_any') }}</span>
+  <span>{{ _('detail.factor_to') }} ${{ render_symbol(si_unit_symbol) }}$: {% if unit.latex_factor %}${{ unit.latex_factor }}${% else %}${{ unit.factor }}${% endif %}</span>
+  {% if unit.offset %}<span>{{ _('detail.offset_from') }} ${{ render_symbol(si_unit_symbol) }}$: ${{ unit.offset }}$</span>{% endif %}
+{% endif %}
+</div>
+
+{% endblock %}

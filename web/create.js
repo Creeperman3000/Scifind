@@ -1,4 +1,3 @@
-
 /* eslint-disable no-undef */
 
 (function() {
@@ -16,11 +15,32 @@
   };
 
   const renderMathIn = (el) => { try { renderMathInElement(el,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],macros:window._KATEX_MACROS||{}}); } catch(e) {} };
+  const refreshIcons = () => { if (typeof lucide !== 'undefined') lucide.createIcons(); };
+  const refreshMath = () => { if (typeof renderMathInContent === 'function') renderMathInContent(); };
+  const copyText = (text, label) => {
+    if (!(navigator.clipboard && navigator.clipboard.writeText)) return;
+    const copied = t('toast.copied', 'Copied');
+    navigator.clipboard.writeText(text)
+      .then(() => showToast(copied + ' ' + label, 'success'))
+      .catch((e) => showToast(t('toast.copy_failed', 'Copy failed') + ': ' + e.message, 'error'));
+  };
+  function renderRowSymbols(root) {
+    if (typeof katex === 'undefined') return;
+    root.querySelectorAll('tr[data-symbol]').forEach((tr) => {
+      const sym = tr.dataset.symbol;
+      if (!sym) return;
+      const target = tr.querySelector('.qty-symbol');
+      if (target) katex.render(sym, target, { displayMode: false, throwOnError: false });
+    });
+  }
+  const varTableHead = () => '<thead><tr>' +
+    [t('detail.quantity'), t('create.column_symbol_override'), t('create.column_name_override'), t('create.column_label')]
+      .map((h) => '<th>' + esc(h) + '</th>').join('') + '</tr></thead>';
   function setHTML(el, html) {
     el.innerHTML = typeof html === 'string' ? html : '';
-    if (typeof renderMathInContent === 'function') renderMathInContent();
+    refreshMath();
     if (el) renderMathIn(el);
-    if (typeof lucide !== 'undefined') lucide.createIcons();
+    refreshIcons();
   }
 
   function loadTokenSidebar() {
@@ -77,19 +97,11 @@
       + '</tr>';
   }
   function occurrenceIndices(vars) {
-    const counts = {};
-    const idx = {};
+    const counts = {}, seen = {}, idx = {};
     for (const v of (vars || [])) {
-      const t = v.id + '|' + (v.alias || '');
-      counts[t] = (counts[t] || 0) + 1;
-    }
-    const seen = {};
-    for (const v of (vars || [])) {
-      const t = v.id + '|' + (v.alias || '');
-      if (counts[t] > 1) {
-        seen[t] = (seen[t] || 0) + 1;
-        idx[v.key] = seen[t];
-      }
+      const k = v.id + '|' + (v.alias || '');
+      counts[k] = (counts[k] || 0) + 1;
+      if (counts[k] > 1) { seen[k] = (seen[k] || 0) + 1; idx[v.key] = seen[k]; }
     }
     return idx;
   }
@@ -120,26 +132,13 @@
       } else {
         rows += '<tr class="qty-row-placeholder">'
           + '<td class="qty-sym-cell">&nbsp;</td>'
-          + '<td><input disabled class="text-field" placeholder=""></td>'
-          + '<td><input disabled class="text-field" placeholder=""></td>'
-          + '<td><input disabled class="text-field" placeholder=""></td>'
+          + '<td><input disabled class="text-field" placeholder=""></td>'.repeat(3)
           + '</tr>';
       }
     }
-    const headers = [t('detail.quantity'), t('create.column_symbol_override'), t('create.column_name_override'), t('create.column_label')];
-    let thead = '<tr>';
-    for (const h of headers) thead += '<th>' + esc(h) + '</th>';
-    thead += '</tr>';
-    wrap.innerHTML = '<table class="var-table"><thead>' + thead + '</thead><tbody>' + rows + '</tbody></table>';
-    if (typeof katex !== 'undefined') {
-      wrap.querySelectorAll('tr[data-symbol]').forEach((tr) => {
-        const sym = tr.dataset.symbol;
-        if (!sym) return;
-        const target = tr.querySelector('.qty-symbol');
-        if (target) katex.render(sym, target, { displayMode: false, throwOnError: false });
-      });
-    }
-    if (typeof renderMathInContent === 'function') renderMathInContent();
+    wrap.innerHTML = '<table class="var-table">' + varTableHead() + '<tbody>' + rows + '</tbody></table>';
+    renderRowSymbols(wrap);
+    refreshMath();
   }
   function renderPreviewLaTeX(latex) {
     const mathEl = $('formula-math');
@@ -196,7 +195,7 @@
             lastVariablesKey = newKey;
             renderOverrideTable(data.variables || []);
           }
-          if (typeof renderMathInContent === 'function') renderMathInContent();
+          refreshMath();
         })
         .catch((err) => {
           if (seq !== previewSeq) return;
@@ -222,25 +221,18 @@
     updatePreview(ta.value);
   }
 
-  let topicSyncing = false;
   function syncTreeResetBtn(topicSelected) {
     const btn = document.getElementById('tree-select-all');
     if (btn) btn.classList.toggle('disabled', !topicSelected);
   }
+  /* Tree clicks (radio mode, wired up by app.js) */
+  window._treeSelectionChanged = function(id) { selectTopic(id); };
   function selectTopic(id) {
     const hidden = $('topic');
     if (hidden) hidden.value = id || '';
     loadBreadcrumb(id);
     syncTreeResetBtn(!!id);
-    if (window._jstree) {
-      topicSyncing = true;
-      try {
-        window._jstree.uncheck_all();
-        if (id) window._jstree.check_node(id);
-      } finally {
-        topicSyncing = false;
-      }
-    }
+    if (typeof window._setTreeSelection === 'function') window._setTreeSelection(id);
   }
   function loadBreadcrumb(topic) {
     const url = '/create/breadcrumb' + (topic ? '?topic=' + encodeURIComponent(topic) : '');
@@ -286,18 +278,15 @@
   }
 
   function validateEnglishFields() {
-    const missing = [];
-    const nameVal = ($('name_en').value || '').trim();
-    const idVal = ($('formula_id').value || '').trim();
-    const eqVal = ($('equation').value || '').trim();
-    const descVal = ($('description').value || '').trim();
-    const topicVal = $('topic') ? $('topic').value : '';
-    if (!nameVal) missing.push(t('create.name').toLowerCase());
-    if (!idVal) missing.push(t('create.formula_id').toLowerCase());
-    if (!topicVal) missing.push(t('create.topic').toLowerCase());
-    if (!eqVal) missing.push(t('create.equation').toLowerCase());
-    if (!descVal) missing.push(t('create.description').toLowerCase());
-    return missing;
+    const fields = [
+      ['name_en', 'create.name'],
+      ['formula_id', 'create.formula_id'],
+      ['topic', 'create.topic'],
+      ['equation', 'create.equation'],
+    ];
+    return fields
+      .filter(([id]) => { const el = $(id); return !(el && (el.value || '').trim()); })
+      .map(([, key]) => t(key).toLowerCase());
   }
 
   function renderPage(page) {
@@ -306,14 +295,14 @@
     if (page.kind === 'pick') renderPickPage(page);
     else if (page.kind === 'translate') renderTranslatePage(page);
     else if (page.kind === 'sql') renderSqlPage(page);
-    if (typeof lucide !== 'undefined') lucide.createIcons();
+    refreshIcons();
   }
 
   function setTitle(text) { $('modal-title').textContent = text; }
   function setStep(html) { $('modal-step').innerHTML = html; }
   function setActions(html) { $('modal-actions').innerHTML = html; }
   function backButtonHtml() {
-    return '<button class="btn-ghost" type="button" data-action="flow-back">' +
+    return '<button class="btn-ghost btn-sm" type="button" data-action="flow-back">' +
       esc(t('create.back', 'Back')) + '</button>';
   }
 
@@ -340,7 +329,7 @@
       '<div class="lang-picker" id="lang-picker">' + rows + '</div>'
     );
     setActions(
-      '<button class="btn-primary" type="button" data-action="flow-pick-langs-continue">' +
+      '<button class="btn-primary btn-sm" type="button" data-action="flow-pick-langs-continue">' +
         esc(t('create.continue', 'Continue')) +
       '</button>'
     );
@@ -374,21 +363,13 @@
       );
     }
     const qtyTable = qtyRows
-      ? '<table class="var-table"><thead><tr>' +
-          '<th>' + esc(t('detail.quantity')) + '</th>' +
-          '<th>' + esc(t('create.column_symbol_override')) + '</th>' +
-          '<th>' + esc(t('create.column_name_override')) + '</th>' +
-          '<th>' + esc(t('create.column_label')) + '</th>' +
-        '</tr></thead><tbody>' + qtyRows + '</tbody></table>'
+      ? '<table class="var-table">' + varTableHead() + '<tbody>' + qtyRows + '</tbody></table>'
       : '';
     const enName = ($('name_en').value || '').trim();
     const enDesc = ($('description').value || '').trim();
-    const copyBtn = (field) => {
-      const labelMap = { name: 'name', description: 'description' };
-      const labelKey = labelMap[field] || field;
-      return '<button class="filter-btn" type="button" data-tr-copy="' + field + '" data-tr-copy-label="' + esc(t('create.' + labelKey, field)) + '" title="Copy from English">' +
+    const copyBtn = (field) =>
+      '<button class="filter-btn" type="button" data-tr-copy="' + field + '" data-tr-copy-label="' + esc(t('create.' + field, field)) + '" title="Copy from English">' +
       '<i data-lucide="copy" width="16" height="16"></i></button>';
-    };
     setStep(
       '<div class="translate-form">' +
         '<div class="detail-desc"><div class="tr-label-row"><span>' + esc(t('create.name')) + '</span>' + copyBtn('name') + '</div>' +
@@ -402,21 +383,14 @@
     );
     setActions(
       backButtonHtml() +
-      '<button class="btn-primary" type="button" data-action="flow-translate-continue">' +
+      '<button class="btn-primary btn-sm" type="button" data-action="flow-translate-continue">' +
         esc(t('create.continue', 'Continue')) +
       '</button>'
     );
 
-    if (typeof katex !== 'undefined') {
-      $('modal-step').querySelectorAll('tr[data-symbol]').forEach((tr) => {
-        const sym = tr.dataset.symbol;
-        if (!sym) return;
-        const target = tr.querySelector('.qty-symbol');
-        if (target) katex.render(sym, target, { displayMode: false, throwOnError: false });
-      });
-    }
+    renderRowSymbols($('modal-step'));
     $('modal-step').querySelectorAll('textarea').forEach(bindAutoGrow);
-    if (typeof renderMathInContent === 'function') renderMathInContent();
+    refreshMath();
   }
 
   function renderSqlPage(page) {
@@ -441,11 +415,11 @@
           const wrap = wrapMap[pre.id];
           if (wrap) wrap.appendChild(block);
         });
-        if (typeof lucide !== 'undefined') lucide.createIcons();
+        refreshIcons();
         flow.issueUrl = buildIssueUrl();
         setActions(
           backButtonHtml() +
-          '<a class="btn-primary" id="open-issue-link" target="_blank" rel="noopener noreferrer" href="' + esc(flow.issueUrl) + '" data-action="open-issue">' +
+          '<a class="btn-primary btn-sm" id="open-issue-link" target="_blank" rel="noopener noreferrer" href="' + esc(flow.issueUrl) + '" data-action="open-issue">' +
             esc(t('create.translate_open_issue', 'Open GitHub issue')) +
           '</a>'
         );
@@ -500,11 +474,8 @@
       showToast(t('create.missing_required') + ' ' + missing.join(', '), 'error');
       return;
     }
-    const fd = new FormData();
+    const fd = collectOverrides();
     fd.set('equation', ($('equation').value || '').trim());
-    document.querySelectorAll('#var-overrides input[name^="override["]').forEach((inp) => {
-      if (inp.value) fd.append(inp.name, inp.value);
-    });
     fetch('/create/preview-render', { method: 'POST', body: fd })
       .then((r) => r.json())
       .then((data) => {
@@ -571,8 +542,6 @@
     else delete flow.translations[code];
   }
 
-  function continueToSql() { startCreateFlow(); }
-
   document.addEventListener('click', (e) => {
     const toggleEl = e.target.closest('[data-action="toggle-sidebar-left"], [data-action="toggle-sidebar-right"]');
     if (!toggleEl) return;
@@ -619,22 +588,13 @@
     if (trCopy) {
       const field = trCopy.dataset.trCopy;
       const target = document.querySelector('[data-tr-field="' + field + '"]');
-      if (target) {
-        const text = target.value || target.placeholder || '';
-        const label = trCopy.dataset.trCopyLabel || field;
-        const copied = (window._localeUI && window._localeUI.toast && window._localeUI.toast.copied) || 'Copied';
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(text)
-            .then(() => showToast(copied + ' ' + label, 'success'))
-            .catch((e) => showToast(((window._localeUI && window._localeUI.toast && window._localeUI.toast.copy_failed) || 'Copy failed') + ': ' + e.message, 'error'));
-        }
-      }
+      if (target) copyText(target.value || target.placeholder || '', trCopy.dataset.trCopyLabel || field);
       return;
     }
     if (!action) return;
     switch (action.dataset.action) {
       case 'close-modal': closeModal(); break;
-      case 'continue-to-sql': continueToSql(); break;
+      case 'continue-to-sql': startCreateFlow(); break;
       case 'flow-pick-langs-continue': onPickLangsContinue(); break;
       case 'flow-translate-continue': onTranslateContinue(); break;
       case 'flow-back': {
@@ -649,13 +609,8 @@
       }
       case 'copy-formula-sql':
       case 'copy-token-sql': {
-        const pre = action.dataset.action === 'copy-formula-sql' ? $('formula-sql') : $('token-sql');
-        if (pre && navigator.clipboard) {
-          const copied = (window._localeUI && window._localeUI.toast && window._localeUI.toast.copied) || 'Copied';
-          navigator.clipboard.writeText(pre.textContent)
-            .then(() => showToast(copied + ' SQL', 'success'))
-            .catch((e) => showToast(((window._localeUI && window._localeUI.toast && window._localeUI.toast.copy_failed) || 'Copy failed') + ': ' + e.message, 'error'));
-        }
+        const pre = $(action.dataset.action === 'copy-formula-sql' ? 'formula-sql' : 'token-sql');
+        if (pre) copyText(pre.textContent, 'SQL');
         break;
       }
       case 'toggle-token-section': {
@@ -666,7 +621,7 @@
         const icon = action.querySelector('.token-section-icon');
         if (icon) {
           icon.innerHTML = '<i data-lucide="' + (collapsed ? 'chevron-up' : 'chevron-down') + '" width="16" height="16"></i>';
-          if (typeof lucide !== 'undefined') lucide.createIcons();
+          refreshIcons();
         }
         break;
       }
@@ -766,33 +721,6 @@
   diffInput.addEventListener('input', () => { diffDisplay.textContent = diffInput.value + '/10'; updateDiffFill(); });
   updateDiffFill();
 
-  function reinitTree() {
-    const $tree = window.jQuery && window.jQuery('#science-tree');
-    if (!$tree || !$tree.length || !window.jQuery.fn.jstree) {
-      setTimeout(reinitTree, 50);
-      return;
-    }
-    const oldTree = $tree.jstree(true);
-    if (!oldTree) { setTimeout(reinitTree, 50); return; }
-    const data = window._topicTreeData || (oldTree.settings && oldTree.settings.core && oldTree.settings.core.data) || [];
-    $tree.off('changed.jstree check_node.jstree uncheck_node.jstree');
-    try { oldTree.destroy(); } catch (e) {}
-    window._jstree = null;
-    $tree.jstree({
-      core: { data, themes: { icons: false, dots: false }, dblclick_toggle: false, multiple: false },
-      checkbox: { keep_selected_style: false, three_state: false, cascade: '' },
-      plugins: ['checkbox']
-    });
-    window._jstree = $tree.jstree(true);
-    $tree.on('changed.jstree', () => {
-      if (topicSyncing) return;
-      const checked = window._jstree.get_checked(true);
-      selectTopic(checked.length ? checked[0].id : null);
-    });
-    const sidebarRight = $('sidebar-right');
-    if (sidebarRight) sidebarRight.classList.add('jstree-radio-mode');
-  }
-
   function autoGrow(ta) {
     if (!ta) return;
     ta.style.height = 'auto';
@@ -817,7 +745,6 @@
 
     loadTokenSidebar();
     loadBreadcrumb('');
-    reinitTree();
     syncTreeResetBtn(false);
     renderOverrideTable([]);
     $('equation').addEventListener('input', (e) => updatePreview(e.target.value));
@@ -832,7 +759,7 @@
         selectTopic(null);
       }
     }, true);
-    if (typeof lucide !== 'undefined') lucide.createIcons();
+    refreshIcons();
   }
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);

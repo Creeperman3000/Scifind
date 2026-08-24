@@ -17,7 +17,6 @@ and seeds the database on first run if it is missing or empty. For the CLI:
 ```bash
 python scifind_cli.py init --force  # rebuild the database from scratch
 python scifind_cli.py list          # browse formulas
-python tests/smoke.py               # exercise the public surface
 ```
 
 ## Project Structure
@@ -27,14 +26,12 @@ python tests/smoke.py               # exercise the public surface
 | `scifind_cli.py` | CLI entry point |
 | `scifind_lib/` | Library package: DB, parser, renderer, i18n, export, … |
 | `webapp.py` | Flask web application |
-| `static/` | CSS + JS served to the browser |
+| `web/` | Browser-facing files: Jinja2 templates, CSS, and JS, all at the top level |
 | `scifind.db` | Pre-built database (auto-regenerated on first run if missing) |
 | `schema.sql` | Database schema (7 tables) |
 | `seed.sql` | Core seed data (formulas, quantities, units) |
 | `tree.json` | Science/branch/topic tree with translations |
-| `templates/` | Jinja2 templates |
 | `locales/` | Locale JSON files |
-| `tests/` | Smoke test |
 | `wiki/` | Documentation |
 | `requirements.txt` | Python dependencies |
 
