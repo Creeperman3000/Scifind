@@ -100,6 +100,19 @@ def command_init(args):
     print(f"  {change_count} SQL statements executed.")
 
 
+def _parse_difficulty_range(raw):
+    parts = raw.split("-")
+    try:
+        if len(parts) == 1:
+            value = int(parts[0])
+            return value, value
+        if len(parts) == 2:
+            return int(parts[0]), int(parts[1])
+    except ValueError:
+        pass
+    _exit_with_error(f"invalid difficulty range {raw!r} (expected N or N-M)")
+
+
 def command_list(args):
     conn = open_database()
     where_clauses = []
@@ -109,13 +122,13 @@ def command_list(args):
         params.append(args.topic)
 
     if args.difficulty:
-        parts = args.difficulty.split("-")
-        if len(parts) == 1:
+        diff_min, diff_max = _parse_difficulty_range(args.difficulty)
+        if diff_min == diff_max:
             where_clauses.append("f.difficulty = ?")
-            params.append(int(parts[0]))
+            params.append(diff_min)
         else:
             where_clauses.append("f.difficulty BETWEEN ? AND ?")
-            params.extend([int(parts[0]), int(parts[1])])
+            params.extend([diff_min, diff_max])
 
     sql = """
         SELECT f.id, json_extract(f.name, '$.en-us') AS name_en,

@@ -1,7 +1,7 @@
 """Sorting helpers used by the list pages."""
 # Licensed under the LICENSE file in the project root.
 
-from scifind_lib.queries import fetch_formula_qty_const_tokens
+from scifind_lib.queries import _in_clause, fetch_formula_qty_const_tokens
 from scifind_lib.tree import topic_tree_order
 from scifind_lib.i18n import localise
 
@@ -40,7 +40,7 @@ def entity_sort_key(row, sort_key, locale, tree_order, qty_const_tokens=None):
 
 
 def sort_formulas(conn, rows, sort_key, locale="en-us"):
-    """Sort formula dict-rows in-place and return the list."""
+    """Return formula dict-rows sorted by the given key."""
     if sort_key not in FORMULA_SORT_KEYS:
         sort_key = DEFAULT_FORMULA_SORT
     qty_const_tokens = fetch_formula_qty_const_tokens(conn) if sort_key == "qty" else {}
@@ -50,7 +50,7 @@ def sort_formulas(conn, rows, sort_key, locale="en-us"):
 
 
 def sort_quantities(rows, sort_key, locale="en-us"):
-    """Sort quantity dict-rows in-place and return the list."""
+    """Return quantity dict-rows sorted by the given key."""
     if sort_key not in QUANTITY_SORT_KEYS:
         sort_key = DEFAULT_QUANTITY_SORT
     tree_order = topic_tree_order() if sort_key == "topic_tree" else {}
@@ -71,7 +71,6 @@ def sort_search_rows(conn, rows, sort_key, locale="en-us"):
 
     formula_meta = {}
     if formula_ids:
-        from scifind_lib.queries import _in_clause
         placeholders, params = _in_clause(formula_ids)
         for fr in conn.execute(
             f"SELECT id, name, topic, difficulty FROM formula WHERE id IN ({placeholders})",
@@ -81,7 +80,6 @@ def sort_search_rows(conn, rows, sort_key, locale="en-us"):
 
     quantity_meta = {}
     if quantity_ids:
-        from scifind_lib.queries import _in_clause
         placeholders, params = _in_clause(quantity_ids)
         for qr in conn.execute(
             f"SELECT id, name, topic, difficulty FROM quantity WHERE id IN ({placeholders})",
@@ -91,7 +89,6 @@ def sort_search_rows(conn, rows, sort_key, locale="en-us"):
 
     unit_meta = {}
     if unit_ids:
-        from scifind_lib.queries import _in_clause
         placeholders, params = _in_clause(unit_ids)
         for ur in conn.execute(
             f"""

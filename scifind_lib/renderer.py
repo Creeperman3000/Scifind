@@ -4,6 +4,9 @@
 from dataclasses import dataclass, field
 from typing import Optional
 
+from scifind_lib.i18n import localise
+from scifind_lib.parser import _CHAINABLE_RELATIONALS, _parse_paren_arg, parse_equation
+
 
 _RANGED_OPS = ("sum", "int", "prod", "oint")
 
@@ -73,7 +76,6 @@ def _evaluate_rpn(conn, tokens):
                     f"RPN underflow at {t['operator_id']}: need {op['arity']}, have {len(stack)}"
                 )
             args = [stack.pop() for _ in range(op["arity"])][::-1]
-            from scifind_lib.parser import _parse_paren_arg
             new_node = _Node(
                 kind="operator",
                 children=args,
@@ -86,7 +88,6 @@ def _evaluate_rpn(conn, tokens):
                 paren_arg=_parse_paren_arg(op["paren_arg"], op["arity"], op["id"]),
                 _paren_wrap=bool(t.get("_paren_wrap")),
             )
-            from scifind_lib.parser import _CHAINABLE_RELATIONALS
             if (
                 op["operator_type"] == "relational"
                 and op["id"] in _CHAINABLE_RELATIONALS
@@ -369,10 +370,6 @@ def render_formula(conn, formula_id, locale="en-us"):
     if tree is None:
         return ""
     return _latex_node(tree, conn, locale)
-
-
-from scifind_lib.i18n import localise  # noqa: E402
-from scifind_lib.parser import parse_equation  # noqa: E402
 
 
 def preview_equation(conn, equation, locale="en-us", dim_caches=None, overrides=None, dim_mode="dim"):

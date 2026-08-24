@@ -1,6 +1,9 @@
 """Database query helpers — fetch_* functions and the SQL IN-clause builder."""
 # Licensed under the LICENSE file in the project root.
 
+import html
+import re
+
 from scifind_lib.dimensions import (
     dimension_columns,
     extract_dimensions_from_row,
@@ -86,8 +89,6 @@ def render_variable_base(item, locale="en-us"):
 
 def parse_quantity_name_markers(text):
     """Replace [quantity_id] or [quantity_id|display_text] markers with <a> links."""
-    import re
-    import html
     def _repl(m):
         raw = m.group(1)
         if "|" in raw:
@@ -249,7 +250,7 @@ def fetch_unit(conn, unit_id):
 
 
 def fetch_all_quantities(conn):
-    """Return all quantities with default_unit parsed and dimensions."""
+    """Return all quantities with dimension columns, base dimensions first."""
     rows = conn.execute(
         f"""
         SELECT q.id, q.name, q.symbol,

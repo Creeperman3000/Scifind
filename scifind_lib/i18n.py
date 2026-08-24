@@ -1,7 +1,7 @@
 """Locale loading, localisation, and unit-word helpers."""
 # Licensed under the LICENSE file in the project root.
 
-import html
+import json
 import re
 from pathlib import Path
 
@@ -16,7 +16,6 @@ def _load_locale_config(locale):
         path = _LOCALE_DIR / f"{locale}.json"
         try:
             with open(path, encoding="utf-8") as f:
-                import json
                 _locale_configs[locale] = json.load(f).get("meta", {})
         except (OSError, ValueError):
             _locale_configs[locale] = {}
@@ -33,7 +32,6 @@ def localise(value, locale, default="en-us"):
     if not s.startswith("{"):
         return s
     try:
-        import json
         d = json.loads(s)
     except (json.JSONDecodeError, TypeError):
         d = None

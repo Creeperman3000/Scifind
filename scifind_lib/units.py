@@ -6,8 +6,10 @@ import json
 
 from scifind_lib.i18n import (
     exponent_word,
+    locale_accusative_names,
     locale_quantities_special,
     locale_words,
+    localise,
 )
 
 
@@ -82,7 +84,6 @@ def format_default_unit_symbol(json_text, unit_symbol=None):
 
 def render_unit_group(parts, url_func, name_func=None, locale="en-us", use_special_exponents=False):
     """Render [(unit_id, exponent)] as HTML with natural-language exponents."""
-    from scifind_lib.i18n import locale_accusative_names
     accusative = locale_accusative_names(locale) if use_special_exponents else {}
     items = []
     for i, (unit_id, exponent) in enumerate(parts):
@@ -102,7 +103,6 @@ def render_unit_group(parts, url_func, name_func=None, locale="en-us", use_speci
 
 def unit_name_map(db, locale):
     """{unit_id: localised name} for every unit."""
-    from scifind_lib.i18n import localise
     return {r["id"]: localise(r["name"], locale)
             for r in db.execute("SELECT id, name FROM unit").fetchall()}
 

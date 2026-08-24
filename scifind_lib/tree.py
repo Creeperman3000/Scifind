@@ -1,6 +1,8 @@
 """Science/branch/topic tree loaded from tree.json."""
 # Licensed under the LICENSE file in the project root.
 
+import json
+
 from scifind_lib.constants import TREE_PATH
 from scifind_lib.i18n import localise
 
@@ -10,7 +12,6 @@ _TREE_CACHE = {}
 def load_tree():
     if "tree" not in _TREE_CACHE:
         try:
-            import json
             with open(TREE_PATH, encoding="utf-8") as f:
                 _TREE_CACHE["tree"] = json.load(f).get("sciences", [])
         except (OSError, ValueError):
