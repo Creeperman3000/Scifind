@@ -360,7 +360,7 @@ def main():
             Examples:
               scifind_cli init
               scifind_cli list --difficulty 1-3
-              scifind_cli show newton_second_law_of_motion
+              scifind_cli show newtons_second_law
               scifind_cli search "heat work"
               scifind_cli quantities
               scifind_cli quantity length
