@@ -13,7 +13,8 @@
   --sidebar-width-left: 200px;
   --sidebar-width-right: 320px;
   --topbar-height: 52px;
-  --dock-height: 72px;
+  --dock-u: clamp(0.55px, calc((100vw - 24px) / 372), 1px);
+  --dock-height: calc(60 * var(--dock-u) + 12px);
   --track-height: 6px;
   --font: system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
@@ -32,6 +33,7 @@
   --radius-md: 6px;
   --radius-lg: 8px;
   --radius-xl: 12px;
+  --radius-xxl: 32px;
   --radius-pill: 999px;
 
   --dur-fast: 120ms;
@@ -55,7 +57,7 @@
   }
 }
 
-body { font-family: var(--font); background: var(--bg); color: var(--text); height: 100vh; overflow: hidden; }
+body { font-family: var(--font); background: var(--bg); color: var(--text); height: 100vh; height: 100dvh; overflow: hidden; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
@@ -103,7 +105,7 @@ a:hover { text-decoration: underline; }
 .topbar.expand-search .topbar-search { display: flex; }
 .topbar.expand-search .topbar-search form { flex: 1; max-width: none; }
 
-.body-wrap { display: flex; height: calc(100vh - var(--topbar-height)); overflow: hidden; }
+.body-wrap { display: flex; height: calc(100vh - var(--topbar-height)); height: calc(100dvh - var(--topbar-height)); overflow: hidden; }
 
 html.suppress-transitions .sidebar { transition: none !important; }
 .sidebar { border-right: 1px solid var(--border); background: var(--bg); transition: width var(--dur-base) var(--ease-in-out), padding var(--dur-base) var(--ease-in-out), border-width var(--dur-base) var(--ease-in-out); flex-shrink: 0; position: relative; display: flex; flex-direction: column; }
@@ -159,9 +161,8 @@ html.suppress-transitions .sidebar { transition: none !important; }
 /* When there isn't enough room (small sidebar width), hide the name */
 .filter-dim-row.no-dim-name .dim-name { display: none; }
 .filter-dim-row select { font-size: 0.8rem; padding: 1px 2px; border: 1px solid var(--border); border-radius: var(--radius-xs); background: var(--bg); color: var(--text); width: 44px; flex-shrink: 0; }
-.filter-dim-row input[type=number] { font-size: 0.8rem; padding: 4px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); color: var(--text); width: 40px; text-align: center; font-family: inherit; flex-shrink: 0; }
-.filter-dim-row input[type=number]:focus { outline: none; border-color: var(--accent); }
-.filter-dim-row input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
+.filter-dim-row .dim-val { font-size: 0.8rem; padding: 4px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); color: var(--text); width: 40px; text-align: center; font-family: inherit; flex-shrink: 0; }
+.filter-dim-row .dim-val:focus { outline: none; border-color: var(--accent); }
 
 .filter-qty-search-wrap { margin-bottom: 8px; position: relative; }
 .qty-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
@@ -280,10 +281,12 @@ html.suppress-transitions .sidebar { transition: none !important; }
 /* Checkboxes only appear while the sidebar is hovered */
 #sidebar-right:hover .tree-checkbox,
 #sidebar-right:hover .tree-radio { opacity: 1; }
-/* Touch has no hover: keep checkboxes/radios visible */
-@media (hover: none) {
+/* Touch has no hover, and mobile sheets never have hover: keep
+   checkboxes/radios and open-state togglers visible */
+@media (hover: none), (width < 768px) {
   #sidebar-right .tree-checkbox,
-  #sidebar-right .tree-radio { opacity: 1 !important; }
+  #sidebar-right .tree-radio,
+  #sidebar-right .tree-row.open > .tree-toggler { opacity: 1 !important; }
 }
 /* Root rows, indeterminate rows and their descendants always stay
    visible — matches the old jstree behaviour where root-level boxes
@@ -442,38 +445,54 @@ html.suppress-transitions .sidebar { transition: none !important; }
     right: 0;
     width: 100% !important;
     max-width: none;
-    height: 80vh;
+    height: auto;
     max-height: 80vh;
+    max-height: 80dvh;
     z-index: 60;
     border: none !important;
     border-top: 1px solid var(--border) !important;
+    border-top-left-radius: var(--radius-xxl);
+    border-top-right-radius: var(--radius-xxl);
     transform: translateY(100%);
     transition: transform var(--dur-base) var(--ease-in-out);
+    /* Clip the scrollbar into the rounded top corners so it never
+       paints outside the sheet */
+    overflow: hidden;
   }
+  /* No !important here: the drag handler overrides transform inline
+     while following the finger, and important declarations would beat
+     any inline style */
   .sidebar.left.open,
-  .sidebar.right.open { transform: translateY(0) !important; }
+  .sidebar.right.open { transform: translateY(0); }
   .sidebar.left.collapsed,
-  .sidebar.right.collapsed { transform: translateY(100%) !important; }
+  .sidebar.right.collapsed { transform: translateY(100%); }
   .sidebar-resize { display: none; }
-  .sidebar-scroll { flex: 1; min-height: 0; }
+  .sidebar-scroll { flex: 1; min-height: 0; /* keep scroll momentum inside the sheet, never chain to the page behind */ overscroll-behavior: contain; }
   .sidebar.left .sidebar-inner,
-  .sidebar.right .sidebar-inner { width: 100% !important; }
+  .sidebar.right .sidebar-inner { width: 100% !important; padding-left: 32px; padding-right: 32px; padding-bottom: calc(var(--dock-height) + 20px + env(safe-area-inset-bottom)); }
   .main::after { height: calc(var(--dock-height) + 20px); }
 
   .sheet-handle {
     display: block;
     width: 100%;
-    height: 18px;
+    height: 44px;
     flex-shrink: 0;
     cursor: grab;
-    position: relative;
+    /* Sticky so the dismiss grip stays reachable while the sheet
+       content is scrolled */
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--bg);
     touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
   }
   .sheet-handle::after {
     content: '';
     position: absolute;
     left: 50%;
-    top: 8px;
+    top: 20px;
     transform: translateX(-50%);
     width: 36px;
     height: 4px;
@@ -481,6 +500,10 @@ html.suppress-transitions .sidebar { transition: none !important; }
     background: var(--border);
   }
   .sheet-handle:active { cursor: grabbing; }
+  /* While a drag is live, text selection would fight the finger */
+  .sidebar.dragging,
+  .sidebar.dragging * { user-select: none; -webkit-user-select: none; }
+  .sidebar.dragging { will-change: transform; cursor: grabbing; }
 
   .sidebar-backdrop {
     position: fixed;
@@ -505,8 +528,8 @@ html.suppress-transitions .sidebar { transition: none !important; }
 }
 
 .mobile-dock {
-  --dock-item: 60px;
-  --dock-pad: 20px;
+  --dock-item: calc(60 * var(--dock-u));
+  --dock-pad: calc(20 * var(--dock-u));
   position: fixed;
   left: 50%;
   transform: translateX(-50%);
@@ -514,7 +537,7 @@ html.suppress-transitions .sidebar { transition: none !important; }
   z-index: 70;
   display: none;
   align-items: center;
-  gap: 6px;
+  gap: calc(6 * var(--dock-u));
 }
 @media (width < 768px) {
   .mobile-fade { display: block; }
@@ -526,8 +549,8 @@ html.suppress-transitions .sidebar { transition: none !important; }
   align-items: center;
   justify-content: center;
   width: calc(var(--dock-item) + var(--dock-pad));
-  height: 60px;
-  padding: 4px 6px 2px;
+  height: calc(60 * var(--dock-u));
+  padding: calc(4 * var(--dock-u)) calc(6 * var(--dock-u)) calc(2 * var(--dock-u));
   border-radius: var(--radius-pill);
   border: 1px solid var(--border);
   background: var(--bg);
@@ -535,9 +558,14 @@ html.suppress-transitions .sidebar { transition: none !important; }
   cursor: pointer;
   flex-shrink: 0;
   -webkit-tap-highlight-color: transparent;
-  gap: 2px;
+  gap: calc(2 * var(--dock-u));
 }
-.dock-pill svg { display: block; flex-shrink: 0; }
+.dock-pill svg {
+  display: block;
+  flex-shrink: 0;
+  width: calc(24 * var(--dock-u));
+  height: calc(24 * var(--dock-u));
+}
 
 .dock-pill.open { color: var(--accent); }
 .dock-pill.open svg { stroke: var(--accent); }
@@ -548,7 +576,7 @@ html.suppress-transitions .sidebar { transition: none !important; }
 .dock-pill:active { background: var(--bg-secondary); }
 .dock-pill.active:active { background: var(--accent-hover); }
 .dock-pill-label {
-  font-size: 0.7rem;
+  font-size: calc(11.2 * var(--dock-u));
   line-height: 1;
   white-space: nowrap;
   overflow: hidden;
@@ -572,8 +600,8 @@ html.suppress-transitions .sidebar { transition: none !important; }
   content: '';
   position: absolute;
   left: 50%;
-  top: 8px;
-  bottom: 8px;
+  top: calc(8 * var(--dock-u));
+  bottom: calc(8 * var(--dock-u));
   width: 1px;
   background: var(--border);
   pointer-events: none;
@@ -586,12 +614,12 @@ html.suppress-transitions .sidebar { transition: none !important; }
   justify-content: center;
   flex: 1;
   height: 100%;
-  padding: 4px 0 2px;
+  padding: calc(4 * var(--dock-u)) 0 calc(2 * var(--dock-u));
   border: none;
   background: var(--bg);
   color: inherit;
   cursor: pointer;
-  gap: 2px;
+  gap: calc(2 * var(--dock-u));
   pointer-events: auto;
 }
 .dock-half:first-child { border-radius: var(--radius-pill) 0 0 var(--radius-pill); }
@@ -606,13 +634,12 @@ html.suppress-transitions .sidebar { transition: none !important; }
 .dock-half:active { background: var(--bg-secondary); }
 .dock-half.active:active { background: var(--accent-hover); }
 
-.mobile-dock.compact { --dock-item: 40px; --dock-pad: 10px; gap: 4px; }
-.mobile-dock.compact .dock-pill { height: 48px; padding: 4px 6px; }
-.mobile-dock.compact .dock-half { height: 48px; padding: 4px 2px; }
-.mobile-dock.compact .dock-pill-label { display: none; }
-
 /* Motion: shared keyframes */
 @keyframes menu-in { from { opacity: 0; transform: translateY(-4px) scale(0.98); } to { opacity: 1; transform: none; } }
+/* menu-in minus the scale: scaling from a corner makes content travel
+   different distances (left-aligned labels farthest), which reads as
+   the text/carets drifting out of place while the menu opens */
+@keyframes menu-in-drop { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 @keyframes menu-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(-4px) scale(0.98); } }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes modal-in { from { opacity: 0; transform: translateY(10px) scale(0.98); } to { opacity: 1; transform: none; } }
@@ -629,6 +656,9 @@ html.suppress-transitions .sidebar { transition: none !important; }
 .search-suggestions.open,
 .qty-results.open { animation: menu-in var(--dur-fast) var(--ease-out); transform-origin: top; }
 .settings-menu, .formula-copy-menu { transform-origin: top right; }
+/* Same drop-in entrance as other menus, but rigid: the whole menu
+   (frame + content) moves as one, so labels and carets never drift */
+.settings-menu.open { animation-name: menu-in-drop; }
 
 /* Select menus: fade+slide out on close; .closing keeps the menu
    rendered for the animation and is removed on animationend */
@@ -656,12 +686,12 @@ a { transition: color var(--dur-fast) var(--ease-out); }
 
 /* Inputs: quick focus border (no ring) */
 .text-field, .topbar-search input,
-.filter-dim-row select, .filter-dim-row input[type=number],
+.filter-dim-row select, .filter-dim-row .dim-val,
 .settings-item select {
   transition: border-color var(--dur-fast) var(--ease-out);
 }
 .text-field:focus, .topbar-search input:focus,
-.filter-dim-row select:focus, .filter-dim-row input[type=number]:focus,
+.filter-dim-row select:focus, .filter-dim-row .dim-val:focus,
 .settings-item select:focus {
   border-color: var(--accent);
 }

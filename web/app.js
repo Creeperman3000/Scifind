@@ -18,7 +18,81 @@
 
   function dimValInputs() { return Array.prototype.slice.call(document.querySelectorAll('.filter-dim-row .dim-val')); }
   function dimVals() { return dimValInputs().map(function(i) { return i.value.trim(); }); }
-  function nonEmpty(v) { return v !== ''; }
+  /* A dim field counts as set only if it resolves to an integer — this
+     keeps half-typed expressions like "-" from looking like a filter. */
+  function dimResolved(v) { return evalDimExpr(v) !== null; }
+
+  /* Evaluate simple integer arithmetic ("2+3*-4", "-(1+5)/2", "2^10")
+     with a tiny recursive-descent parser — no eval(). Returns the
+     integer result, or null when empty/incomplete/invalid. */
+  function evalDimExpr(raw) {
+    var s = String(raw == null ? '' : raw).replace(/\s+/g, '');
+    if (!s || !/^[-+*/%^().0-9]+$/.test(s)) return null;
+    var i = 0;
+    function peek() { return s[i]; }
+    function fail() { throw new Error('bad'); }
+    function expr() {
+      var v = term();
+      while (peek() === '+' || peek() === '-') {
+        var op = s[i++];
+        var r = term();
+        v = op === '+' ? v + r : v - r;
+      }
+      return v;
+    }
+    function term() {
+      var v = power();
+      while (peek() === '*' || peek() === '/' || peek() === '%') {
+        var op = s[i++];
+        var r = power();
+        if ((op === '/' || op === '%') && r === 0) fail();
+        v = op === '*' ? v * r : (op === '/' ? Math.trunc(v / r) : v % r);
+      }
+      return v;
+    }
+    function power() {
+      var base = unary();
+      if (peek() === '^') {
+        i++;
+        return Math.round(Math.pow(base, power()));
+      }
+      return base;
+    }
+    function unary() {
+      if (peek() === '+') { i++; return +unary(); }
+      if (peek() === '-') { i++; return -unary(); }
+      return atom();
+    }
+    function atom() {
+      if (peek() === '(') {
+        i++;
+        var v = expr();
+        if (peek() !== ')') fail();
+        i++;
+        return v;
+      }
+      var start = i;
+      while (i < s.length && s[i] >= '0' && s[i] <= '9') i++;
+      if (start === i) fail();
+      return parseInt(s.slice(start, i), 10);
+    }
+    try {
+      var result = expr();
+      if (i !== s.length || typeof result !== 'number' || !isFinite(result)) return null;
+    } catch (err) {
+      return null;
+    }
+    return Math.round(result);
+  }
+
+  /* Commit evaluated results into the fields on blur/Enter so the user
+     sees what the filter actually applied. */
+  function resolveDimExprs() {
+    dimValInputs().forEach(function(input) {
+      var resolved = evalDimExpr(input.value);
+      if (resolved !== null && String(input.value.trim()) !== String(resolved)) input.value = resolved;
+    });
+  }
   function replayClass(el, cls) { el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); }
 
   function syncSearchCancel() {
@@ -373,17 +447,15 @@
 
   document.getElementById('dim-fill-zeros').addEventListener('click', function() {
     var vals = dimVals();
-    var allFilled = vals.every(nonEmpty), hasZero = vals.indexOf('0') !== -1;
+    var allFilled = vals.every(dimResolved), hasZero = vals.indexOf('0') !== -1;
     if (allFilled && hasZero) {
       dimValInputs().forEach(function(input) {
-        if (input.value.trim() === '0') input.value = '';
+        if (String(evalDimExpr(input.value)) === '0') input.value = '';
       });
     } else {
       document.querySelectorAll('.filter-dim-row').forEach(function(row) {
         var input = row.querySelector('.dim-val');
-        if (input.value === '' || input.value === '-' || input.value === '+' || input.value === '.') {
-          input.value = '0';
-        }
+        if (!dimResolved(input.value)) input.value = '0';
       });
     }
     applyFilters();
@@ -432,7 +504,7 @@
 
     var modeBtn = document.getElementById('dim-mode-toggle');
     if (modeBtn) {
-      if (vals.filter(nonEmpty).length >= 2) {
+      if (vals.filter(dimResolved).length >= 2) {
         modeBtn.classList.remove('hidden');
         var isOr = getSwitched(url).indexOf('dim') !== -1;
         setModeBtn(modeBtn, isOr, isOr ? window._localeUI.filter.dim_mode_or : window._localeUI.filter.dim_mode_and);
@@ -449,13 +521,13 @@
 
     var fillBtn = document.getElementById('dim-fill-zeros');
     if (fillBtn) {
-      var allFilled = vals.every(nonEmpty), hasZero = vals.indexOf('0') !== -1;
+      var allFilled = vals.every(dimResolved), hasZero = vals.indexOf('0') !== -1;
       fillBtn.classList.toggle('active', allFilled && hasZero);
       fillBtn.classList.toggle('disabled', allFilled && !hasZero);
     }
 
     var dimReset = document.getElementById('dim-reset');
-    if (dimReset) dimReset.classList.toggle('disabled', vals.every(function(v) { return v === ''; }));
+    if (dimReset) dimReset.classList.toggle('disabled', !vals.some(dimResolved));
 
     var deselectBtn = document.getElementById('tree-deselect-all');
     if (deselectBtn && _topicTree && _topicTreeMode === 'checkbox') {
@@ -892,11 +964,8 @@
       var row = rows[0];
       ['_o','_v','_eq','_geq','_leq'].forEach(function(s) { url.searchParams.delete(d + s); });
       var op = row.querySelector('.dim-op').value;
-      var val = row.querySelector('.dim-val').value;
-      if (val !== '' && val !== '-' && val !== '+' && val !== '.') {
-        var parsed = parseInt(val);
-        if (!isNaN(parsed)) url.searchParams.set(d + '_' + op, parsed);
-      }
+      var parsed = evalDimExpr(row.querySelector('.dim-val').value);
+      if (parsed !== null) url.searchParams.set(d + '_' + op, parsed);
     });
 
     var qtySelected = window._qtySelected || [];
@@ -1029,7 +1098,7 @@
   function hasActiveFilters() {
     var diffMin = parseInt(document.getElementById('diff-min').value);
     var diffMax = parseInt(document.getElementById('diff-max').value);
-    return dimVals().some(nonEmpty) ||
+    return dimVals().some(dimResolved) ||
       (window._qtySelected && window._qtySelected.length > 0) ||
       diffMin > 1 || diffMax < 10;
   }
@@ -1062,13 +1131,6 @@
       var url = new URL(window.location);
       btn.classList.toggle('active', url.searchParams.has('q'));
     });
-    syncDockLabels();
-  }
-
-  function syncDockLabels() {
-    var dock = document.getElementById('mobile-dock');
-    if (!dock) return;
-    dock.classList.toggle('compact', window.innerWidth < 320);
   }
 
   function dockSetView(view) {
@@ -1279,7 +1341,10 @@
       case 'switch-theme': switchTheme(el.value); break;
       case 'switch-lang': switchLang(el.value); break;
       case 'switch-dim-mode': switchDimMode(el.value); break;
-      case 'dim-filter-change': dimFilterChange(); break;
+      case 'dim-filter-change':
+        if (el.classList.contains('dim-val')) resolveDimExprs();
+        dimFilterChange();
+        break;
       case 'set-export-format': setCookie('sf_export_format', el.value); break;
     }
   });
@@ -1287,7 +1352,11 @@
     var el = e.target.closest('[data-action]');
     if (!el) return;
     switch (el.getAttribute('data-action')) {
-      case 'dim-filter-change': dimFilterChange(); break;
+      /* dim value fields apply only on change (Enter/unfocus) — no
+         live evaluation while typing */
+      case 'dim-filter-change':
+        if (!el.classList.contains('dim-val')) dimFilterChange();
+        break;
       case 'sync-diff': syncDiff(); break;
     }
   });
@@ -1501,48 +1570,118 @@
   })();
 
   (function() {
-    var DRAG_THRESHOLD = 80; // px to commit close
-    var startY = 0, currentY = 0, dragging = false, target = null;
+    var COMMIT_RATIO = 0.25;     // dragged past 25% of sheet height -> close
+    var FLICK_VELOCITY = 0.5;    // px/ms downward -> close on a quick flick
+    var FLICK_MIN_DISTANCE = 24; // ignore tap jitter before calling it a flick
+    var RUBBER_BAND = 0.15;      // resistance when pulling past the resting position
+    var ENGAGE_DISTANCE = 12;    // px of downward travel before a content grab turns into a drag
+    var INTERACTIVE = 'button, a, input, select, textarea, label';
+    var startY = 0, currentY = 0, lastY = 0, lastT = 0, velocity = 0;
+    var dragging = false, target = null, engaged = false, activePointerId = null;
 
     function onDown(e) {
+      if (dragging || (e.button !== undefined && e.button !== 0)) return;
       if (currentBreakpoint() !== 'mobile') return;
-      if (e.target.closest('.sidebar-scroll') && e.target.closest('.sidebar-scroll').scrollTop > 0) return;
-      var handle = e.currentTarget;
-      var side = handle.getAttribute('data-sheet-target');
-      var sheet = document.getElementById('sidebar-' + side);
+      var t = e.target;
+      if (!t || !t.closest) return;
+      var sheet = t.closest('.sidebar.left, .sidebar.right');
       if (!sheet || !sheet.classList.contains('open')) return;
+      var onHandle = !!t.closest('.sheet-handle');
+      /* Controls inside the sheet keep their taps; only the grip and
+         plain content are drag surfaces */
+      if (!onHandle && t.closest(INTERACTIVE)) return;
+      /* Content grabs only become drags from the very top of the list;
+         anywhere else the gesture belongs to native scrolling */
+      var scrollArea = sheet.querySelector('.sidebar-scroll');
+      if (!onHandle && (!scrollArea || scrollArea.scrollTop !== 0)) return;
       dragging = true;
       target = sheet;
-      startY = e.clientY || (e.touches && e.touches[0].clientY) || 0;
-      currentY = startY;
-      sheet.style.transition = 'none';
+      engaged = onHandle; // the grip follows the finger immediately
+      activePointerId = e.pointerId;
+      startY = currentY = lastY = e.clientY;
+      lastT = e.timeStamp;
+      velocity = 0;
+      if (engaged) {
+        sheet.style.transition = 'none';
+        sheet.classList.add('dragging');
+      }
     }
     function onMove(e) {
-      if (!dragging || !target) return;
-      var y = e.clientY || (e.touches && e.touches[0].clientY) || 0;
+      if (!dragging || !target || e.pointerId !== activePointerId) return;
+      var y = e.clientY;
+      var dt = e.timeStamp - lastT;
+      /* Smoothed instantaneous velocity, so one noisy sample can't
+         trigger the flick threshold */
+      if (dt > 0) velocity = 0.6 * ((y - lastY) / dt) + 0.4 * velocity;
+      lastY = y;
+      lastT = e.timeStamp;
       currentY = y;
-      var dy = Math.max(0, y - startY);
-      target.style.transform = 'translateY(' + dy + 'px)';
-    }
-    function onUp() {
-      if (!dragging || !target) return;
-      var dy = Math.max(0, currentY - startY);
-      target.style.transform = '';
-      target.style.transition = '';
-      if (dy > DRAG_THRESHOLD) {
-        var side = target.id === 'sidebar-left' ? 'left' : 'right';
-        setSidebarState(side, false);
-        syncAfterSidebarToggle(side);
+      var dy = y - startY;
+      if (!engaged) {
+        if (dy > ENGAGE_DISTANCE) {
+          engaged = true;
+          target.style.transition = 'none';
+          target.classList.add('dragging');
+        } else {
+          /* Moving up first means the user wants to scroll, not drag */
+          if (dy < -ENGAGE_DISTANCE) { dragging = false; target = null; }
+          return;
+        }
       }
+      /* Elastic resistance above the resting position instead of a hard stop */
+      target.style.transform = 'translateY(' + (dy > 0 ? dy : dy * RUBBER_BAND) + 'px)';
+    }
+    function settle(sheet, toY) {
+      /* Animate inline from the finger's position; clearing the inline
+         transform instead would snap the sheet back to rest first */
+      sheet.style.transition = 'transform var(--dur-base) var(--ease-in-out)';
+      sheet.style.transform = 'translateY(' + toY + 'px)';
+      /* Zero-displacement releases fire no transitionend */
+      var done = false;
+      function cleanup() {
+        if (done) return;
+        done = true;
+        sheet.style.transition = '';
+        sheet.style.transform = '';
+      }
+      sheet.addEventListener('transitionend', function(ev) {
+        if (ev.propertyName !== 'transform') return;
+        cleanup();
+      }, { once: true });
+      setTimeout(cleanup, 400);
+    }
+    function onUp(cancelled, e) {
+      if (!dragging || !target) return;
+      if (e && e.pointerId !== undefined && e.pointerId !== activePointerId) return;
+      var sheet = target;
+      var side = sheet.id === 'sidebar-left' ? 'left' : 'right';
+      var dy = Math.max(0, currentY - startY);
+      var sheetH = sheet.offsetHeight || 1;
+      var wasEngaged = engaged;
       dragging = false;
       target = null;
+      engaged = false;
+      sheet.classList.remove('dragging');
+      if (!wasEngaged) return;
+      var dismiss = !cancelled && (
+        dy > sheetH * COMMIT_RATIO ||
+        (dy > FLICK_MIN_DISTANCE && velocity > FLICK_VELOCITY)
+      );
+      if (dismiss) {
+        if (navigator.vibrate) navigator.vibrate(10);
+        settle(sheet, sheetH + 32);
+        setSidebarState(side, false);
+        syncAfterSidebarToggle(side);
+      } else {
+        settle(sheet, 0);
+      }
     }
-    document.querySelectorAll('.sheet-handle').forEach(function(h) {
-      h.addEventListener('pointerdown', onDown);
+    document.querySelectorAll('.sidebar.left, .sidebar.right').forEach(function(s) {
+      s.addEventListener('pointerdown', onDown);
     });
     window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-    window.addEventListener('pointercancel', onUp);
+    window.addEventListener('pointerup', function(e) { onUp(false, e); });
+    window.addEventListener('pointercancel', function(e) { onUp(true, e); });
   })();
 
   refreshIcons();
@@ -1782,6 +1921,27 @@
       });
     }
 
+    /* Keep <head> stylesheets in step with the target page so SPA
+       navigation renders identically to a full load (e.g. create.css,
+       which only /create declares). */
+    function syncPageStyles(doc) {
+      var want = {};
+      Array.prototype.forEach.call(doc.head.querySelectorAll('link[rel="stylesheet"]'), function(l) {
+        want[l.getAttribute('href')] = true;
+      });
+      Array.prototype.forEach.call(document.head.querySelectorAll('link[rel="stylesheet"]'), function(l) {
+        var href = l.getAttribute('href');
+        if (href in want) delete want[href];
+        else l.remove();
+      });
+      Object.keys(want).forEach(function(href) {
+        var l = document.createElement('link');
+        l.rel = 'stylesheet';
+        l.href = href;
+        document.head.appendChild(l);
+      });
+    }
+
     function navigateTo(url, isPop) {
       if (!isPop && window.location.pathname + window.location.search === url) return;
       var si = document.querySelector('.topbar-search input[name="q"]');
@@ -1797,6 +1957,7 @@
       fetch(url).then(function(r) { if (!r.ok) { window.location.href = url; return null; } return r.text(); }).then(function(html) {
         if (!html) return;
         var doc = new DOMParser().parseFromString(html, 'text/html');
+        syncPageStyles(doc);
         var newContent = doc.getElementById('main-content');
         if (!newContent) { window.location.href = url; return; }
         document.getElementById('main-content').innerHTML = newContent.innerHTML;

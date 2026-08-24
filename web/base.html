@@ -173,7 +173,7 @@
             <option value="geq"{{ ' selected' if df.op == 'geq' }}> ≥</option>
             <option value="leq"{{ ' selected' if df.op == 'leq' }}> ≤</option>
           </select>
-          <input type="number" class="dim-val" value="{{ df.val if df.val is not none else '' }}" step="1" data-action="dim-filter-change" placeholder="0" aria-label="{{ dsym }}">
+          <input type="text" class="dim-val" value="{{ df.val if df.val is not none else '' }}" inputmode="text" autocomplete="off" spellcheck="false" data-action="dim-filter-change" placeholder="0" aria-label="{{ dsym }}">
         </div>
         {% endfor %}
         </div>
@@ -277,7 +277,7 @@
         <span class="dock-pill-label">{{ _('nav.filter') }}</span>
       </button>
       <button class="dock-half" data-action="dock-toggle-panel" data-target="right" data-pill="tree" type="button" aria-label="{{ _('nav.tree') }}">
-        <i data-lucide="git-fork" width="18" height="18"></i>
+        <i data-lucide="git-fork" width="24" height="24"></i>
         <span class="dock-pill-label">{{ _('nav.tree') }}</span>
       </button>
     </div>
