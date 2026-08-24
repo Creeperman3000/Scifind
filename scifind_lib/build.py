@@ -13,7 +13,7 @@ QTY_OVERRIDE_FIELDS = ("label", "symbol_overwrite", "quantity_name_overwrite")
 
 def build_create_sql(
     conn, name_en, topic, difficulty, equation, overrides=None, description=None,
-    links=None, translations=None,
+    links=None, translations=None, formula_id=None,
 ):
     """Build (formula_sql, token_sql) for a brand-new formula.
 
@@ -29,7 +29,15 @@ def build_create_sql(
     if difficulty < 1 or difficulty > 10:
         raise ValueError("difficulty must be 1..10")
 
-    formula_id = re.sub(r"[^a-z0-9]+", "_", name_en.strip().lower()).strip("_")
+    formula_id = (formula_id or "").strip()
+    if formula_id:
+        if not re.fullmatch(r"[a-z0-9]+(?:_[a-z0-9]+)*", formula_id):
+            raise ValueError(
+                "formula id may only contain lowercase letters and digits "
+                "separated by single underscores"
+            )
+    else:
+        formula_id = re.sub(r"[^a-z0-9]+", "_", name_en.strip().lower()).strip("_")
     if not formula_id:
         raise ValueError("name must contain at least one alphanumeric character")
 
@@ -79,7 +87,16 @@ def build_create_sql(
     )
 
     def i18n_override(field, key):
-        base = (overrides.get(key) or {}).get(field)
+        ov = overrides.get(key) or {}
+        base = ov.get(field)
+        if base is None:
+            # Accept the shorter override-field vocabulary used by the
+            # /create form ("symbol", "name") alongside the token-column
+            # names ("symbol_overwrite", "quantity_name_overwrite").
+            alias = {"symbol_overwrite": "symbol",
+                     "quantity_name_overwrite": "name"}.get(field)
+            if alias:
+                base = ov.get(alias)
         per_locale = {loc: (t_ov.get(key) or {}).get(field)
                       for loc, t_ov in tr_overrides_by_loc.items()
                       if (t_ov.get(key) or {}).get(field)}

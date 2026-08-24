@@ -1130,6 +1130,7 @@ def _build_create_sql_payload(db, form):
         return (form.get(name) or "").strip()
 
     name_en = scalar("name_en")
+    formula_id = scalar("formula_id")
     topic = scalar("topic")
     difficulty = scalar("difficulty") or "2"
     equation = form.get("equation") or ""
@@ -1168,20 +1169,21 @@ def _build_create_sql_payload(db, form):
         description=description,
         links=links,
         translations=translations,
+        formula_id=formula_id,
     )
 
 
 def _render_sql_modal_html(formula_sql, token_sql):
     return Markup(
         '<div class="sql-block">'
-        f'<button class="formula-copy-btn sql-copy-btn" type="button" data-action="copy-formula-sql" title="Copy">'
+        f'<button class="formula-copy-btn" type="button" data-action="copy-formula-sql" title="Copy">'
         f'<i data-lucide="copy" width="16" height="16"></i>'
         f'</button>'
         f'<pre id="formula-sql">{html_module.escape(formula_sql)}</pre>'
         f'</div>'
         '<h3>' + html_module.escape(_("create.token_inserts")) + '</h3>'
         '<div class="sql-block">'
-        f'<button class="formula-copy-btn sql-copy-btn" type="button" data-action="copy-token-sql" title="Copy">'
+        f'<button class="formula-copy-btn" type="button" data-action="copy-token-sql" title="Copy">'
         f'<i data-lucide="copy" width="16" height="16"></i>'
         f'</button>'
         f'<pre id="token-sql">{html_module.escape(token_sql)}</pre>'
