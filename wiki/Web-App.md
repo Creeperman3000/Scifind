@@ -1,51 +1,82 @@
 # Web Application
 
-Flask web app at `webapp.py`. Run with `python webapp.py` and open
-`http://localhost:5000`.
+Flask app in `webapp.py`, its templates with CSS and JS in `web/`.
+
+```bash
+python webapp.py          # http://localhost:5000 or provided URL
+```
+
+The DB is created automatically on first run if missing.
 
 ## Routes
 
-| Route | Description |
-|-------|-------------|
-| `/` | Redirects to `/formulas` |
-| `/formulas` | All formulas (default landing) |
-| `/quantities` | All quantities |
-| `/formula/<id>` | Formula detail with LaTeX, variables, relations |
-| `/quantity/<id>` | Quantity detail with dimensions and units |
-| `/unit/<id>` | Unit detail |
-| `/search?q=<query>` | Substring search |
-| `/api/search-suggestions?q=<query>` | JSON suggestions for autocomplete |
-| `/base-units` | Redirect to `/quantities?is_dim=1` |
-| `/export?format=<fmt>` | Download database export (csv, xlsx, ods, sql) |
+| Route                               | Description                                          |
+| ----------------------------------- | ---------------------------------------------------- |
+| `/`                                 | Redirects to `/formulas`                             |
+| `/formulas`                         | List of all formulas                                 |
+| `/formula/<id>`                     | Formula details                                      |
+| `/quantities`                       | List of all quantities                               |
+| `/quantity/<id>`                    | Quantity details                                     |
+| `/unit/<id>`                        | Unit details                                         |
+| `/search?q=<query>`                 | Search                                               |
+| `/api/search-suggestions?q=<query>` | JSON autocomplete suggestions                        |
+| `/create`                           | Formula SQL builder and equation parser              |
+| `/export?format=<fmt>`              | Download DB as  `csv` (zipped), `xlsx`, `ods`, `sql` |
 
-## Features
+The `/create` page uses AJAX endpoints (not meant to be called directly):
+`POST /create/preview-render`, `POST /create/build-sql`,
+`GET /create/token-sidebar`, `GET /create/breadcrumb`,
+`GET /create/languages`.
 
-### Filtering
-- **Science/Branch/Topic** — Checkboxes in right sidebar. URL param: `ids=id1,id2,…`
-- **Difficulty** — Range slider. Params: `diff_min`, `diff_max`
-- **Dimension** — Per-dimension operator filter (eq / ≥ / ≤). Params: `<symbol>_eq`, `<symbol>_geq`, `<symbol>_leq`. Combine with `dim_mode=and|or`. The AND↔OR toggle button flips the mode at runtime by adding `dim` to the `mode_switched` URL param.
-- **Quantity** — Filter formulas by which quantities they contain. Params: `qty=id1,id2`. The AND↔OR toggle button flips the mode by adding `fml` (on `/formulas`) or `qty` (on `/quantities`) to the `mode_switched` URL param.
-- **Base quantities** — `is_dim=1` filter on `/quantities` shows only SI base quantities.
+## Query Parameters
 
-### Locale Toggle
-`en-us` / `en-uk` / `cs-cz` via settings menu. Priority: `?locale=` query
-param > session cookie > `Accept-Language` header > `en-us`.
+### Filtering (`/formulas`, `/quantities`)
 
-### Dimension Mode
-Toggle between dimension (default), variable, and unit display. Param:
-`?dim_mode=dim|var|unit`, stored in session.
+| Name        | Parameter                            | Description                                     |
+| ----------- | ------------------------------------ | ----------------------------------------------- |
+| Tree        | `ids=id1,id2,...`                    | Restrict to tree's nodes (children included)    |
+| Difficulty  | `diff_min`, `diff_max`               | Difficulty range 1-10                           |
+| Dimension   | `<dim>_eq`, `<dim>_geq`, `<dim>_leq` | Dimension exponent filter (M, L, T, I, Θ, N, J) |
+|             | `dim_mode=and\|or`                   | Do all or any dimensions match\*                |
+| Quantity    | `qty=id1,id2`                        | Formulas containing these quantities            |
+|             | `qty_mode=and\|or`                   | Require all or any quantities\*                 |
+| Sort        | `sort=<key>`                         | Sort order                                      |
+| Exclude all | `exclude_all=1`                      | Empty result set (nothing selected)             |
 
-### Data Management
-Export formulas/quantities/units as CSV (zipped directory), XLSX, or ODS.
+\* - Shared parameter
 
-## Templates
+### Sorting
 
-| File              | Purpose                                       |
-| ----------------- | --------------------------------------------- |
-| `base.html`       | Layout with topbar, sidebars, settings, theme |
-| `formula.html`    | Formula detail                                |
-| `formulas.html`   | Formula listing                               |
-| `quantity.html`   | Quantity detail                               |
-| `quantities.html` | Quantity listing                              |
-| `unit.html`       | Unit detail                                   |
-| `search.html`     | Search results                                |
+`?sort=` accepts:
+
+- `/formulas`: `id` (default), `name`, `diff_asc`, `diff_desc`, `topic_tree`, `topic_alpha`, `qty`
+- `/quantities`: same except `qty`
+- `/search`: `relevance` (default), plus all of the above
+
+### Locale
+
+`en-us` / `en-uk` / `cs-cz`.
+Stored inside a session cookie.
+Switchable via the settings menu.
+
+### Dimensions Setting
+
+Toggle how dimensions are shown: `?dim_mode=<setting>`
+
+- **Dimensions** `dim` (default): M, L, T, I, Θ, N, J
+- **Variables** `var`: m, l, t, i, T, n, Iᵥ
+- **Units** `unit` (units): kg, m, s, A, K, mol, cd
+
+## Configuration
+
+All optional environment variables:
+
+| Variable                | Default                  | Description                                     |
+| ----------------------- | ------------------------ | ----------------------------------------------- |
+| `SCIFIND_DB`            | `scifind.db`             | Database path                                   |
+| `SCIFIND_HOST`          | `127.0.0.1`              | Bind address (dev server)                       |
+| `SCIFIND_PORT`          | `5000`                   | Port (dev server)                               |
+| `SCIFIND_DEBUG`         | off                      | Flask debug mode (`1`/`true`/`yes`)             |
+| `SCIFIND_SECRET_KEY`    | auto-generated           | Session secret, stored in `instance/secret_key` |
+| `SCIFIND_MAX_UPLOAD_MB` | `32`                     | Max request body size                           |
+| `SCIFIND_GITHUB_REPO`   | `Creeperman3000/Scifind` | Repo slug used for new-locale issue links       |

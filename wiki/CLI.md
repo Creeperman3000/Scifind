@@ -1,85 +1,43 @@
 # CLI Tool
 
-Entry point: `python scifind_cli.py` or `./scifind_cli.py`
-
-## Usage
+Entry point: `python scifind_cli.py`.
+The general layout of a command is as follows:
 
 ```
-python scifind_cli.py <command> [options]
+python scifind_cli.py [--db <path>] <command> [options]
 ```
+
+`--db <path>` overrides the database location (default is `scifind.db`)
 
 ## Commands
 
-### `init`
-Initialize the database — runs `schema.sql` and `seed.sql`.
-
-```bash
-python scifind_cli.py init [--db <path>] [--force]
 ```
+init          # Seed database from schema.sql and seed.sql (use --force to rebuild)
+  --force
 
-### `list`
-List all formulas with topic.
+list          # List all formulas by topic with difficulty stars
+  -t, --topic     <id>
+  -d, --difficulty N|N-M
 
-```bash
-python scifind_cli.py list [--topic <name>] [--difficulty <min-max>]
+show          # Show formula with LaTeX, variables, description, related formulas
+  <formula_id>
+
+search        # Substring search across names, symbols, and IDs (excludes hidden quantities)
+  <query>
+  -l, --limit     <n>                    default: 20
+
+quantities    # List quantities with dimensions and default units
+  --formula       <id>
+
+quantity      # Show dimensions, compatible units, and containing formulas
+  <quantity_id>
+
+units         # List units with symbols, systems, and SI conversion factors
+  -q, --quantity  <id>
+
+browse        # Tree view of all formulas grouped by topic
+
+export        # Export entire database
+  -f, --format    csv|csvdir|xlsx|ods|sql
+  -o, --output    <path>
 ```
-
-### `show <formula_id>`
-Display a formula with its variables, description, and related formulas.
-
-```bash
-python scifind_cli.py show kinetic_energy
-```
-
-### `search <query>`
-Substring search across formula, quantity, and unit names, symbols, and IDs.
-
-```bash
-python scifind_cli.py search "kinetic energy"
-```
-
-### `quantities`
-List all quantities (optionally filtered by formula).
-
-```bash
-python scifind_cli.py quantities [--formula <id>]
-```
-
-### `quantity <quantity_id>`
-Show quantity details including dimensions and compatible units.
-
-```bash
-python scifind_cli.py quantity length
-```
-
-### `units`
-List all units with their symbols and conversion factors.
-
-```bash
-python scifind_cli.py units [--quantity <id>]
-```
-
-### `browse`
-Tree browser for exploring formulas by topic.
-
-### `export`
-Export the entire database.
-
-```bash
-python scifind_cli.py export --format csv|csvdir|xlsx|ods|sql [--output <path>]
-```
-
-## Options
-
-| Flag                   | Description                            |
-| ---------------------- | -------------------------------------- |
-| `--db <path>`          | Override database path                 |
-| `--format <fmt>`       | Export format (csv, csvdir, xlsx, ods, sql) |
-| `--output <path>`      | Export output path                     |
-| `--topic <name>`       | Filter by topic                        |
-| `--difficulty <range>` | Difficulty range: N or N-M             |
-| `--formula <id>`       | Filter by formula ID                   |
-| `--quantity <id>`      | Filter by quantity ID                  |
-
-Default database path: `scifind.db` in the project root, overridable via
-`SCIFIND_DB` env var.

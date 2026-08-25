@@ -1,24 +1,27 @@
-# Scifind Wiki
+# Scifind
 
-Scifind is a structured physics formula database with a CLI tool and Flask
-web application. Formulas are stored in a normalized SQL schema with full
-LaTeX rendering, i18n (`en-us` / `en-uk` / `cs-cz`), dimension analysis, and
-multiple export formats (CSV, XLSX, ODS).
+Scifind is a physics formula database with a web app and a CLI tool.
+Formulas are stored as a list of [RPN](https://en.wikipedia.org/wiki/Reverse_Polish_notation) tokens in a normalized
+SQLite schema. Features include:
+
+- [LaTeX](https://en.wikipedia.org/wiki/LaTeX) rendering
+- [i18n](https://en.wikipedia.org/wiki/Internationalization_and_localization) language support
+- dimensional analysis
+- export to CSV, XLSX, ODS, SQL.
 
 ## Pages
 
-- **[CLI Tool](CLI)** — Command-line interface reference
-- **[Web App](Web-App)** — Flask web application features and routes
-- **[Database](Database)** — Schema and seed data specification
-- **[Development](Development)** — Setup, contributing, deployment notes
+- **[CLI Tool](CLI):** command-line tool
+- **[Web App](Web-App):** routes and filtering
+- **[Database](Database):** schema and seed data specs
+- **[Development](Development):** setup and testing
 
 ## Tech Stack
 
 | Component | Tech |
 |-----------|------|
-| Backend | Python 3.13 + Flask |
-| Database | SQLite |
-| Rendering | KaTeX via CDN |
-| Export | CSV, XLSX (openpyxl), ODS (odfpy) |
-| Frontend | Vanilla JS, no framework |
-| Deployment | Plain Flask dev server (see [Development](Development) for notes) |
+| Backend   | Python 3 + Flask (gunicorn for production) |
+| Database  | SQLite |
+| Rendering | KaTeX + Lucide icons via CDN |
+| Export    | CSV, XLSX (openpyxl), ODS (odfpy), SQL |
+| Frontend  | Vanilla JS, no framework |
