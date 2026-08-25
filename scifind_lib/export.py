@@ -108,6 +108,36 @@ def export_to_ods(conn, output):
     document.save(output)
 
 
+def build_formula_sql(conn, formula_id):
+    """Build (formula_sql, token_sql) for an existing formula, mirroring
+    build_create_sql's two-block layout (the token block also carries any
+    formula_relation rows pointing at the formula)."""
+
+    def insert_rows(table, where):
+        columns = list(EXPORT_TABLE_COLUMNS[table])
+        rows = conn.execute(
+            f"SELECT {','.join(columns)} FROM {table} WHERE {where} ORDER BY rowid",
+            (formula_id,) * where.count("?"),
+        ).fetchall()
+        if not rows:
+            return ""
+        col_list = ", ".join(columns)
+        out = []
+        for row in rows:
+            values = ", ".join(sql_literal(row[c]) for c in columns)
+            out.append(
+                f"INSERT OR IGNORE INTO {table} ({col_list}) VALUES ({values});\n"
+            )
+        return "".join(out)
+
+    formula_sql = insert_rows("formula", "id = ?")
+    token_sql = (
+        insert_rows("formula_token", "formula_id = ?")
+        + insert_rows("formula_relation", "formula_id = ? OR related_id = ?")
+    )
+    return formula_sql, token_sql
+
+
 def export_to_sql(conn):
     """Export the schema and all table contents as a SQL script string."""
     schema = (PROJECT_DIR / "schema.sql").read_text(encoding="utf-8")

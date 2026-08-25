@@ -69,6 +69,7 @@ from scifind_lib import (
     export_to_xlsx,
     export_to_ods,
     export_to_sql,
+    build_formula_sql,
     preview_equation,
     build_create_sql,
     unit_name_map,
@@ -839,11 +840,13 @@ def formula_detail(formula_id):
         dim_symbols=dim_caches["dim"],
         mode=g.get("dim_mode", "dim"),
     )
+    formula_sql, token_sql = build_formula_sql(db, formula_id)
     return render_template(
         "formula.html",
         formula=row, latex=latex,
         relations=related, detail_items=detail_items,
         dim_latex=dim_latex, links=links,
+        formula_sql=formula_sql, token_sql=token_sql,
     )
 
 

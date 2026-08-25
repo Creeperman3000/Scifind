@@ -368,6 +368,16 @@ html.suppress-transitions .sidebar { transition: none !important; }
 .formula-copy-menu { top: calc(100% + 4px); min-width: 140px; padding: 4px; z-index: 50; }
 .formula-copy-menu button { display: block; width: 100%; text-align: left; padding: 6px 12px; border: none; background: none; cursor: pointer; font-size: 0.85rem; color: var(--text); border-radius: var(--radius-sm); }
 .formula-copy-menu button:hover { background: var(--bg-secondary); }
+.sql-block {
+  background: var(--bg-secondary); border-radius: var(--radius-lg);
+  position: relative; margin-bottom: 16px;
+}
+.sql-block pre {
+  font-family: var(--font-mono); font-size: 0.8rem;
+  white-space: pre-wrap; padding: 16px 56px 16px 16px;
+  margin: 0; min-height: 60px; color: var(--text); overflow-x: auto;
+}
+.sql-block > .formula-copy-btn { position: absolute; top: 8px; right: 8px; }
 /* Defined after .formula-copy-btn so it wins the cascade when combined
    with it in markup (create modal close button) */
 .modal-close {

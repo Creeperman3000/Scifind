@@ -30,6 +30,7 @@
       <button data-action="copy-formula-unicode">Unicode</button>
       <button data-action="copy-formula-image-png">PNG</button>
       <button data-action="copy-formula-image-svg">SVG</button>
+      <button data-action="open-formula-sql">SQL</button>
     </div>
   </div>
 </div>
@@ -79,5 +80,27 @@
   </ol>
 </div>
 {% endif %}
+
+<div class="modal-overlay" id="formula-sql-modal" role="dialog" aria-modal="true">
+  <div class="modal-content">
+    <button class="modal-close formula-copy-btn" type="button" aria-label="Close" data-action="close-formula-sql">
+      <i data-lucide="x" width="16" height="16"></i>
+    </button>
+    <h3>{{ _('create.formula_insert') }}</h3>
+    <div class="sql-block">
+      <button class="formula-copy-btn" type="button" data-action="copy-formula-sql-export" title="Copy">
+        <i data-lucide="copy" width="16" height="16"></i>
+      </button>
+      <pre id="formula-sql">{{ formula_sql }}</pre>
+    </div>
+    <h3>{{ _('create.token_inserts') }}</h3>
+    <div class="sql-block">
+      <button class="formula-copy-btn" type="button" data-action="copy-token-sql-export" title="Copy">
+        <i data-lucide="copy" width="16" height="16"></i>
+      </button>
+      <pre id="token-sql">{{ token_sql }}</pre>
+    </div>
+  </div>
+</div>
 
 {% endblock %}

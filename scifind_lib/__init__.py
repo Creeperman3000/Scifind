@@ -101,6 +101,7 @@ from scifind_lib.build import (  # noqa: F401
 )
 
 from scifind_lib.export import (  # noqa: F401
+    build_formula_sql,
     export_to_csv,
     export_to_csv_directory,
     export_to_ods,

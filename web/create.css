@@ -1,17 +1,6 @@
 .formula-error { display: block; color: var(--text-secondary); min-height: 3.5em; line-height: 3.5em; }
 
 .formula-placeholder { color: var(--text-secondary); }
-.sql-block {
-  background: var(--bg-secondary); border-radius: var(--radius-lg);
-  position: relative; margin-bottom: 16px;
-}
-.sql-block pre {
-  font-family: var(--font-mono); font-size: 0.8rem;
-  white-space: pre-wrap; padding: 16px 56px 16px 16px;
-  margin: 0; min-height: 60px; color: var(--text); overflow-x: auto;
-}
-
-.sql-block > .formula-copy-btn { position: absolute; top: 8px; right: 8px; }
 .token-sidebar { display: flex; flex-direction: column; gap: 12px; margin-top: 4px; }
 .token-sidebar .filter-qty-search-wrap { margin-bottom: 0; }
 .token-list { display: flex; flex-direction: column; gap: 4px; max-height: 6000px; overflow: hidden; transition: max-height var(--dur-slow) var(--ease-in-out); }

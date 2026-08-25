@@ -1319,6 +1319,10 @@
       case 'copy-formula-unicode': copyFormula('unicode'); break;
       case 'copy-formula-image-png': copyFormula('png'); break;
       case 'copy-formula-image-svg': copyFormula('svg'); break;
+      case 'open-formula-sql': openFormulaSqlModal(); break;
+      case 'close-formula-sql': closeFormulaSqlModal(); break;
+      case 'copy-formula-sql-export':
+      case 'copy-token-sql-export': copySqlBlock(el); break;
       case 'remove-qty-chip': removeQtyChip(el.getAttribute('data-qty')); break;
       case 'add-qty-chip': addQtyChip(el.getAttribute('data-qty')); break;
       case 'close-overlays': closeSidebar('left'); closeSidebar('right'); break;
@@ -1817,6 +1821,34 @@
     }
   }
   window.copyFormula = copyFormula;
+
+  function copySqlBlock(btn) {
+    var block = btn.closest('.sql-block');
+    var pre = block ? block.querySelector('pre') : null;
+    if (!pre || !pre.textContent.trim()) return;
+    navigator.clipboard.writeText(pre.textContent)
+      .then(function() { showToast(window._localeUI.toast.copied + ' SQL', 'success'); })
+      .catch(function(e) { showToast(window._localeUI.toast.copy_failed + ': ' + e.message, 'error'); });
+  }
+
+  function openFormulaSqlModal() {
+    var menu = document.getElementById('formula-copy-menu');
+    if (menu) menu.classList.remove('open');
+    var modal = document.getElementById('formula-sql-modal');
+    if (modal) modal.classList.add('open');
+  }
+  function closeFormulaSqlModal() {
+    var modal = document.getElementById('formula-sql-modal');
+    if (modal) modal.classList.remove('open');
+  }
+  window.openFormulaSqlModal = openFormulaSqlModal;
+  window.closeFormulaSqlModal = closeFormulaSqlModal;
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key !== 'Escape') return;
+    var modal = document.getElementById('formula-sql-modal');
+    if (modal && modal.classList.contains('open')) modal.classList.remove('open');
+  });
 
   function toggleCopyMenu(e) {
     e.stopPropagation();
