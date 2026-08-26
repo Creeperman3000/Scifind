@@ -15,7 +15,9 @@
       "cubedSpecial": "na třetí",
       "reciprocal": "Převrácená hodnota"
     },
-    "quantitiesSpecial": ["time"],
+    "quantitiesSpecial": [
+      "time"
+    ],
     "accusativeNames": {
       "sekunda": "sekundu",
       "hodina": "hodinu",
@@ -25,7 +27,11 @@
       "úhlová vteřina": "úhlovou vteřinu"
     },
     "sibilants": {
-      "chars": ["s", "š", "z"],
+      "chars": [
+        "s",
+        "š",
+        "z"
+      ],
       "preposition": {
         "suffix": "e"
       }
@@ -99,6 +105,8 @@
       "system": "Systém",
       "factor_to": "Přepočet na",
       "offset_from": "Posun od",
+      "factor_and_offset": "Přepočet na a posun od",
+      "reference_unit": "Referenční jednotka",
       "primary_formulas": "Hlavní vzorce",
       "also_appears_in": "Také se vyskytuje v",
       "related_formulas": "Související vzorce",
@@ -106,11 +114,17 @@
       "quantities_no_results": "Nenalezeny žádné veličiny odpovídající zvoleným filtrům.",
       "quantity": "Veličina",
       "unit": "Jednotka",
-      "base_quantities": "Základní veličiny"
+      "base_quantities": "Základní veličiny",
+      "constant": "Konstanta",
+      "value": "Hodnota",
+      "si_prefixes": "Předpony SI",
+      "si_base": "Základní SI",
+      "cgs_base": "Základní CGS",
+      "si_show_all": "Zobrazit všechny předpony",
+      "si_show_less": "Zobrazit méně předpon",
+      "formulas_with_constant": "Vyskytuje se ve vzorcích"
     },
     "unit": {
-      "si_base_unit": "Toto je základní jednotka SI veličiny",
-      "symbol": "Značka",
       "system_any": "libovolný"
     },
     "relation": {
@@ -141,7 +155,9 @@
       "settings": "Nastavení",
       "toggle_tree": "Přepnout strom",
       "cancel_search": "Zrušit hledání",
-      "drag_dismiss": "Zavřete tažením"
+      "drag_dismiss": "Zavřete tažením",
+      "close": "Zavřít",
+      "copy": "Kopírovat"
     },
     "create": {
       "title": "Vytvořit vzorec",
@@ -165,6 +181,11 @@
       "placeholder_label": "dolní index",
       "missing_required": "Chyba: chybí",
       "parse_error": "Chyba parsování!",
+      "preview_failed": "Náhled selhal",
+      "could_not_start": "Nelze spustit",
+      "copy_from_english": "Kopírovat z angličtiny",
+      "formula_sql": "SQL vzorce",
+      "token_sql": "SQL tokenů",
       "pick_languages_heading": "Vyberte jazyky na překlad",
       "pick_languages_hint": "en-us je vždy zahrnuto",
       "translate_heading": "Přeložit do {lang}",

@@ -1,6 +1,6 @@
 # Database Specification
 
-SQLite database with 7 tables. Formulas are stored as [Reverse Polish
+SQLite database with 8 tables. Formulas are stored as [Reverse Polish
 Notation (RPN)](https://en.wikipedia.org/wiki/Reverse_Polish_notation) token streams that are evaluated into expression trees at
 render time. Operators and constants live in their own tables.
 
@@ -44,8 +44,12 @@ always forms the root of an expression tree.
 | `id` | TEXT | Primary key |
 | `name` | TEXT | JSON i18n |
 | `symbol` | TEXT | LaTeX display (`\pi`, `c`) |
+| `difficulty` | INTEGER | 1–10 |
+| `description` | TEXT | JSON i18n |
+| `links` | TEXT | JSON array of URLs |
 | `value` | REAL | Numerical value; NULL for purely symbolic constants |
 | `default_unit` | TEXT | JSON array `[{"unit":"<id>","exponent":<n>},...]`; only for dimensional constants |
+| `quantity_id` | TEXT | FK → quantity.id; quantity whose name/unit applies (same dimensions); NULL = unlisted on quantity pages |
 
 ## `formula_token`
 The RPN encoding of one formula. Primary key `(formula_id, position)`;
@@ -109,6 +113,15 @@ exponents in fixed order M, L, T, I, Θ, N, J.
 | `factor` | REAL | Conversion factor to SI |
 | `latex_factor` | TEXT | LaTeX display for the factor (e.g. `\frac{180}{\pi}`) |
 | `offset` | REAL | Conversion offset |
+
+## `si_prefix`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | TEXT | Primary key (`k`, `M`, `\mu`, ...) |
+| `symbol` | TEXT | LaTeX display prefix, prepended to the unit symbol |
+| `name` | TEXT | JSON i18n prefix name, prepended to the unit name |
+| `exponent` | INTEGER | Power of ten: kilo=3, centi=-2 |
 
 ## Seed Data
 

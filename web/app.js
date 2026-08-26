@@ -218,9 +218,19 @@
     }
     try {
       var display = el.classList.contains('formula-eqn');
-      katex.render(src, el, { displayMode: display, throwOnError: false, macros: window._KATEX_MACROS || {} });
+      /* The big constant value embeds per-digit \htmlClass hooks. */
+      var needsFitLayout = el.classList.contains('const-value');
+      var opts = {
+        displayMode: display,
+        throwOnError: false,
+        macros: window._KATEX_MACROS || {},
+        trust: function(ctx) { return ctx.command === '\\htmlClass'; }
+      };
+      if (needsFitLayout) opts.strict = false;
+      katex.render(src, el, opts);
       el.removeAttribute('data-latex');
       el.classList.remove('latex-observe');
+      if (needsFitLayout) recheckConstantValues();
     } catch (e) { /* leave for retry */ }
   }
   window.renderLatexEl = renderLatexEl;
@@ -1147,6 +1157,352 @@
     }
   }
 
+  /* ---------- Units table: switchable reference unit ----------
+     On /quantity/<id> and /unit/<id> the factor/offset columns are
+     recomputed client-side against the unit picked in either header
+     menu ("Factor to ..." / "Offset from ..."); the choice is pure
+     view state and never touches the URL. */
+
+  function _unitsGcd(a, b) { while (b) { var t = a % b; a = b; b = t; } return a; }
+
+  /* Best rational approximation via continued fractions; null when x
+     has no snug fraction with a smallish denominator (-> exponent form). */
+  function _unitsRat(x) {
+    if (!isFinite(x) || x === 0) return null;
+    var sign = x < 0 ? -1 : 1, ax = Math.abs(x);
+    var nM2 = 0, nM1 = 1, dM2 = 1, dM1 = 0, b = ax, n1 = 0, d1 = 0;
+    for (var i = 0; i < 64; i++) {
+      var ai = Math.floor(b);
+      n1 = ai * nM1 + nM2;
+      d1 = ai * dM1 + dM2;
+      if (!d1 || d1 > 10000) { d1 = 0; break; }
+      if (Math.abs(n1 / d1 - ax) <= 1e-14 * ax) break;
+      nM2 = nM1; nM1 = n1; dM2 = dM1; dM1 = d1;
+      var frac = b - ai;
+      if (frac <= 0) { d1 = 0; break; }
+      b = 1 / frac;
+    }
+    /* Only accept essentially exact hits — stored factors are exact
+       ratios of doubles, so genuine steps land around 1e-16 relative. */
+    if (!d1 || Math.abs((sign * n1) / d1 - x) > 1e-13 * Math.max(1e-300, Math.abs(x))) return null;
+    if (Math.abs(n1) > 1e12 || String(n1).indexOf('e') !== -1) return null;
+    return { n: sign * n1, d: d1 };
+  }
+
+  function _unitsSci(x) {
+    var parts = x.toExponential(9).split('e');
+    var m = parts[0].replace(/\.?0+$/, '');
+    return m + '\\times10^{' + parseInt(parts[1], 10) + '}';
+  }
+
+  function _unitsActual(x) {
+    var v = Number(x.toPrecision(10));
+    if (v === 0) return '0';
+    var s = String(v);
+    return s.indexOf('e') !== -1 ? _unitsSci(v) : s;
+  }
+
+  /* Exact-looking form first: reduced fraction or exponent notation,
+     with plain decimal as the middle-ground fallback. */
+  function _unitsPretty(x) {
+    var r = _unitsRat(x);
+    if (r) {
+      var g = _unitsGcd(Math.abs(r.n), r.d);
+      var n = Math.abs(r.n / g), d = r.d / g, neg = r.n < 0 ? '-' : '';
+      if (n >= 1e15) return neg + _unitsSci(x);
+      var e = _unitsPow10Exp(n, d);
+      if (e !== null) return neg + '10^{' + e + '}';
+      return d === 1 ? neg + n : neg + '\\frac{' + n + '}{' + d + '}';
+    }
+    var ax = Math.abs(x);
+    if (ax >= 1e-4 && ax < 1e7) {
+      var s = String(Number(x.toPrecision(10)));
+      if (s.indexOf('e') === -1) return s;
+    }
+    return _unitsSci(x);
+  }
+
+  /* e when n/d === 10^e exactly (positive integers), else null. */
+  function _unitsPow10Exp(n, d) {
+    var e = 0;
+    while (d > 1 && d % 10 === 0) { d /= 10; e--; }
+    while (n > 1 && n % 10 === 0) { n /= 10; e++; }
+    return (n === 1 && d === 1) ? e : null;
+  }
+
+  /* Chain of consecutive unit steps between two entries (indices into
+     the factor-sorted list); consecutive equal steps collapse into
+     powers and adjacent decade steps merge into one power of ten.
+     Null when any step lacks a snug fraction. */
+  function _unitsChain(sorted, a, b) {
+    var lo = Math.min(a, b), hi = Math.max(a, b), groups = [];
+    for (var i = lo; i < hi; i++) {
+      var top = sorted[i + 1].factor, bot = sorted[i].factor;
+      if (!(top > 0) || !(bot > 0)) return null;
+      var s = _unitsRat(top / bot);
+      if (!s) return null;
+      var last = groups[groups.length - 1];
+      var e = _unitsPow10Exp(Math.abs(s.n), s.d);
+      if (e !== null) {
+        if (last && last.pow) last.e += e;
+        else groups.push({ pow: true, e: e });
+      } else if (last && !last.pow && last.n === s.n && last.d === s.d) {
+        last.k++;
+      } else {
+        groups.push({ n: s.n, d: s.d, k: 1 });
+      }
+    }
+    return groups;
+  }
+
+  function _unitsGroupLatex(g, parens) {
+    if (g.pow) return '10^{' + g.e + '}';
+    var e = _unitsPow10Exp(Math.abs(g.n), g.d);
+    if (e !== null) return '10^{' + e * g.k + '}';
+    var n = Math.abs(g.n);
+    var base = g.d === 1 ? String(n)
+      : (g.n < 0 ? '-' : '') + '\\frac{' + n + '}{' + g.d + '}';
+    if (g.d !== 1 && parens) base = '(' + base + ')';
+    return g.k === 1 ? base : base + '^{' + g.k + '}';
+  }
+
+  /* "\times60", "\times60^{2}=3600", "\times(60^{2}\cdot24)=86400",
+     "\div\frac{9}{5}" ...  mag is always the positive magnitude;
+     up=true means multiply (row factor >= reference factor). */
+  function _unitsMultLatex(groups, mag, up, allowEquals, wrapFrac) {
+    var body, complex;
+    if (groups) {
+      if (groups.length === 1) {
+        body = _unitsGroupLatex(groups[0], wrapFrac && groups[0].d !== 1);
+        complex = groups[0].k > 1 || groups[0].d !== 1;
+      } else {
+        body = '(' + groups.map(function(g) { return _unitsGroupLatex(g, false); }).join(' \\cdot ') + ')';
+        complex = true;
+      }
+    } else {
+      body = _unitsPretty(mag);
+      complex = body.indexOf('^') !== -1 || body.indexOf('frac') !== -1;
+      if (complex) body = '(' + body + ')';
+    }
+    var out = (up ? '\\times' : '\\div') + body;
+    if (allowEquals && complex) {
+      var actual = _unitsActual(mag);
+      if (body.replace(/[()]/g, '') !== actual) out += '=' + actual;
+    }
+    return out;
+  }
+
+  /* e when x === 10^e essentially exactly (x > 0), else null. */
+  function _unitsPow10(x) {
+    if (!isFinite(x) || x <= 0) return null;
+    var e = Math.round(Math.log(x) / Math.LN10);
+    return Math.abs(x - Math.pow(10, e)) <= 1e-12 * x ? e : null;
+  }
+
+  /* Factorization of the ratio between two units into hops: synthetic
+     SI-prefix endpoints contribute their decade step, then the remaining
+     real-unit pair is chained through the sorted real units (so
+     day vs ms renders as 10^{3}\cdot60^{2}\cdot24). Null when no snug
+     factorization exists. */
+  function _unitsBuildGroups(st, en, ref) {
+    var groups = [];
+    var aId = en.id, bId = ref.id;
+    if (String(aId).indexOf('si_') === 0) {
+      groups.push({ pow: true, e: en.si_exp || 0 });
+      aId = '';
+    }
+    if (String(bId).indexOf('si_') === 0) {
+      groups.push({ pow: true, e: -(ref.si_exp || 0) });
+      bId = '';
+    }
+    if (aId !== bId) {
+      var ia = st.chainIdx[aId], ib = st.chainIdx[bId];
+      if (ia == null || ib == null) return null;
+      var sub = _unitsChain(st.chainSorted, ia, ib);
+      if (!sub) return null;
+      groups = groups.concat(sub);
+    }
+    var merged = [];
+    groups.forEach(function(g) {
+      if (g.pow && merged.length && merged[merged.length - 1].pow) {
+        merged[merged.length - 1].e += g.e;
+      } else {
+        merged.push(g);
+      }
+    });
+    merged = merged.filter(function(g) { return !g.pow || g.e !== 0; });
+    return merged.length ? merged : null;
+  }
+
+  /* Operations that turn THIS row unit's value into the reference
+     unit's value:  x_ref = M·x_row + D   (M = f_row/f_ref,
+     D = (o_row − o_ref)/f_ref).  Rendered e.g. "\times60^{2}=3600",
+     "+273.15", "\div(\frac{9}{5})+255.37", ...  Magnitudes below 1 are
+     shown as a division by their inverse so operands stay >= 1.
+     Exact powers of ten always collapse to a bare "\times10^{n}" /
+     "\div10^{n}" — no mantissa and no "= digits" appendix. */
+  function _unitsConvLatex(st, en, refEntry) {
+    if (!(refEntry.factor > 0)) return null;
+    var m = en.factor / refEntry.factor;
+    var delta = (en.offset - refEntry.offset) / refEntry.factor;
+    var scale = Math.max(Math.abs(en.offset), Math.abs(refEntry.offset), 1);
+    var hasOff = Math.abs(delta) > 1e-9 * scale;
+    var hasMult = isFinite(m) && Math.abs(m - 1) > 1e-12;
+    if (!hasMult && !hasOff) return null;
+    var out = '';
+    if (hasMult) {
+      var up = m >= 1;
+      var p10 = _unitsPow10(m);
+      if (p10 !== null) {
+        out += up ? '\\times10^{' + p10 + '}' : '\\div10^{' + (-p10) + '}';
+      } else {
+        var groups = _unitsBuildGroups(st, en, refEntry);
+        out += _unitsMultLatex(groups, up ? m : 1 / m,
+                               up, !hasOff, true);
+      }
+    }
+    if (hasOff) out += (delta > 0 ? '+' : '-') + _unitsActual(Math.abs(delta));
+    return out;
+  }
+
+  function _setUnitsCell(td, latex) {
+    if (latex === null) { td.innerHTML = '&ndash;'; return; }
+    td.innerHTML = '';
+    var span = document.createElement('span');
+    span.className = 'latex-observe';
+    span.setAttribute('data-latex', latex);
+    td.appendChild(span);
+    if (typeof window.renderLatexEl === 'function') window.renderLatexEl(span);
+  }
+
+  function _fillUnitsTable(table) {
+    var st = table._unitsData;
+    if (!st) return;
+    var refEntry = st.byId[st.ref];
+    if (!refEntry) return;
+    table.querySelectorAll('tbody tr[data-unit-id]').forEach(function(tr) {
+      var id = tr.getAttribute('data-unit-id');
+      var en = st.byId[id];
+      if (!en) return;
+      var cTd = tr.querySelector('td.uv-conv');
+      if (cTd) {
+        _setUnitsCell(cTd, id === st.ref ? null : _unitsConvLatex(st, en, refEntry));
+      }
+    });
+  }
+
+  /* Mark the reference row and refresh every conversion cell in the
+     section's two tables (registered units + SI prefixes); the picked
+     unit is announced in the "Factor to ..." header. */
+  function _syncUnitsSection(sec) {
+    var st = sec._unitsState;
+    if (!st) return;
+    var refEn = st.byId[st.ref];
+    sec.querySelectorAll('.units-ref-name').forEach(function(span) {
+      span.textContent = refEn && refEn.label ? refEn.label : '';
+    });
+    sec.querySelectorAll('table[data-units-dynamic]').forEach(function(table) {
+      table.querySelectorAll('tbody tr[data-unit-id]').forEach(function(tr) {
+        var id = tr.getAttribute('data-unit-id');
+        var isRef = id === st.ref || st.twins[id] === st.ref;
+        tr.classList.toggle('is-ref', isRef);
+        var btn = tr.querySelector('.units-ref-btn');
+        if (btn) {
+          btn.disabled = isRef;
+          btn.setAttribute('aria-pressed', isRef ? 'true' : 'false');
+        }
+      });
+      if (table._unitsData) _fillUnitsTable(table);
+    });
+  }
+
+  function _setupUnitsTable(table) {
+    var sec = table.closest('.detail-section');
+    var dataEl = sec && sec.querySelector('script.units-table-data');
+    if (!dataEl) return;
+    /* Both tables of a section (registered units + SI prefixes) share
+       one reference-unit state, so a pick in either header drives both. */
+    if (!sec._unitsState) {
+      var data;
+      try { data = JSON.parse(dataEl.textContent); } catch (e) { return; }
+      var byId = {};
+      data.entries.forEach(function(en) { byId[en.id] = en; });
+      /* Step-chains only make sense between real units; synthetic
+         SI-prefix rows would interleave and fragment them. */
+      var chainSorted = data.entries
+        .filter(function(en) { return en.id.indexOf('si_') !== 0; })
+        .sort(function(a, b) { return a.factor - b.factor; });
+      var chainIdx = {};
+      chainSorted.forEach(function(en, i) { chainIdx[en.id] = i; });
+      /* A family row that denotes the same unit as a registered row
+         (metre <-> si_base, kilogram <-> si_kilo) pairs with it so
+         their reference buttons stay in sync. */
+      var twins = {};
+      data.entries.forEach(function(en) {
+        if (en.id.indexOf('si_') !== 0) return;
+        for (var i = 0; i < data.entries.length; i++) {
+          var o = data.entries[i];
+          if (o.id.indexOf('si_') === 0) continue;
+          if (!o.offset && !en.offset && o.factor === en.factor) {
+            twins[en.id] = o.id;
+            twins[o.id] = en.id;
+            break;
+          }
+        }
+      });
+      sec._unitsState = { byId: byId, ref: data.ref,
+                          chainSorted: chainSorted, chainIdx: chainIdx,
+                          twins: twins };
+    }
+    table._unitsData = sec._unitsState;
+    _syncUnitsSection(sec);
+  }
+
+  function initUnitsTables(scope) {
+    (scope || document).querySelectorAll('table[data-units-dynamic]').forEach(_setupUnitsTable);
+  }
+
+  function pickUnitsRef(btn) {
+    var sec = btn.closest('.detail-section');
+    if (!sec || !sec._unitsState) return;
+    var id = btn.getAttribute('data-unit-id');
+    if (id != null && sec._unitsState.byId[id]) sec._unitsState.ref = id;
+    _syncUnitsSection(sec);
+  }
+
+  function toggleSiPrefixes(el) {
+    var sec = el.closest('.detail-section');
+    var table = sec && sec.querySelector('.si-prefix-table');
+    if (!table) return;
+    var open = table.classList.toggle('si-expanded');
+    var row = table.querySelector('.si-toggle-row');
+    if (row) {
+      row.setAttribute('aria-expanded', open ? 'true' : 'false');
+      row.setAttribute('title', open ? row.getAttribute('data-less') || '' :
+                                      row.getAttribute('data-more') || '');
+    }
+  }
+
+  /* Tables arrive via full page load or SPA content swaps */
+  (function() {
+    var mc = document.getElementById('main-content');
+    if (!mc || typeof MutationObserver === 'undefined') return;
+    new MutationObserver(function(muts) {
+      for (var i = 0; i < muts.length; i++) {
+        var added = muts[i].addedNodes;
+        for (var j = 0; j < added.length; j++) {
+          var n = added[j];
+          if (n.nodeType !== 1) continue;
+          if ((n.matches && n.matches('table[data-units-dynamic]')) ||
+              (n.querySelector && n.querySelector('table[data-units-dynamic]'))) {
+            initUnitsTables(mc);
+            return;
+          }
+        }
+      }
+    }).observe(mc, { childList: true, subtree: true });
+  })();
+
   (function() {
     var timer = null;
     var pressedEl = null;
@@ -1328,6 +1684,8 @@
       case 'close-overlays': closeSidebar('left'); closeSidebar('right'); break;
       case 'dock-set-view': dockSetView(el.getAttribute('data-dock-view')); break;
       case 'dock-toggle-panel': toggleSidebar(el.getAttribute('data-target')); break;
+      case 'toggle-si-prefixes': toggleSiPrefixes(el); break;
+      case 'units-ref-pick': pickUnitsRef(el); break;
       case 'open-bug-report': window.open('https://github.com/Creeperman3000/Scifind/issues/new', '_blank'); break;
     }
   });
@@ -1683,6 +2041,7 @@
 
   refreshIcons();
   initCSelects();
+  initUnitsTables();
   syncSearchCancel();
   (function() {
     var sortMenu = document.getElementById('sort-menu');
@@ -1764,13 +2123,88 @@
   window._initLatexObserver = function() {
     if (typeof katex !== 'undefined') observeLatexIn(document.querySelector('#main-content'));
   };
+  /* Big constant display: the whole value is KaTeX, with the integer
+     part, decimal mark and each decimal digit wrapped server-side in
+     \htmlClass (.cv-int/.cv-dot/.cv-dec). Hide trailing decimals until
+     the rectangle fits, then fade them out with a real gradient mask
+     anchored at the mantissa's right edge (the \times10^ factor stays
+     fully opaque). Fully recomputed on every call; hiding instead of
+     deleting lets resizes bring trimmed digits straight back. */
+  function layoutConstantValues() {
+    document.querySelectorAll('.constant-box').forEach(function(box) {
+      var val = box.querySelector('.const-value');
+      if (!val) return;
+      var decs = Array.prototype.slice.call(val.querySelectorAll('.cv-dec'));
+      var dot = val.querySelector('.cv-dot');
+      if (!decs.length && !dot) return;
+      /* Restore everything first so resizes recover hidden digits. */
+      decs.forEach(function(sp) { sp.style.display = ''; });
+      if (dot) dot.style.display = '';
+      val.style.maskImage = '';
+      val.style.webkitMaskImage = '';
+      /* Hide trailing decimals while the box overflows. */
+      var guard = decs.length + 1;
+      while (box.scrollWidth > box.clientWidth && guard-- > 0) {
+        var last = null;
+        for (var i = decs.length - 1; i >= 0; i--) {
+          if (decs[i].style.display !== 'none') { last = decs[i]; break; }
+        }
+        if (!last) break;
+        last.style.display = 'none';
+      }
+      /* No decimals left after trimming -> no decimal mark either. */
+      var visible = decs.filter(function(sp) { return sp.style.display !== 'none'; });
+      if (dot) dot.style.display = visible.length ? '' : 'none';
+      /* Anchor the fade at the end of the mantissa (last surviving
+         decimal, else the dot, else the integer part) so the \times10^
+         factor — rendered inside the same KaTeX run — stays outside
+         the gradient band. */
+      var anchor = null;
+      if (visible.length) {
+        anchor = visible[visible.length - 1];
+      } else if (dot && dot.style.display !== 'none') {
+        anchor = dot;
+      } else {
+        anchor = val.querySelector('.cv-int');
+      }
+      if (!anchor) return;
+      var vRect = val.getBoundingClientRect();
+      var mantEnd = anchor.getBoundingClientRect().right - vRect.left;
+      if (!vRect.width || mantEnd <= 0) return;
+      var fadeW = Math.max(40, Math.min(mantEnd * 0.25, 160));
+      var solid = Math.max(mantEnd - fadeW, 0);
+      /* Fade to nothing at the mantissa edge, then back to opaque just
+         before the exponent so only digits ever dissolve. */
+      var grad = 'linear-gradient(90deg, #000 0, #000 ' + solid.toFixed(1) +
+                 'px, transparent ' + (mantEnd + 1).toFixed(1) + 'px';
+      var timesEl = val.querySelector('.cv-times');
+      if (timesEl) {
+        var tStart = timesEl.getBoundingClientRect().left - vRect.left;
+        grad += ', #000 ' + Math.max(tStart - 1, mantEnd + 1).toFixed(1) + 'px';
+      }
+      val.style.webkitMaskImage = grad + ')';
+      val.style.maskImage = grad + ')';
+    });
+  }
+  function recheckConstantValues() {
+    /* Defer two RAFs so layout settles after KaTeX writes new DOM. */
+    requestAnimationFrame(function() {
+      requestAnimationFrame(function() { layoutConstantValues(); });
+    });
+  }
   syncDockPills();
   updateOverflowPadding();
   updateDimNameFits();
+  layoutConstantValues();
+  var mainContentEl = document.getElementById('main-content');
+  if (mainContentEl) {
+    new MutationObserver(function() { recheckConstantValues(); })
+      .observe(mainContentEl, { childList: true });
+  }
   /* KaTeX re-flows the dim-symbol after auto-render; re-measure once it
      has finished so the names show/hide correctly. */
   function recheckAfterKatex() {
-    /* Defer two RAFs so layout settles after KaTeX writes new DOM. */
+    recheckConstantValues();
     requestAnimationFrame(function() {
       requestAnimationFrame(function() { updateDimNameFits(); });
     });
@@ -1789,6 +2223,7 @@
   window.addEventListener('resize', function() {
     updateOverflowPadding();
     updateDimNameFits();
+    layoutConstantValues();
   });
 
   function copyFormula(fmt) {
@@ -1986,6 +2421,10 @@
         if (!newContent) { window.location.href = url; return; }
         document.getElementById('main-content').innerHTML = newContent.innerHTML;
         Array.from(document.getElementById('main-content').querySelectorAll('script')).forEach(function(oldScript) {
+          /* Only re-execute real JS; leave data blocks (e.g. the units
+             table payload) untouched so their type/class survive. */
+          var t = (oldScript.getAttribute('type') || '').toLowerCase();
+          if (t && t !== 'text/javascript' && t !== 'application/javascript' && t !== 'module') return;
           var newScript = document.createElement('script');
           if (oldScript.src) newScript.src = oldScript.src;
           else newScript.textContent = oldScript.textContent;

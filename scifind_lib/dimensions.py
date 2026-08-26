@@ -7,6 +7,7 @@ from scifind_lib.constants import (
     _BASE_DIMENSION_ORDER,
     _BASE_DIMENSION_QTY_IDS,
 )
+from scifind_lib.units import parse_default_unit
 
 
 def dimension_symbols():
@@ -172,6 +173,21 @@ def compute_rpn_dimensions(conn, tokens):
     except Exception:
         return [0.0] * len(dimension_columns())
     return _compute_dimensions(conn, tree, [0.0] * len(dimension_columns()))
+
+
+def compute_default_unit_dimensions(conn, default_unit):
+    """Base-dimension exponents for a default_unit JSON string.
+
+    Zeros for absent/unparseable input; each unit contributes its
+    quantity's exponents scaled by the JSON exponent."""
+    total = [0] * len(dimension_columns())
+    unit_qty = {r["id"]: r["quantity_id"]
+                for r in conn.execute("SELECT id, quantity_id FROM unit")}
+    qid_dims = _collect_qid_dimensions(conn)
+    for unit_id, exponent in parse_default_unit(default_unit):
+        for i, v in enumerate(qid_dims.get(unit_qty.get(unit_id), [])[: len(total)]):
+            total[i] += v * exponent
+    return [int(round(v)) for v in total]
 
 
 def compute_all_formula_dimensions(conn, formula_ids=None):

@@ -26,8 +26,12 @@ CREATE TABLE IF NOT EXISTS constant (
     id           TEXT PRIMARY KEY,
     name         TEXT NOT NULL,      -- JSON i18n: {"en-us": "Pi"}
     symbol       TEXT NOT NULL,      -- LaTeX display: \pi
+    difficulty   INTEGER CHECK (difficulty BETWEEN 1 AND 10),
+    description  TEXT,               -- JSON i18n
+    links        TEXT,               -- JSON array of URL strings: ["https://...", ...]
     value        REAL,               -- numerical value; NULL for symbolic constants
-    default_unit TEXT                -- JSON array: [{"unit":"<id>","exponent":<n>},...]
+    default_unit TEXT,               -- JSON array: [{"unit":"<id>","exponent":<n>},...]
+    quantity_id  TEXT REFERENCES quantity(id)  -- quantity whose unit/name applies
 );
 
 CREATE TABLE IF NOT EXISTS formula_token (
@@ -99,6 +103,13 @@ CREATE TABLE IF NOT EXISTS unit (
     factor       REAL NOT NULL DEFAULT 1,
     latex_factor TEXT,               -- LaTeX display for factor (e.g. "\frac{180}{\pi}")
     offset       REAL NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS si_prefix (
+    id       TEXT PRIMARY KEY,
+    symbol   TEXT NOT NULL,          -- display symbol: k, M, \mu ...
+    name     TEXT NOT NULL,          -- JSON i18n: {"en-us":"Kilo","cs-cz":"Kilo"}
+    exponent INTEGER NOT NULL         -- power of ten: kilo=3, centi=-2
 );
 
 CREATE INDEX IF NOT EXISTS idx_formula_token_formula  ON formula_token(formula_id);

@@ -77,6 +77,7 @@ def sort_search_rows(conn, rows, sort_key, locale="en-us"):
     formula_ids = [r[1] for r in rows if r[0] == "formula"]
     quantity_ids = [r[1] for r in rows if r[0] == "quantity"]
     unit_ids = [r[1] for r in rows if r[0] == "unit"]
+    constant_ids = [r[1] for r in rows if r[0] == "constant"]
 
     formula_meta = _meta_by_id(
         conn,
@@ -98,6 +99,15 @@ def sort_search_rows(conn, rows, sort_key, locale="en-us"):
         """,
         unit_ids,
     )
+    constant_meta = _meta_by_id(
+        conn,
+        """
+        SELECT c.id, c.name, c.difficulty, q.topic AS quantity_topic
+        FROM constant c LEFT JOIN quantity q ON q.id = c.quantity_id
+        WHERE c.id IN ({})
+        """,
+        constant_ids,
+    )
 
     qty_const_tokens = fetch_formula_qty_const_tokens(conn)
     tree_order = topic_tree_order() if sort_key == "topic_tree" else {}
@@ -117,6 +127,8 @@ def sort_search_rows(conn, rows, sort_key, locale="en-us"):
                 meta = quantity_meta.get(ent_id)
             elif kind == "unit":
                 meta = unit_meta.get(ent_id)
+            elif kind == "constant":
+                meta = constant_meta.get(ent_id)
             if meta is None:
                 difficulty = 0
                 topic = ""

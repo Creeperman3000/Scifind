@@ -200,7 +200,7 @@
         .catch((err) => {
           if (seq !== previewSeq) return;
           console.error('preview failed:', err);
-          showToast('Preview failed: ' + err.message, 'error');
+          showToast(t('create.preview_failed', 'Preview failed') + ': ' + err.message, 'error');
         });
     }, 200);
   }
@@ -368,7 +368,7 @@
     const enName = ($('name_en').value || '').trim();
     const enDesc = ($('description').value || '').trim();
     const copyBtn = (field) =>
-      '<button class="filter-btn" type="button" data-tr-copy="' + field + '" data-tr-copy-label="' + esc(t('create.' + field, field)) + '" title="Copy from English">' +
+      '<button class="filter-btn" type="button" data-tr-copy="' + field + '" data-tr-copy-label="' + esc(t('create.' + field, field)) + '" title="' + esc(t('create.copy_from_english', 'Copy from English')) + '">' +
       '<i data-lucide="copy" width="16" height="16"></i></button>';
     setStep(
       '<div class="translate-form">' +
@@ -458,7 +458,7 @@
     const parts = [];
     const sqlBlocks = document.querySelectorAll('#modal-step pre');
     sqlBlocks.forEach((pre) => {
-      const label = pre.id === 'formula-sql' ? 'Formula SQL' : 'Token SQL';
+      const label = pre.id === 'formula-sql' ? t('create.formula_sql', 'Formula SQL') : t('create.token_sql', 'Token SQL');
       parts.push('### ' + label);
       parts.push('```sql');
       parts.push(pre.textContent);
@@ -492,7 +492,7 @@
         pushPage({ kind: 'pick', selected: [] });
         openModal();
       })
-      .catch((err) => showToast('Could not start: ' + err.message, 'error'));
+      .catch((err) => showToast(t('create.could_not_start', 'Could not start') + ': ' + err.message, 'error'));
   }
 
   function onPickLangsContinue() {

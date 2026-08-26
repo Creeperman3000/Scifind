@@ -91,6 +91,8 @@
       "system": "System",
       "factor_to": "Factor to",
       "offset_from": "Offset from",
+      "factor_and_offset": "Factor to and offset from",
+      "reference_unit": "Reference unit",
       "primary_formulas": "Primary formulas",
       "also_appears_in": "Also appears in",
       "related_formulas": "Related formulas",
@@ -98,11 +100,17 @@
       "quantities_no_results": "No quantities found matching the selected filters.",
       "quantity": "Quantity",
       "unit": "Unit",
-      "base_quantities": "Base quantities"
+      "base_quantities": "Base quantities",
+      "constant": "Constant",
+      "value": "Value",
+      "si_prefixes": "SI prefixes",
+      "si_base": "SI base",
+      "cgs_base": "CGS base",
+      "si_show_all": "Show all prefixes",
+      "si_show_less": "Show fewer prefixes",
+      "formulas_with_constant": "Appears in formulas"
     },
     "unit": {
-      "si_base_unit": "This is the SI base unit of",
-      "symbol": "Symbol",
       "system_any": "any"
     },
     "relation": {
@@ -133,7 +141,9 @@
       "settings": "Settings",
       "toggle_tree": "Toggle tree",
       "cancel_search": "Cancel search",
-      "drag_dismiss": "Drag to dismiss"
+      "drag_dismiss": "Drag to dismiss",
+      "close": "Close",
+      "copy": "Copy"
     },
     "create": {
       "title": "Create Formula",
@@ -157,6 +167,11 @@
       "placeholder_label": "subscript",
       "missing_required": "Error: no",
       "parse_error": "Parse error!",
+      "preview_failed": "Preview failed",
+      "could_not_start": "Could not start",
+      "copy_from_english": "Copy from English",
+      "formula_sql": "Formula SQL",
+      "token_sql": "Token SQL",
       "pick_languages_heading": "Pick languages for translation",
       "pick_languages_hint": "en-us is always included",
       "translate_heading": "Translate to {lang}",

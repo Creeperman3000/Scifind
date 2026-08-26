@@ -61,6 +61,7 @@ def init_database(force=False, schema_path=None, seed_path=None):
             for table in (
                 "formula_relation", "formula_token",
                 "formula", "operator", "constant", "unit", "quantity",
+                "si_prefix",
             ):
                 conn.execute(f"DROP TABLE IF EXISTS {table}")
         conn.executescript(Path(schema_path).read_text(encoding="utf-8"))

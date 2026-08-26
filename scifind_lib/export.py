@@ -24,7 +24,8 @@ EXPORT_TABLE_COLUMNS = {
     ],
     "formula_relation": ["formula_id", "related_id", "relation_type", "description"],
     "operator": ["id", "symbol", "math", "arity", "precedence", "associativity", "operator_type"],
-    "constant": ["id", "name", "symbol", "value", "default_unit"],
+    "constant": ["id", "name", "symbol", "difficulty", "description",
+                 "links", "value", "default_unit", "quantity_id"],
     "quantity": [
         "id", "name", "symbol", "symbol_overwrite", "topic",
         "difficulty", "description", "links", "default_unit",

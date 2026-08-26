@@ -19,16 +19,47 @@
 </div>
 {% endif %}
 
-<div class="detail-meta">
-{% if unit.default_unit == 1 %}
-  <span>{{ _('unit.si_base_unit') }} <a href="/quantity/{{ unit.quantity_id }}">{{ unit.quantity_name_localized }}</a>.</span>
-  <span>{{ _('unit.symbol') }}: ${{ render_symbol(unit.symbol) }}$</span>
-{% else %}
-  <span>{{ _('detail.quantity') }}: <a href="/quantity/{{ unit.quantity_id }}">{{ unit.quantity_name_localized }}</a></span>
-  <span>{{ _('detail.system') }}: {{ unit.unit_system or _('unit.system_any') }}</span>
-  <span>{{ _('detail.factor_to') }} ${{ render_symbol(si_unit_symbol) }}$: {% if unit.latex_factor %}${{ unit.latex_factor }}${% else %}${{ unit.factor }}${% endif %}</span>
-  {% if unit.offset %}<span>{{ _('detail.offset_from') }} ${{ render_symbol(si_unit_symbol) }}$: ${{ unit.offset }}$</span>{% endif %}
+{% if units %}
+<div class="detail-section">
+  <h3>{{ _('detail.units') }}</h3>
+  <table class="units-table" data-units-dynamic>
+    <colgroup><col class="units-c1"><col class="units-c2"><col class="units-c3"></colgroup>
+    <thead>
+      <tr>
+        <th>{{ _('detail.unit') }}</th>
+        <th>{{ _('detail.system') }}</th>
+        <th>{{ _('detail.factor_to') }}{% if table_data.ref_label %} <span class="units-ref-name">{{ table_data.ref_label }}</span>{% endif %}</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for u in units %}
+      <tr data-unit-id="{{ u.id }}"{% if u.is_ref %} class="is-ref"{% endif %}>
+        <td>${{ u.symbol_latex }}$ {{ u.name_html }}<button type="button" class="units-ref-btn filter-btn" data-action="units-ref-pick" data-unit-id="{{ u.id }}" title="{{ _('detail.reference_unit') }}" aria-label="{{ _('detail.reference_unit') }}" aria-pressed="{{ 'true' if u.is_ref else 'false' }}"{{ ' disabled' if u.is_ref }}><span class="ref-ic ref-ic-offer"><i data-lucide="circle" width="14" height="14"></i></span><span class="ref-ic ref-ic-active"><i data-lucide="circle-dot" width="14" height="14"></i></span></button></td>
+        <td>{{ u.unit_system or _('unit.system_any') }}</td>
+        <td class="uv-conv">{% if u.is_ref %}&ndash;{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+{% if si_prefixes %}
+  <table class="units-table si-prefix-table" data-units-dynamic>
+    <colgroup><col class="units-c1"><col class="units-c2"><col class="units-c3"></colgroup>
+    <tbody>
+    {% for p in si_prefixes %}
+      <tr data-unit-id="{{ p.payload_id }}" class="{{ p.row_class }}{% if p.is_ref %} is-ref{% endif %}">
+        <td><span class="latex-observe" data-latex="{{ p.symbol_latex }}"></span> {% if p.link_unit_id %}<a href="/unit/{{ p.link_unit_id }}">{{ p.name }}</a>{% else %}{{ p.name }}{% endif %}<button type="button" class="units-ref-btn filter-btn" data-action="units-ref-pick" data-unit-id="{{ p.payload_id }}" title="{{ _('detail.reference_unit') }}" aria-label="{{ _('detail.reference_unit') }}" aria-pressed="{{ 'true' if p.is_ref else 'false' }}"{{ ' disabled' if p.is_ref }}><span class="ref-ic ref-ic-offer"><i data-lucide="circle" width="14" height="14"></i></span><span class="ref-ic ref-ic-active"><i data-lucide="circle-dot" width="14" height="14"></i></span></button></td>
+        <td>{% if p.system_key %}{{ _(p.system_key) }}{% endif %}</td>
+        <td class="uv-conv"><span class="latex-observe" data-latex="{{ p.value_latex }}"></span></td>
+      </tr>
+    {% endfor %}
+      <tr class="si-toggle-row" data-action="toggle-si-prefixes" aria-expanded="false" title="{{ _('detail.si_show_all') }}" data-more="{{ _('detail.si_show_all') }}" data-less="{{ _('detail.si_show_less') }}">
+        <td colspan="3"><button type="button" class="si-caret-btn" aria-label="{{ _('detail.si_show_all') }}"><i data-lucide="chevron-down" width="14" height="14"></i></button></td>
+      </tr>
+    </tbody>
+  </table>
 {% endif %}
+  <script type="application/json" class="units-table-data">{{ table_data | tojson }}</script>
 </div>
+{% endif %}
 
 {% endblock %}

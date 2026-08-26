@@ -63,14 +63,24 @@ def fetch_formula_related(conn, formula_id):
 
 
 def fetch_formula_detail_items(conn, formula_id):
-    """Return formula_token rows joined with quantity metadata (drop excluded)."""
+    """Return formula_token operand rows joined with quantity/constant
+    metadata (drop excluded), in token order."""
     return conn.execute(
         """
         SELECT ft.*, q.symbol AS quantity_symbol, q.default_unit,
-               json_extract(q.name, '$.en-us') AS quantity_name
+               json_extract(q.name, '$.en-us') AS quantity_name,
+               c.symbol AS constant_symbol,
+               json_extract(c.name, '$.en-us') AS constant_name,
+               rq.id AS related_quantity_id,
+               json_extract(rq.name, '$.en-us') AS related_quantity_name,
+               rq.symbol AS related_quantity_symbol,
+               rq.default_unit AS related_quantity_default_unit
         FROM formula_token ft
         LEFT JOIN quantity q ON q.id = ft.quantity_id
-        WHERE ft.formula_id = ? AND ft.quantity_id != 'drop'
+        LEFT JOIN constant c ON c.id = ft.constant_id
+        LEFT JOIN quantity rq ON rq.id = c.quantity_id
+        WHERE ft.formula_id = ?
+          AND (ft.quantity_id IS NULL OR ft.quantity_id != 'drop')
         ORDER BY ft.position
         """,
         (formula_id,),
@@ -280,6 +290,13 @@ def fetch_unit(conn, unit_id):
     ).fetchone()
 
 
+def fetch_si_prefixes(conn):
+    """All SI prefixes, largest exponent first."""
+    return conn.execute(
+        "SELECT id, symbol, name, exponent FROM si_prefix ORDER BY exponent DESC"
+    ).fetchall()
+
+
 def fetch_all_quantities(conn):
     """Return all quantities with dimension columns, base dimensions first."""
     rows = conn.execute(
@@ -326,10 +343,60 @@ def fetch_formulas_with_all_quantities(conn, quantity_ids):
 def fetch_all_constants(conn):
     return conn.execute(
         """
-        SELECT id, name, symbol, value
+        SELECT id, name, symbol
         FROM constant
         ORDER BY id
         """
+    ).fetchall()
+
+
+def fetch_constant(conn, constant_id):
+    """One constant row with localisation helpers and its linked quantity."""
+    return conn.execute(
+        """
+        SELECT c.*, rq.topic AS topic_id,
+               json_extract(c.name, '$.en-us') AS name_en,
+               json_extract(c.description, '$.en-us') AS description_en,
+               rq.id AS related_quantity_id,
+               rq.name AS related_quantity_name,
+               rq.symbol AS related_quantity_symbol,
+               rq.default_unit AS related_quantity_default_unit
+        FROM constant c
+        LEFT JOIN quantity rq ON rq.id = c.quantity_id
+        WHERE c.id = ?
+        """,
+        (constant_id,),
+    ).fetchone()
+
+
+def fetch_constant_formulas(conn, constant_id):
+    """Formulas that reference the given constant."""
+    return conn.execute(
+        """
+        SELECT DISTINCT f.id, f.name,
+               json_extract(f.name, '$.en-us') AS name_en,
+               f.topic AS topic_id, f.difficulty
+        FROM formula_token ft
+        JOIN formula f ON f.id = ft.formula_id
+        WHERE ft.token_kind = 'constant' AND ft.constant_id = ?
+        ORDER BY f.topic, f.difficulty, f.id
+        """,
+        (constant_id,),
+    ).fetchall()
+
+
+def fetch_quantity_constants(conn, quantity_id):
+    """Constants pointing at this quantity via constant.quantity_id."""
+    return conn.execute(
+        """
+        SELECT c.id, c.name, c.symbol, c.value,
+               COALESCE(rq.default_unit, c.default_unit) AS unit_default
+        FROM constant c
+        LEFT JOIN quantity rq ON rq.id = c.quantity_id
+        WHERE c.quantity_id = ?
+        ORDER BY c.id
+        """,
+        (quantity_id,),
     ).fetchall()
 
 

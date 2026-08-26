@@ -17,8 +17,9 @@ The DB is created automatically on first run if missing.
 | `/formula/<id>`                     | Formula details                                      |
 | `/quantities`                       | List of all quantities                               |
 | `/quantity/<id>`                    | Quantity details                                     |
+| `/constant/<id>`                    | Constant details                                     |
 | `/unit/<id>`                        | Unit details                                         |
-| `/search?q=<query>`                 | Search                                               |
+| `/search?q=<query>`                 | Search across formulas, quantities, units, constants |
 | `/api/search-suggestions?q=<query>` | JSON autocomplete suggestions                        |
 | `/create`                           | Formula SQL builder and equation parser              |
 | `/export?format=<fmt>`              | Download DB as  `csv` (zipped), `xlsx`, `ods`, `sql` |
