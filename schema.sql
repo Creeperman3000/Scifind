@@ -7,19 +7,79 @@ CREATE TABLE IF NOT EXISTS formula (
     difficulty  INTEGER CHECK (difficulty BETWEEN 1 AND 10),
     description TEXT,                -- JSON i18n
     links       TEXT,                -- JSON array of URL strings: ["https://...", ...]
-    created     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-    modified    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    CHECK (json_valid(name)),
+    CHECK (description IS NULL OR json_valid(description)),
+    CHECK (links IS NULL OR json_valid(links))
 );
 
-CREATE TABLE IF NOT EXISTS operator (
-    id            TEXT PRIMARY KEY,
-    symbol        TEXT,               -- LaTeX display; NULL means invisible
-    math          TEXT,               -- Python expression using operand names; NULL if not computable
-    arity         INTEGER NOT NULL CHECK (arity > 0),
-    precedence    INTEGER NOT NULL,
-    associativity TEXT NOT NULL CHECK (associativity IN ('left', 'right', 'none')),
-    operator_type TEXT NOT NULL CHECK (operator_type IN ('infix', 'prefix', 'postfix', 'relational')),
-    paren_arg     TEXT NOT NULL DEFAULT '[1]' CHECK (paren_arg LIKE '[%' AND json_valid(paren_arg))
+CREATE TABLE IF NOT EXISTS formula_relation (
+    formula_id    TEXT NOT NULL REFERENCES formula(id),
+    related_id    TEXT NOT NULL REFERENCES formula(id),
+    relation_type TEXT NOT NULL CHECK (relation_type IN (
+        'alternative', 'derivation', 'special_case',
+        'generalization', 'condition', 'assumption'
+    )),
+    description   TEXT,                -- JSON i18n
+
+    UNIQUE (formula_id, related_id),
+
+    CHECK (description IS NULL OR json_valid(description))
+);
+
+CREATE TABLE IF NOT EXISTS quantity (
+    id               TEXT PRIMARY KEY,
+    name             TEXT NOT NULL,       -- JSON i18n
+    symbol           TEXT NOT NULL,
+    symbol_overwrite TEXT,                -- JSON i18n override of quantity symbol
+    topic            TEXT,                -- ID into tree.json
+    difficulty       INTEGER CHECK (difficulty BETWEEN 1 AND 10),
+    hidden           BOOLEAN NOT NULL DEFAULT 0 CHECK (hidden IN (0,1)),
+    description      TEXT,                -- JSON i18n
+    links            TEXT,                -- JSON array of URL strings: ["https://...", ...]
+    dim_M            REAL NOT NULL DEFAULT 0,
+    dim_L            REAL NOT NULL DEFAULT 0,
+    dim_T            REAL NOT NULL DEFAULT 0,
+    dim_I            REAL NOT NULL DEFAULT 0,
+    dim_Θ            REAL NOT NULL DEFAULT 0,
+    dim_N            REAL NOT NULL DEFAULT 0,
+    dim_J            REAL NOT NULL DEFAULT 0,
+    CHECK (json_valid(name)),
+    CHECK (symbol_overwrite IS NULL OR json_valid(symbol_overwrite)),
+    CHECK (description IS NULL OR json_valid(description)),
+    CHECK (links IS NULL OR json_valid(links))
+);
+
+CREATE TABLE IF NOT EXISTS unit (
+    id           TEXT PRIMARY KEY,
+    name         TEXT NOT NULL,        -- JSON i18n: {"en-us":"Meter","en-uk":"Metre"}
+    symbol       TEXT NOT NULL,
+    quantity_id  TEXT NOT NULL REFERENCES quantity(id),
+    system       TEXT CHECK (system IN ('SI','CGS','Imperial') OR system IS NULL),
+    is_base      INTEGER NOT NULL DEFAULT 0 CHECK (is_base IN (0,1)),
+    -- reference_unit_id may point to a unit row or a compound_unit row
+    -- (the renderer treats both as nodes in one reference graph).
+    reference_unit_id TEXT,            -- hop to another unit or compound_unit; NULL = root
+    reference_expr     TEXT,            -- JSON: how to convert this unit's value to reference_unit_id's value
+    CHECK (json_valid(name)),
+    CHECK (reference_expr IS NULL OR json_valid(reference_expr)),
+    CHECK ((reference_unit_id IS NULL) = (reference_expr IS NULL))
+);
+
+CREATE TABLE IF NOT EXISTS compound_unit (
+    id               TEXT PRIMARY KEY,
+    quantity_id      TEXT NOT NULL REFERENCES quantity(id),
+    name_overwrite   TEXT,               -- JSON i18n override
+    symbol_overwrite TEXT,               -- LaTeX override; NULL means derive from `unit` parts
+    unit             TEXT NOT NULL,      -- JSON array [{"unit":"<id>","exponent":<n>},...]
+    system           TEXT CHECK (system IN ('SI','CGS','Imperial') OR system IS NULL),
+    is_base          INTEGER NOT NULL DEFAULT 0 CHECK (is_base IN (0,1)),
+    -- Reference graph: hop to another unit or compound_unit. NULL = root.
+    reference_unit_id TEXT,            -- may point to unit or compound_unit row
+    reference_expr     TEXT,            -- JSON: how to convert this compound's value to reference's value
+    CHECK (name_overwrite IS NULL OR json_valid(name_overwrite)),
+    CHECK (json_valid(unit)),
+    CHECK (reference_expr IS NULL OR json_valid(reference_expr)),
+    CHECK ((reference_unit_id IS NULL) = (reference_expr IS NULL))
 );
 
 CREATE TABLE IF NOT EXISTS constant (
@@ -30,8 +90,20 @@ CREATE TABLE IF NOT EXISTS constant (
     description  TEXT,               -- JSON i18n
     links        TEXT,               -- JSON array of URL strings: ["https://...", ...]
     value        REAL,               -- numerical value; NULL for symbolic constants
-    default_unit TEXT,               -- JSON array: [{"unit":"<id>","exponent":<n>},...]
-    quantity_id  TEXT REFERENCES quantity(id)  -- quantity whose unit/name applies
+    quantity_id  TEXT REFERENCES quantity(id),       -- quantity whose name applies
+    unit_id      TEXT REFERENCES unit(id),           -- constant's preferred unit (a named unit row), or NULL
+    compound_unit_id TEXT REFERENCES compound_unit(id), -- ...or a multi-part compound_unit, or NULL
+    CHECK (json_valid(name)),
+    CHECK (description IS NULL OR json_valid(description)),
+    CHECK (links IS NULL OR json_valid(links))
+);
+
+CREATE TABLE IF NOT EXISTS si_prefix (
+    id       TEXT PRIMARY KEY,           -- exponent as a string: "3" for kilo, "-3" for milli
+    name     TEXT NOT NULL,              -- JSON i18n: {"en-us":"Kilo","cs-cz":"Kilo"}
+    symbol   TEXT NOT NULL,              -- JSON i18n: {"en-us":"k","cs-cz":"k"}; LaTeX-safe raw symbols
+    CHECK (json_valid(name)),
+    CHECK (json_valid(symbol))
 );
 
 CREATE TABLE IF NOT EXISTS formula_token (
@@ -42,9 +114,8 @@ CREATE TABLE IF NOT EXISTS formula_token (
     constant_id              TEXT REFERENCES constant(id),
     operator_id              TEXT REFERENCES operator(id),
     value                    REAL,
-    label                    TEXT,        -- JSON i18n array
     symbol_overwrite         TEXT,        -- JSON i18n, applies to quantity/constant tokens
-    quantity_name_overwrite  TEXT,        -- JSON i18n, applies to quantity tokens
+    name_overwrite           TEXT,        -- JSON i18n, applies to quantity tokens
 
     PRIMARY KEY (formula_id, position),
 
@@ -57,59 +128,19 @@ CREATE TABLE IF NOT EXISTS formula_token (
             AND quantity_id IS NULL AND constant_id IS NULL AND operator_id IS NULL)
         OR (token_kind = 'operator' AND operator_id IS NOT NULL
             AND quantity_id IS NULL AND constant_id IS NULL AND value IS NULL)
-    )
+    ),
+    CHECK (symbol_overwrite IS NULL OR json_valid(symbol_overwrite)),
+    CHECK (name_overwrite IS NULL OR json_valid(name_overwrite))
 );
 
-CREATE TABLE IF NOT EXISTS formula_relation (
-    formula_id    TEXT NOT NULL REFERENCES formula(id),
-    related_id    TEXT NOT NULL REFERENCES formula(id),
-    relation_type TEXT NOT NULL CHECK (relation_type IN (
-        'alternative', 'derivation', 'special_case',
-        'generalization', 'condition', 'assumption'
-    )),
-    description   TEXT,                -- JSON i18n
-
-    UNIQUE (formula_id, related_id)
-);
-
-CREATE TABLE IF NOT EXISTS quantity (
-    id          TEXT PRIMARY KEY,
-    name        TEXT NOT NULL,       -- JSON i18n
-    symbol      TEXT NOT NULL,
-    symbol_overwrite TEXT,           -- JSON i18n override of quantity symbol
-    topic       TEXT,                -- ID into tree.json
-    difficulty  INTEGER CHECK (difficulty BETWEEN 1 AND 10),
-    description TEXT,                -- JSON i18n
-    links       TEXT,                -- JSON array of URL strings: ["https://...", ...]
-    default_unit TEXT,               -- JSON array: [{"unit":"<id>","exponent":<n>},...]
-    dim_M       REAL NOT NULL DEFAULT 0,
-    dim_L       REAL NOT NULL DEFAULT 0,
-    dim_T       REAL NOT NULL DEFAULT 0,
-    dim_I       REAL NOT NULL DEFAULT 0,
-    dim_Θ       REAL NOT NULL DEFAULT 0,
-    dim_N       REAL NOT NULL DEFAULT 0,
-    dim_J       REAL NOT NULL DEFAULT 0,
-    created     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-    modified    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-);
-
-CREATE TABLE IF NOT EXISTS unit (
-    id           TEXT PRIMARY KEY,
-    name         TEXT NOT NULL,        -- JSON i18n: {"en-us":"Meter","en-uk":"Metre"}
-    symbol       TEXT NOT NULL,
-    quantity_id  TEXT NOT NULL REFERENCES quantity(id),
-    default_unit INTEGER NOT NULL DEFAULT 0 CHECK (default_unit IN (0,1)),
-    unit_system  TEXT CHECK (unit_system IN ('SI','CGS','Imperial') OR unit_system IS NULL),
-    factor       REAL NOT NULL DEFAULT 1,
-    latex_factor TEXT,               -- LaTeX display for factor (e.g. "\frac{180}{\pi}")
-    offset       REAL NOT NULL DEFAULT 0
-);
-
-CREATE TABLE IF NOT EXISTS si_prefix (
-    id       TEXT PRIMARY KEY,
-    symbol   TEXT NOT NULL,          -- display symbol: k, M, \mu ...
-    name     TEXT NOT NULL,          -- JSON i18n: {"en-us":"Kilo","cs-cz":"Kilo"}
-    exponent INTEGER NOT NULL         -- power of ten: kilo=3, centi=-2
+CREATE TABLE IF NOT EXISTS operator (
+    id            TEXT PRIMARY KEY,
+    symbol        TEXT,               -- LaTeX display; NULL means invisible
+    arity         INTEGER NOT NULL CHECK (arity > 0),
+    precedence    INTEGER NOT NULL,
+    associativity TEXT NOT NULL CHECK (associativity IN ('left', 'right', 'none')),
+    operator_type TEXT NOT NULL CHECK (operator_type IN ('infix', 'prefix', 'postfix', 'relational')),
+    paren_arg     TEXT NOT NULL DEFAULT '[1]' CHECK (paren_arg LIKE '[%' AND json_valid(paren_arg))
 );
 
 CREATE INDEX IF NOT EXISTS idx_formula_token_formula  ON formula_token(formula_id);
@@ -120,3 +151,4 @@ CREATE INDEX IF NOT EXISTS idx_formula_relation_formula ON formula_relation(form
 CREATE INDEX IF NOT EXISTS idx_formula_relation_related ON formula_relation(related_id);
 CREATE INDEX IF NOT EXISTS idx_formula_relation_type    ON formula_relation(relation_type);
 CREATE INDEX IF NOT EXISTS idx_unit_quantity            ON unit(quantity_id);
+CREATE INDEX IF NOT EXISTS idx_compound_unit_quantity   ON compound_unit(quantity_id);
