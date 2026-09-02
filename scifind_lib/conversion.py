@@ -581,43 +581,32 @@ def _pretty_factor(x):
         return "0"
     ax = abs(x)
     sign = "-" if x < 0 else ""
-    if ax >= 1e4 or ax < 1e-4:
-        # Normalise to mantissa in [1, 10). If the mantissa rounds to
-        # 10.0 (or 1.0 in the case of a 0.99... value), bump to the next
-        # decade so the display stays tidy.
+    if ax >= 1e15 or ax < 1e-4:
         exp = int(math.floor(math.log10(ax)))
         mant = x / (10 ** exp)
+        # If mant is in [0.1, 1) bump up (so mantissa is in [1, 10)).
         if 0.1 <= abs(mant) < 1:
             mant *= 10
             exp -= 1
-        if abs(mant) >= 10 or abs(mant) >= 9.999995:
+        # If mant is exactly 10 (rounding put it over), bump back.
+        if abs(mant) >= 10:
             mant /= 10
             exp += 1
-        # Format the mantissa to 6 significant digits (no exponential),
-        # then trim trailing zeros so e.g. 9.9999999999 displays as 9.99999.
-        # This avoids the `:4g` rounding-up-to-10 problem.
-        mant_str = f"{mant:.6f}".rstrip("0").rstrip(".")
-        return f"{sign}{mant_str}\\times10^{{{exp}}}"
+        return f"{sign}{mant:.4g}\\times10^{{{exp}}}"
     if x == int(x) and abs(x) < 1e15:
         return str(int(x))
     return f"{x:.6g}"
 
 
 def render_equation(graph, row_id, ref_id):
-    """Build the conversion-cell LaTeX.
+    """Build the conversion-cell LaTeX: '1 row = N ref'.
 
-    Picks the form by walking the path between row and ref:
-    - Offset chain → equation form: `x <ref> = x <row> ± k ...`
-    - Single hop, clean factor (no constant, no offset) → direct
-      equality: `1 <row> = N <ref>`
-    - Otherwise → chain form: `1 <row> = <chain> [= N] <ref>` where
-      `<chain>` is the multiplicative walk with `×` between factors and
-      `÷` for divisors, repeated same-value factors collapsed into
-      powers (e.g. `× 60 × 60 → 60^2`).
-    - Cross-quantity or no path → numeric fallback from root values.
+    Picks the path that yields the cleanest display:
+    - If row and ref are in the same quantity, walk the reference graph
+      (forward or inverse) for symbolic / offset / numeric forms.
+    - If cross-quantity (e.g. `hectare` ↔ `square_foot`), compute the
+      ratio numerically from root values and emit a numeric form.
     """
-    global _GRAPH
-    _GRAPH = graph
     if row_id == ref_id:
         return None
 
@@ -628,6 +617,7 @@ def render_equation(graph, row_id, ref_id):
             return _emit_path_equation(graph, path_fwd, dirs_fwd)
         if path_inv is not None and len(path_inv) >= 2:
             return _emit_inverse_path_equation(graph, path_inv, dirs_inv)
+        # Both quantities in same table but no path? Numeric fallback.
     return _render_numeric_equation(graph, row_id, ref_id)
 
 
@@ -643,83 +633,21 @@ def _same_quantity(graph, a, b):
 
 
 def _emit_path_equation(graph, path, directions):
-    """Emit the chain-style equation for a path.
+    """Emit the equation for a path: path = [row, ..., ref].
 
-    `directions` is per-hop "fwd" or "bwd". A "bwd" hop means the
-    stored edge is on the next node; we invert it: mul↔div, add↔sub.
+    `directions` has the same length as `path - 1`. Each entry is "fwd"
+    or "bwd": "fwd" means use `edges[cur][1]` (cur → ref); "bwd" means
+    the connection runs in reverse (someone else points to cur with that
+    expression, so to invert we take 1/x).
     """
-    return _render_chain(graph, path, directions, invert=False)
+    row_sym = _unit_latex(graph, path[0])
+    ref_sym = _unit_latex(graph, path[-1])
 
-
-def _emit_inverse_path_equation(graph, path, directions):
-    """Emit the chain-style equation for an inverse-direction path."""
-    return _render_chain(graph, path, directions, invert=True)
-
-
-def _render_chain(graph, path, directions, invert):
-    """Core chain rendering. Used by both forward and inverse paths.
-
-    Picks the form by path shape:
-    - Offset present → equation form (already handled).
-    - Single hop, single clean factor → direct equality
-      `1 row = N ref` (no chain notation).
-    - Single hop with constant (1 or 2 factors) → chain form
-      `1 row = <chain> ref` (no final value).
-    - Multi-hop → chain form `1 row = <chain> = N ref`.
-    """
-    row_id = path[0]
-    ref_id = path[-1]
-    row_sym = _unit_latex(graph, row_id)
-    ref_sym = _unit_latex(graph, ref_id)
-
-    factors, has_constant, has_offset = _collect_factors(
-        graph, path, directions)
-    if has_offset:
-        # Offset chain: equation form (preserves the offset).
-        if invert:
-            return _render_offset_equation_inverse(
-                graph, path, row_id, ref_id, directions)
-        return _render_offset_equation_directed(
-            graph, path, directions, row_sym, ref_sym, graph.conn)
-
-    if not factors:
-        return f"1\\,{row_sym} = 1\\,{ref_sym}"
-
-    collapsed = _collapse_factors(factors)
-    multi_hop = len(path) > 2
-    n_collapsed = len(collapsed)
-
-    if n_collapsed == 1 and not multi_hop:
-        # Single factor, single hop → direct equality.
-        f0 = collapsed[0]
-        v = _fraction(f0["value"]) if f0["kind"] == "num" else f0["value"]
-        v = v if f0["op"] == "mul" else 1.0 / v
-        v = v ** f0.get("count", 1)
-        return f"1\\,{row_sym} = {_pretty_factor_value(v)}\\,{ref_sym}"
-
-    chain_str = _format_chain(collapsed)
-    final = 1.0
-    for f in collapsed:
-        v = _fraction(f["value"]) if f["kind"] == "num" else f["value"]
-        base = v if f["op"] == "mul" else 1.0 / v
-        final *= base ** f.get("count", 1)
-    if multi_hop:
-        return (f"1\\,{row_sym} = {chain_str} = "
-                f"{_pretty_factor_value(final)}\\,{ref_sym}")
-    # Single-hop with constant: chain only, no final.
-    return f"1\\,{row_sym} = {chain_str}\\,{ref_sym}"
-
-
-def _collect_factors(graph, path, directions):
-    """Walk the path and return (factors, has_constant, has_offset).
-
-    Each factor is a dict: {"op": "mul"|"div", "kind": "num"|"const",
-    "value": float}. The "value" is always positive (sign carried by op).
-    """
-    factors = []
     has_constant = False
     has_offset = False
-    constants = graph.constants_dict()
+    # Compose the chain product: for each hop, multiply by the edge
+    # expression (or its inverse if direction is "bwd").
+    x = 1.0
     for i, cur in enumerate(path[:-1]):
         direction = directions[i]
         if direction == "fwd":
@@ -728,184 +656,92 @@ def _collect_factors(graph, path, directions):
             pred = path[i + 1]
             expr = graph.edges.get(pred, (None, None))[1]
         if expr is None:
-            continue
-        steps = expr if isinstance(expr, list) else [expr]
-        for s in steps:
-            if s is None:
-                continue
-            op = s.get("op")
-            if op in ("add", "sub"):
-                has_offset = True
-                continue
-            # A constant-substitution step ({"constant": "pi"}) has no
-            # explicit "op"; treat it as multiplication. (For bwd we
-            # leave it as mul too — the inversion logic is meaningless
-            # for a constant substitution since constants are not
-            # direction-dependent.)
-            if op is None and "constant" in s:
-                op = "mul"
-            if direction == "bwd":
-                if op == "mul":
-                    op = "div"
-                elif op == "div":
-                    op = "mul"
-            if "constant" in s:
-                cid = s["constant"]
-                v = constants.get(cid)
-                if v is None or not math.isfinite(v):
-                    continue
-                factors.append({"op": op, "kind": "const", "value": v, "cid": cid})
+            return None
+        for step in (expr if isinstance(expr, list) else [expr]):
+            if "constant" in step:
                 has_constant = True
-            elif op in ("mul", "div"):
-                v = _fraction(s.get("value"))
-                if not math.isfinite(v) or v == 0:
-                    continue
-                factors.append({"op": op, "kind": "num", "value": v})
-    return factors, has_constant, has_offset
+            if step.get("op") in ("add", "sub"):
+                has_offset = True
+        if direction == "fwd":
+            x = _apply(expr, x, graph.constants_dict())
+        else:
+            v = _apply(expr, 1.0, graph.constants_dict())
+            if not math.isfinite(v) or v == 0:
+                return None
+            x /= v
+        if not math.isfinite(x):
+            return None
+
+    if has_offset:
+        return _render_offset_equation_directed(graph, path, directions,
+                                                row_sym, ref_sym, graph.conn)
+    if has_constant:
+        return _render_symbolic_factor(graph, path, row_sym, ref_sym)
+    factor_str = _pretty_factor(x)
+    if factor_str == "1":
+        return f"1\\,{row_sym} = 1\\,{ref_sym}"
+    return f"1\\,{row_sym} = {factor_str}\\,{ref_sym}"
 
 
-def _collapse_factors(factors):
-    """Combine repeated same factors: ×60, ×60 → ×60^2; ×60, ÷60 → skip.
+def _emit_inverse_path_equation(graph, path, directions):
+    """Emit the equation when path was computed `from_id=ref_id, to_id=row_id`.
 
-    Returns a list of factor dicts, each representing one multiplicative
-    unit (with implicit count=1). Constants are kept as separate
-    entries even if their numeric values collide.
+    `path = [ref, ..., row]`. The first hop is from `ref` toward `row`.
+    For each hop we want the equation in the form `x_row = f(x_ref)`,
+    so the path is traversed in reverse: for hop i (going from
+    `path[i]` to `path[i+1]` in the original forward direction),
+    we invert if `directions[i]` was "fwd" (the chain was stored forward
+    but we want the inverse direction), and keep "bwd" hops as-is
+    (they already represent the inverse).
     """
-    # Group by (op, kind, canonical_value). For numerics, canon is int
-    # when possible; for constants, canon is the cid string. We keep
-    # the original `value` field (the numeric value for constants) on
-    # the resulting dict so the formatter can look up the LaTeX symbol.
-    groups = []  # list of [key, count, value] (value = the factor's value field)
-    index = {}   # key -> index in groups
-    for f in factors:
-        if f["kind"] == "num":
-            v = f["value"]
-            if isinstance(v, float) and v.is_integer() and abs(v) < 1e15:
-                canon = int(v)
-            else:
-                canon = repr(v)
+    row_id = path[-1]
+    ref_id = path[0]
+    row_sym = _unit_latex(graph, row_id)
+    ref_sym = _unit_latex(graph, ref_id)
+
+    has_constant = False
+    has_offset = False
+    # Walk path in reverse: from path[-1] (row) back to path[0] (ref).
+    # Each step corresponds to an original hop. If the original hop was
+    # "fwd" (path[i] → edges[path[i]]), we now invert it: 1 / f.
+    # If the original hop was "bwd", the relationship was already
+    # inverse, so we apply it directly.
+    x = 1.0
+    for i in range(len(path) - 1, 0, -1):
+        original_idx = i - 1
+        direction = directions[original_idx]
+        cur = path[i]
+        prev = path[i - 1]
+        if direction == "fwd":
+            expr = graph.edges.get(prev, (None, None))[1]
         else:
-            canon = f.get("cid", id(f))
-        key = (f["op"], f["kind"], canon)
-        if key in index:
-            groups[index[key]][1] += 1
+            expr = graph.edges.get(cur, (None, None))[1]
+        if expr is None:
+            return None
+        for step in (expr if isinstance(expr, list) else [expr]):
+            if "constant" in step:
+                has_constant = True
+            if step.get("op") in ("add", "sub"):
+                has_offset = True
+        if direction == "fwd":
+            v = _apply(expr, 1.0, graph.constants_dict())
+            if not math.isfinite(v) or v == 0:
+                return None
+            x /= v
         else:
-            index[key] = len(groups)
-            groups.append([key, 1, f["value"]])
+            x = _apply(expr, x, graph.constants_dict())
+            if not math.isfinite(x):
+                return None
 
-    # Cancel (op, kind, value) appearing in both mul and div.
-    pos = {}
-    neg = {}
-    for i, ((op, kind, _val), count, _v) in enumerate(groups):
-        d = pos if op == "mul" else neg
-        d[i] = count
-    kept = []
-    for i, (key, count, value) in enumerate(groups):
-        op = key[0]
-        p = pos.get(i, 0)
-        n = neg.get(i, 0)
-        diff = p - n
-        if diff > 0:
-            kept.append({"op": "mul", "kind": key[1], "value": value, "count": diff})
-        elif diff < 0:
-            kept.append({"op": "div", "kind": key[1], "value": value, "count": -diff})
-    return kept
+    if has_offset:
+        return _render_offset_equation_inverse(graph, path, row_id, ref_id, directions)
+    if has_constant:
+        return _render_symbolic_factor(graph, path, ref_sym, row_sym)
 
-
-def _format_chain(factors):
-    """Format a list of collapsed factors as `× 24 × 60² × π ÷ 648000`.
-
-    Rules:
-    - The leading `×` is omitted if the first factor is a constant
-      symbol, or if the first factor starts with `(...)` (a parenthesised
-      group emitted because the previous factor was a constant followed
-      by a divisor).
-    - Repeated same factors collapse: 60², π², etc.
-    - Constants followed by a divisor are parenthesised: `× π ÷ 180`
-      becomes `(π ÷ 180)`.
-    - The whole chain is concatenated; no `=` at the end (the caller
-      appends `= N ref` separately).
-    """
-    if not factors:
-        return ""
-
-    # First, build raw segments.
-    segments = []  # list of strings like "× 24" or "÷ 60" or "π"
-    for idx, f in enumerate(factors):
-        op = f["op"]
-        count = f.get("count", 1)
-        if f["kind"] == "const":
-            sym = _constant_latex_for(f["value"], _current_graph())
-            base = sym
-        else:
-            v = f["value"]
-            if isinstance(v, float) and v.is_integer() and abs(v) < 1e15:
-                base = str(int(v))
-            else:
-                base = f"{v:.6g}"
-        if count > 1:
-            base += f"^{{{count}}}"
-        if op == "mul":
-            segments.append(("\\times", base))
-        else:
-            segments.append(("\\div", base))
-
-    # Grouping: if a ÷ follows a × constant, wrap them in parens.
-    out = []
-    i = 0
-    while i < len(segments):
-        if i + 1 < len(segments) and segments[i][0] == "\\times" and segments[i+1][0] == "\\div":
-            out.append(f"({segments[i][1]} {segments[i+1][0]} {segments[i+1][1]})")
-            i += 2
-        else:
-            op_sym, val = segments[i]
-            if i == 0 and (op_sym == "\\div" or (op_sym == "\\times" and
-                                              (val.startswith("\\") or
-                                               (factors[i]["kind"] == "const")))):
-                # First factor: omit leading `×` if it's a div, or if
-                # the value is a constant symbol, or starts with `\`
-                # (LaTeX command).
-                out.append(val)
-            elif i == 0:
-                out.append(f"{val}")
-            else:
-                out.append(f"{op_sym} {val}")
-            i += 1
-    return " ".join(out)
-
-
-# Module-global used by _format_chain to look up constant symbols by value.
-_GRAPH = None
-
-
-def _constant_latex_for(value, graph):
-    """Return the LaTeX symbol for the constant whose value matches.
-
-    Looks up the constant table by numeric value and returns its symbol.
-    """
-    if graph is None or not hasattr(graph, "conn"):
-        return f"{value:.6g}"
-    row = graph.conn.execute(
-        "SELECT symbol FROM constant WHERE value IS NOT NULL "
-        "ORDER BY ABS(value - ?) LIMIT 1",
-        (value,),
-    ).fetchone()
-    if row is None:
-        return f"{value:.6g}"
-    return row["symbol"]
-
-
-def _current_graph():
-    return _GRAPH
-
-
-def _pretty_factor_value(x):
-    """Pretty-print a numeric value for the cell's final = N ref term."""
-    if x == 0:
-        return "0"
-    if isinstance(x, float) and x.is_integer() and abs(x) < 1e15:
-        return str(int(x))
-    return _pretty_factor(x)
+    factor_str = _pretty_factor(x)
+    if factor_str == "1":
+        return f"1\\,{row_sym} = 1\\,{ref_sym}"
+    return f"1\\,{row_sym} = {factor_str}\\,{ref_sym}"
 
 
 def _render_offset_equation(graph, path, row_sym, ref_sym, constants):
@@ -1076,6 +912,59 @@ def _render_offset_equation_inverse(graph, path, row_id, ref_id, directions):
             return f"x\\,{row_sym} = {inner}"
         return f"x\\,{row_sym} = {inner}"
     return None
+
+
+def _render_symbolic_factor(graph, path, row_sym, ref_sym):
+    """Symbolic factor form for chains that touch a constant.
+
+    e.g. degree → radian via [pi, div 180] yields '1° = π/180 rad'.
+    """
+    # Compose the factor symbolically, substituting constants inline.
+    numerator_parts = []
+    denominator_parts = []
+    for cur in path[:-1]:
+        expr = graph.edges[cur][1]
+        steps = expr if isinstance(expr, list) else [expr]
+        for s in steps:
+            if "constant" in s:
+                sym = _constant_symbol(graph.conn, s["constant"])
+                numerator_parts.append(sym)
+            elif s.get("op") == "div":
+                d = s.get("value")
+                if isinstance(d, str) and "/" in d:
+                    n, dn = d.split("/")
+                    numerator_parts.append(n)
+                    denominator_parts.append(dn)
+                else:
+                    denominator_parts.append(str(int(_fraction(d))))
+            elif s.get("op") == "mul":
+                v = s.get("value")
+                if isinstance(v, str) and "/" in v:
+                    n, d = v.split("/")
+                    numerator_parts.append(n)
+                    denominator_parts.append(d)
+                else:
+                    v_int = int(_fraction(v))
+                    if v_int == 1:
+                        pass
+                    else:
+                        numerator_parts.append(str(v_int))
+            elif s.get("op") is None and "value" in s:
+                v = s.get("value")
+                if isinstance(v, str) and "/" in v:
+                    n, d = v.split("/")
+                    numerator_parts.append(n)
+                    denominator_parts.append(d)
+                else:
+                    numerator_parts.append(str(_fraction(v)))
+
+    num_str = " \\cdot ".join(numerator_parts) if numerator_parts else "1"
+    den_str = " \\cdot ".join(denominator_parts) if denominator_parts else None
+    if den_str:
+        factor = f"\\frac{{{num_str}}}{{{den_str}}}"
+    else:
+        factor = num_str
+    return f"1\\,{row_sym} = {factor}\\,{ref_sym}"
 
 
 def _operand_latex(step, conn_or_constants):
