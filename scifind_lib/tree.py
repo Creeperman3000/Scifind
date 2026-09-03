@@ -1,5 +1,4 @@
 """Science/branch/topic tree loaded from tree.json."""
-# Licensed under the LICENSE file in the project root.
 
 import json
 
@@ -27,13 +26,6 @@ def walk_tree(tree, visit):
             walk_tree([child], visit)
 
 
-def walk_tree_skip(tree, visit):
-    """Depth-first walk; visit(node) returning False skips children."""
-    for root in tree:
-        if visit(root):
-            walk_tree_skip(root.get("children") or [], visit)
-
-
 def leaf_ids(node):
     if not node.get("children"):
         return {node["id"]}
@@ -55,11 +47,11 @@ def expand_selection(tree, ids):
     idset = set(ids)
     covered = set()
 
-    def visit(node):
+    def _expand_node(node):
         if node["id"] in idset:
             covered.update(descendant_ids(node))
 
-    walk_tree(tree, visit)
+    walk_tree(tree, _expand_node)
     return covered
 
 
@@ -76,13 +68,14 @@ def compress_selection(tree, ids):
 
     out = set()
 
-    def visit_collapse(node):
-        if leaf_ids(node) <= covered_leaves:
-            out.add(node["id"])
-            return False
-        return True
+    def visit_collapse(roots):
+        for node in roots:
+            if leaf_ids(node) <= covered_leaves:
+                out.add(node["id"])
+                continue
+            visit_collapse(node.get("children") or [])
 
-    walk_tree_skip(tree, visit_collapse)
+    visit_collapse(tree)
     return out
 
 
@@ -96,9 +89,9 @@ def topic_name_map(tree, locale="en-us"):
     """Flat {id: localised name} for every node in the tree."""
     out = {}
 
-    def visit(node):
+    def _name_node(node):
         out[node["id"]] = localise(node.get("translations") or {}, locale)
-    walk_tree(tree, visit)
+    walk_tree(tree, _name_node)
     return out
 
 
@@ -115,15 +108,15 @@ def topic_name(topic_id, tree=None, locale="en-us"):
 
 def topic_path(tree, topic):
     """Return the ids along the path to a topic, or None if not in the tree."""
-    def visit(node, ancestors=()):
+    def _path_node(node, ancestors=()):
         if node["id"] == topic:
             return ancestors + (topic,)
         for child in (node.get("children") or []):
-            result = visit(child, ancestors + (node["id"],))
+            result = _path_node(child, ancestors + (node["id"],))
             if result:
                 return result
     for root in tree:
-        if result := visit(root):
+        if result := _path_node(root):
             return result
     return None
 
@@ -134,12 +127,12 @@ def topic_tree_order():
     order = {}
     counter = [0]
 
-    def visit(node):
+    def _order_node(node):
         order[node["id"]] = counter[0]
         counter[0] += 1
         for child in (node.get("children") or []):
-            visit(child)
+            _order_node(child)
 
     for root in tree:
-        visit(root)
+        _order_node(root)
     return order

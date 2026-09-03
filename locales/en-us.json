@@ -3,6 +3,8 @@
     "name": "US English",
     "acceptLanguage": "en-US",
     "ordinalSuffix": "th",
+    "seoDescription": "Find formulas and quantities!",
+    "seoKeywords": "find, physics, math, formulas, quantities",
     "unitWords": {
       "squared": "squared",
       "cubed": "cubed",
@@ -41,6 +43,7 @@
       "dim_mode_dimensions": "Dimensions",
       "dim_mode_quantities": "Quantities",
       "dim_mode_units": "Units",
+      "system": "System",
       "export_download": "Download",
       "found_bug": "Found a bug?",
       "report_bug": "Report",
@@ -89,7 +92,7 @@
       "links": "Links",
       "units": "Units",
       "system": "System",
-      "factor_to": "Factor to",
+      "conversion_to": "Conversion to:",
       "offset_from": "Offset from",
       "factor_and_offset": "Factor to and offset from",
       "reference_unit": "Reference unit",
@@ -111,7 +114,11 @@
       "formulas_with_constant": "Appears in formulas"
     },
     "unit": {
-      "system_any": "any"
+      "system_any": "any",
+      "system_si": "SI",
+      "system_cgs": "CGS",
+      "system_imperial": "Imperial",
+      "system_base": "Base {system}"
     },
     "relation": {
       "alternative": "Alternative",

@@ -1,4 +1,4 @@
-.formula-error { display: block; color: var(--text-secondary); min-height: 3.5em; line-height: 3.5em; }
+.formula-error { display: block; color: var(--text-secondary); min-height: 3.5em; line-height: 3.5em; overflow-wrap: anywhere; word-break: break-word; }
 
 .formula-placeholder { color: var(--text-secondary); }
 .token-sidebar { display: flex; flex-direction: column; gap: 12px; margin-top: 4px; }

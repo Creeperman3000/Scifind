@@ -28,15 +28,15 @@ from scifind_lib import (
     database_path,
     open_database,
     database_has_formula_table,
-    init_database,
-    render_formula,
+    initialize_database,
+    render_formula_latex,
     format_dimensions_plain,
-    extract_dimensions_from_row,
-    search_headings,
+    dimensions_from_row,
+    search_entities,
     difficulty_to_stars,
     localise_english,
     fetch_formula,
-    fetch_formula_related,
+    fetch_formula_relations,
     fetch_formula_quantities,
     fetch_quantity,
     fetch_quantity_units,
@@ -47,8 +47,9 @@ from scifind_lib import (
     export_to_xlsx,
     export_to_ods,
     export_to_sql,
+    select_base_unit_with_fallback,
     topic_name,
-    format_unit_str,
+    format_unit_symbol_plain,
     group_by_topic,
 )
 
@@ -71,11 +72,11 @@ def _wrap(text):
 
 
 def _print_unit_row(u):
-    mark = "\u2713" if u["default_unit"] else " "
+    mark = "\u2713" if u["is_base"] else " "
     offset_str = f" + {u['offset']}" if u["offset"] else ""
     print(
         f"  [{mark}] ${u['symbol']}$  {_styled("bold", u['id'])}  "
-        f"[{u['unit_system'] or 'any'}]  \u00d7{u['factor']}{offset_str} \u2192 SI"
+        f"[{u['system'] or 'any'}]  \u00d7{u['factor']}{offset_str} \u2192 SI"
     )
 
 
@@ -93,7 +94,9 @@ def command_init(args):
             existing.close()
 
     try:
-        change_count = init_database(force=args.force)
+        if args.force:
+            os.environ["SCIFIND_ALLOW_FORCE_INIT"] = "1"
+        change_count = initialize_database(force=args.force)
     except (sqlite3.Error, OSError) as exc:
         _exit_with_error(f"initialisation failed: {exc}")
 
@@ -102,13 +105,13 @@ def command_init(args):
 
 
 def _parse_difficulty_range(raw):
-    parts = raw.split("-")
+    range_parts = raw.split("-")
     try:
-        if len(parts) == 1:
-            value = int(parts[0])
+        if len(range_parts) == 1:
+            value = int(range_parts[0])
             return value, value
-        if len(parts) == 2:
-            return int(parts[0]), int(parts[1])
+        if len(range_parts) == 2:
+            return int(range_parts[0]), int(range_parts[1])
     except ValueError:
         pass
     _exit_with_error(f"invalid difficulty range {raw!r} (expected N or N-M)")
@@ -142,9 +145,9 @@ def _query_formulas(conn, topic=None, difficulty=None):
 def _print_formulas(rows, id_width=40, row_indent="    ", topic_suffix=":"):
     for topic, items in group_by_topic(rows).items():
         print(f"\n  {_styled("yellow", topic)}{topic_suffix}")
-        for f in items:
-            stars = difficulty_to_stars(f["difficulty"])
-            print(f"{row_indent}{f['id']:{id_width}s} {stars}  {f['name_en']}")
+        for formula in items:
+            stars = difficulty_to_stars(formula["difficulty"])
+            print(f"{row_indent}{formula['id']:{id_width}s} {stars}  {formula['name_en']}")
     print()
 
 
@@ -164,9 +167,9 @@ def command_show(args):
     if not row:
         print(f"Formula '{args.id}' not found.")
         sys.exit(1)
-    related = fetch_formula_related(conn, args.id)
+    related = fetch_formula_relations(conn, args.id)
     quantities = fetch_formula_quantities(conn, args.id)
-    latex = render_formula(conn, args.id, locale="en-us")
+    latex = render_formula_latex(conn, args.id, locale="en-us")
     conn.close()
 
     name = localise_english(row["name"])
@@ -180,28 +183,28 @@ def command_show(args):
         print(f"  {_styled("cyan", topic)}  (difficulty {difficulty}/10)")
 
     if latex:
-        print(f"\n  $$")
+        print("\n  $$")
         print(f"  {latex}")
-        print(f"  $$")
+        print("  $$")
 
     if description:
         print(f"\n  {_styled("dim", _wrap(description))}")
 
     if quantities:
         print(f"\n  {_styled("bold", 'Quantities:')}")
-        for q in quantities:
-            print(f"    ${q['symbol']}$  {q['name_en']}  ({_styled("dim", q['id'])})")
+        for qty in quantities:
+            print(f"    ${qty['symbol']}$  {qty['name_en']}  ({_styled("dim", qty['id'])})")
 
     if related:
         print(f"\n  {_styled("bold", 'Related:')}")
-        for r in related:
-            print(f"    {_styled("dim", r['relation_type'])} \u2192 {r['related_id']}  ({r['related_name']})")
+        for rel in related:
+            print(f"    {_styled("dim", rel['relation_type'])} \u2192 {rel['related_id']}  ({rel['related_name']})")
     print()
 
 
 def command_search(args):
     conn = open_database()
-    rows = search_headings(conn, args.query, args.limit)
+    rows = search_entities(conn, args.query, args.limit)
     conn.close()
     if not rows:
         print("No results.")
@@ -211,6 +214,17 @@ def command_search(args):
     for kind, id_, name_en in rows:
         print(f"  [{kind}] {name_en}  ({id_})")
     print()
+
+
+def _unit_str_for_quantity(conn, qid, system="SI"):
+    base = select_base_unit_with_fallback(conn, qid, system)
+    if base is None:
+        return ""
+    if base["kind"] == "compound_unit":
+        unit_json = base["unit"]
+    else:
+        unit_json = f'[{{"unit": "{base["id"]}", "exponent": 1}}]'
+    return format_unit_symbol_plain(unit_json)
 
 
 def command_quantities(args):
@@ -229,10 +243,10 @@ def command_quantities(args):
         header += f" for {_styled("yellow", args.formula)}"
     print(header + "\n")
 
-    for q in rows:
-        dimensions = format_dimensions_plain(*extract_dimensions_from_row(q))
-        unit_str = format_unit_str(q["default_unit"])
-        print(f"  ${q['symbol']}$  {_styled("bold", q['name_en'])}  ({_styled("dim", q['id'])})")
+    for qty in rows:
+        dimensions = format_dimensions_plain(*dimensions_from_row(qty))
+        unit_str = _unit_str_for_quantity(conn, qty["id"])
+        print(f"  ${qty['symbol']}$  {_styled("bold", qty['name_en'])}  ({_styled("dim", qty['id'])})")
         if unit_str:
             print(f"      Dimensions: {_styled("dim", dimensions)}  default unit: {unit_str}")
         else:
@@ -252,9 +266,9 @@ def command_quantity(args):
 
     name = localise_english(q["name"])
     description = localise_english(q["description"])
-    dimensions = format_dimensions_plain(*extract_dimensions_from_row(q))
+    dimensions = format_dimensions_plain(*dimensions_from_row(q))
+    unit_str = _unit_str_for_quantity(conn, args.id)
     conn.close()
-    unit_str = format_unit_str(q["default_unit"])
 
     label = f"${q['symbol']}$ \u2014 {name}"
     print(f"\n  {_styled("bold", label)}  ({_styled("dim", q['id'])})")
@@ -268,14 +282,14 @@ def command_quantity(args):
 
     if units:
         print(f"\n  {_styled("bold", 'Units:')}")
-        for u in units:
-            _print_unit_row(u)
+        for unit in units:
+            _print_unit_row(unit)
 
     if formulas:
         print(f"\n  {_styled("bold", 'Appears in formulas:')}")
-        for f in formulas:
-            stars = difficulty_to_stars(f["difficulty"])
-            print(f"    {f['id']:40s} {stars}  {f['name_en']}")
+        for formula in formulas:
+            stars = difficulty_to_stars(formula["difficulty"])
+            print(f"    {formula['id']:40s} {stars}  {formula['name_en']}")
     print()
 
 
@@ -287,12 +301,12 @@ def command_units(args):
     """
     if args.quantity:
         rows = conn.execute(
-            base_query + " WHERE u.quantity_id = ? ORDER BY u.default_unit DESC, u.unit_system",
+            base_query + " WHERE u.quantity_id = ? ORDER BY u.is_base DESC, u.system",
             (args.quantity,),
         ).fetchall()
     else:
         rows = conn.execute(
-            base_query + " ORDER BY q.id, u.default_unit DESC, u.unit_system"
+            base_query + " ORDER BY q.id, u.is_base DESC, u.system"
         ).fetchall()
     conn.close()
     if not rows:
@@ -304,8 +318,8 @@ def command_units(args):
         header += f" for {_styled("yellow", args.quantity)}"
     print(header + "\n")
 
-    for u in rows:
-        _print_unit_row(u)
+    for unit in rows:
+        _print_unit_row(unit)
     print()
 
 

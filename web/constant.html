@@ -57,7 +57,7 @@
       <tr>
         <td><span class="latex-observe" data-latex="{{ u.value_latex }}"></span></td>
         <td>${{ u.symbol_latex }}$ {{ u.name_html }}</td>
-        <td>{{ u.unit_system or _('unit.system_any') }}</td>
+        <td>{{ u.system or _('unit.system_any') }}</td>
       </tr>
     {% endfor %}
     </tbody>

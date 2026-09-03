@@ -1,15 +1,13 @@
 """build_create_sql — generate the two INSERT SQL strings for /create."""
-# Licensed under the LICENSE file in the project root.
 
 import json
 import re
 
 from scifind_lib.db import sql_literal as sql_str
-from scifind_lib.dimensions import format_number
 from scifind_lib.parser import parse_equation
 
 
-QTY_OVERRIDE_FIELDS = ("label", "symbol_overwrite", "quantity_name_overwrite")
+QTY_OVERRIDE_FIELDS = ("name_overwrite", "symbol_overwrite")
 
 
 def build_create_sql(
@@ -46,8 +44,7 @@ def build_create_sql(
     overrides = overrides or {}
     translations = translations or {}
 
-    def add_locale(blob, value, locale):
-        """Return a JSON dict string with `locale: value` merged into `blob`."""
+    def merge_locale_value(blob, value, locale):
         obj = {}
         if blob:
             try:
@@ -69,10 +66,10 @@ def build_create_sql(
                 continue
             t_name = tr.get("name")
             if t_name:
-                name_json = add_locale(name_json, t_name.strip(), loc)
+                name_json = merge_locale_value(name_json, t_name.strip(), loc)
             t_desc = tr.get("description")
             if t_desc:
-                desc_json = add_locale(desc_json, t_desc, loc)
+                desc_json = merge_locale_value(desc_json, t_desc, loc)
             t_ov = tr.get("overrides") or {}
             if t_ov:
                 tr_overrides_by_loc[loc] = t_ov
@@ -84,15 +81,12 @@ def build_create_sql(
         f"{sql_str(links_json)});"
     )
 
-    def i18n_override(field, key):
+    def build_i18n_override_sql(field, key):
         ov = overrides.get(key) or {}
         base = ov.get(field)
         if base is None:
-            # Accept the shorter override-field vocabulary used by the
-            # /create form ("symbol", "name") alongside the token-column
-            # names ("symbol_overwrite", "quantity_name_overwrite").
             alias = {"symbol_overwrite": "symbol",
-                     "quantity_name_overwrite": "name"}.get(field)
+                     "name_overwrite": "name"}.get(field)
             if alias:
                 base = ov.get(alias)
         per_locale = {loc: (t_ov.get(key) or {}).get(field)
@@ -112,13 +106,13 @@ def build_create_sql(
         if kind == "number":
             rows.append(
                 f"({sql_str(formula_id)}, {pos}, 'number', "
-                f"NULL, NULL, NULL, {tok['value']}, NULL, NULL, NULL)"
+                f"NULL, NULL, NULL, {tok['value']}, NULL, NULL)"
             )
         elif kind == "quantity":
             qid = tok["quantity_id"]
             key = qid + "|" + (tok.get("label") or "") + "|" + str(pos)
             overrides_sql = ", ".join(
-                i18n_override(field, key) for field in QTY_OVERRIDE_FIELDS
+                build_i18n_override_sql(field, key) for field in QTY_OVERRIDE_FIELDS
             )
             rows.append(
                 f"({sql_str(formula_id)}, {pos}, 'quantity', "
@@ -127,21 +121,21 @@ def build_create_sql(
         elif kind == "constant":
             rows.append(
                 f"({sql_str(formula_id)}, {pos}, 'constant', "
-                f"NULL, {sql_str(tok['constant_id'])}, NULL, NULL, NULL, NULL, NULL)"
+                f"NULL, {sql_str(tok['constant_id'])}, NULL, NULL, NULL, NULL)"
             )
-        else:  # operator
+        else:
             op_id = tok["operator_id"]
             if op_id in ("paren_open", "paren_close"):
                 raise ValueError("unbalanced parentheses")
             rows.append(
                 f"({sql_str(formula_id)}, {pos}, 'operator', "
-                f"NULL, NULL, {sql_str(op_id)}, NULL, NULL, NULL, NULL)"
+                f"NULL, NULL, {sql_str(op_id)}, NULL, NULL, NULL)"
             )
 
     token_sql = (
         "INSERT OR IGNORE INTO formula_token\n"
         "  (formula_id, position, token_kind, quantity_id, constant_id,\n"
-        "   operator_id, value, label, symbol_overwrite, quantity_name_overwrite)\n"
+        "   operator_id, value, name_overwrite, symbol_overwrite)\n"
         "VALUES\n"
         + ",\n".join(rows)
         + ";"

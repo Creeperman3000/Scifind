@@ -24,11 +24,12 @@
 <html lang="{{ g.locale or 'en' }}">
 <head>
   <meta charset="utf-8">
-  <meta name="description" content="Find formulas and quantities!">
-  <meta name="keywords" content="find, physics, math, formulas, quantities">
+  <meta name="description" content="{{ g.locale_seo_description }}">
+  <meta name="keywords" content="{{ g.locale_seo_keywords }}">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script>(function(){try{var t=localStorage.getItem('sf-theme');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
   <title>{% block title %}Scifind{% endblock %}</title>
+  <link rel="icon" type="image/svg+xml" href="{{ static_v('favicon.svg') }}">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.css">
   <script>window._KATEX_MACROS = {};</script>
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.js"></script>
@@ -107,6 +108,15 @@
               <option value="unit" {{ 'selected' if g.dim_mode == 'unit' }}>{{ _('detail.units') }}</option>
             </select>
           </div>
+          <div class="settings-item">
+            <label for="setting-unit-system">{{ _('settings.system') }}</label>
+            <select id="setting-unit-system" data-action="switch-unit-system">
+              <option value="SI" {{ 'selected' if g.unit_system == 'SI' }}>{{ _('unit.system_si') }}</option>
+              <option value="CGS" {{ 'selected' if g.unit_system == 'CGS' }}>{{ _('unit.system_cgs') }}</option>
+              <option value="Imperial" {{ 'selected' if g.unit_system == 'Imperial' }}>{{ _('unit.system_imperial') }}</option>
+            </select>
+          </div>
+          <div class="settings-divider"></div>
           <div class="settings-item">
             <span>{{ _('settings.export') }}</span>
             <form method="get" action="/export" class="form-row">
@@ -298,6 +308,7 @@
   </div>
 
   <script>
+    window._csrfToken = {{ csrf_token()|tojson }};
     window._dimensionSymbols = {{ dimension_symbol_list|tojson|safe }};
     window._localeUI = {{ locale_ui|tojson|safe }};
     window._availableSorts = {{ available_sorts|tojson|safe }};

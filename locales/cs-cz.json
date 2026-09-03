@@ -4,6 +4,8 @@
     "acceptLanguage": "cs",
     "fallback": "en-us",
     "ordinalSuffix": ".",
+    "seoDescription": "Najděte vzorce a veličiny!",
+    "seoKeywords": "najít, fyzika, matematika, vzorce, veličiny",
     "unitWords": {
       "squared": "čtvereční",
       "cubed": "krychlový",
@@ -55,6 +57,7 @@
       "dim_mode_dimensions": "Rozměry",
       "dim_mode_quantities": "Veličiny",
       "dim_mode_units": "Jednotky",
+      "system": "Systém",
       "export_download": "Stáhnout",
       "found_bug": "Našel jsi chybu?",
       "report_bug": "Nahlásit",
@@ -103,7 +106,7 @@
       "links": "Odkazy",
       "units": "Jednotky",
       "system": "Systém",
-      "factor_to": "Přepočet na",
+      "conversion_to": "Převod na:",
       "offset_from": "Posun od",
       "factor_and_offset": "Přepočet na a posun od",
       "reference_unit": "Referenční jednotka",
@@ -125,7 +128,11 @@
       "formulas_with_constant": "Vyskytuje se ve vzorcích"
     },
     "unit": {
-      "system_any": "libovolný"
+      "system_any": "libovolný",
+      "system_si": "SI",
+      "system_cgs": "CGS",
+      "system_imperial": "Imperiální",
+      "system_base": "Základní {system}"
     },
     "relation": {
       "alternative": "Alternativa",

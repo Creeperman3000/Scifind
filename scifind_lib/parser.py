@@ -1,7 +1,9 @@
 """Equation tokeniser + shunting-yard-to-RPN."""
-# Licensed under the LICENSE file in the project root.
 
 import json
+import logging
+
+logger = logging.getLogger("scifind.parser")
 
 
 _CHAINABLE_RELATIONALS = {
@@ -14,29 +16,31 @@ def _parse_paren_arg(raw, arity, op_id):
     """Parse the operator.paren_arg JSON column into [bool] of length arity."""
     try:
         parsed = json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
+    except (json.JSONDecodeError, TypeError) as exc:
+        logger.warning("operator %r: paren_arg bad JSON: %s", op_id, exc)
         raise ValueError(
             f"paren_arg for {op_id} must be a JSON list of {arity} 0/1 values; got {raw!r}"
-        )
+        ) from exc
     if not isinstance(parsed, list) or len(parsed) != arity:
+        logger.warning("operator %r: paren_arg wrong shape: %r", op_id, parsed)
         raise ValueError(
             f"paren_arg for {op_id} must be a JSON list of {arity} 0/1 values; got {raw!r}"
         )
-    if not all(p in (0, 1, True, False) for p in parsed):
+    if not all(isinstance(p, (int, bool)) and int(p) in (0, 1) for p in parsed):
+        logger.warning("operator %r: paren_arg has non-binary values: %r", op_id, parsed)
         raise ValueError(
             f"paren_arg for {op_id} must contain only 0/1; got {parsed!r}"
         )
     return [bool(p) for p in parsed]
 
 
+# Cap on a per-connection cache: id(conn) is recycled, so a long-running
+# server would otherwise accumulate one entry per request.
 _PARSER_CACHE = {}
-# The web app opens a fresh connection per request, and id(conn) is
-# eventually recycled — cap the cache (FIFO) so a long-running server
-# doesn't accumulate one entry per request.
 _PARSER_CACHE_MAX = 64
 
 
-def _parser_caches(conn):
+def _parser_cache_for(conn):
     cache = _PARSER_CACHE.get(id(conn))
     if cache is None:
         if len(_PARSER_CACHE) >= _PARSER_CACHE_MAX:
@@ -48,7 +52,7 @@ def _parser_caches(conn):
         by_id = {}
         symbol_to_id = {}
         for r in conn.execute(
-            "SELECT id, symbol, math, arity, precedence, associativity, operator_type, paren_arg "
+            "SELECT id, symbol, arity, precedence, associativity, operator_type, paren_arg "
             "FROM operator"
         ):
             by_id[r["id"]] = dict(r)
@@ -58,8 +62,8 @@ def _parser_caches(conn):
     return cache
 
 
-def _find_longest_operator_at(symbol_to_id, s, i, n):
-    """Return (op_id, length) for the longest operator at s[i:i+1..i+4]."""
+def _match_operator_at(symbol_to_id, s, i, n):
+    """Return (op_id, length) for the longest operator starting at s[i], up to 4 chars."""
     for length in (4, 3, 2, 1):
         if i + length > n:
             continue
@@ -76,7 +80,7 @@ def parse_equation(conn, equation):
     Returns token dicts shaped like formula_token rows. Raises ValueError on
     parse error.
     """
-    cache = _parser_caches(conn)
+    cache = _parser_cache_for(conn)
     op_by_id, symbol_to_id = cache["operators"]
     qty_ids = cache["qty_ids"]
     const_ids = cache["const_ids"]
@@ -85,16 +89,16 @@ def parse_equation(conn, equation):
         return []
 
     s = equation
-    i, n = 0, len(s)
+    pos, n = 0, len(s)
     tokens = []
 
-    while i < n:
-        ch = s[i]
+    while pos < n:
+        ch = s[pos]
         if ch.isspace():
-            i += 1
+            pos += 1
             continue
-        if ch.isdigit() or (ch == "." and i + 1 < n and s[i + 1].isdigit()):
-            j = i
+        if ch.isdigit() or (ch == "." and pos + 1 < n and s[pos + 1].isdigit()):
+            j = pos
             seen_dot = False
             seen_exp = False
             while j < n:
@@ -111,24 +115,24 @@ def parse_equation(conn, equation):
                         j += 1
                 else:
                     break
-            num_str = s[i:j]
+            num_str = s[pos:j]
             try:
                 value = float(num_str)
             except ValueError as e:
                 raise ValueError(f"bad number: {num_str!r}") from e
             tokens.append({"token_kind": "number", "value": value})
-            i = j
+            pos = j
             continue
         if ch.isalpha() or ch == "_":
-            op_id, op_len = _find_longest_operator_at(symbol_to_id, s, i, n)
+            op_id, op_len = _match_operator_at(symbol_to_id, s, pos, n)
             if op_id is not None:
                 tokens.append({"token_kind": "operator", "operator_id": op_id})
-                i += op_len
+                pos += op_len
                 continue
-            j = i
+            j = pos
             while j < n and (s[j].isalnum() or s[j] == "_"):
                 j += 1
-            ident = s[i:j]
+            ident = s[pos:j]
             alias = None
             if j < n and s[j] == "[":
                 k = s.find("]", j + 1)
@@ -151,27 +155,27 @@ def parse_equation(conn, equation):
                 if alias is not None:
                     tok["label"] = alias
                 tokens.append(tok)
-            i = j
+            pos = j
             continue
         if ch == "(":
             tokens.append({"token_kind": "operator", "operator_id": "paren_open"})
-            i += 1
+            pos += 1
             continue
         if ch == ")":
             tokens.append({"token_kind": "operator", "operator_id": "paren_close"})
-            i += 1
+            pos += 1
             continue
-        op_id, op_len = _find_longest_operator_at(symbol_to_id, s, i, n)
+        op_id, op_len = _match_operator_at(symbol_to_id, s, pos, n)
         if op_id is not None:
             tokens.append({"token_kind": "operator", "operator_id": op_id})
-            i += op_len
+            pos += op_len
             continue
-        raise ValueError(f"unexpected character: {ch!r} at position {i}")
+        raise ValueError(f"unexpected character: {ch!r} at position {pos}")
 
-    return _shunting_yard_to_rpn(tokens, op_by_id)
+    return _infix_to_rpn(tokens, op_by_id)
 
 
-def _shunting_yard_to_rpn(tokens, op_by_id):
+def _infix_to_rpn(tokens, op_by_id):
     """Convert a flat infix token list to RPN.
 
     Each operator stack entry carries a `consumed` counter: only operators
@@ -200,8 +204,8 @@ def _shunting_yard_to_rpn(tokens, op_by_id):
         if kind in ("number", "quantity", "constant"):
             output.append(tok)
             while stack and stack[-1]["operator_id"] in op_by_id:
-                top = op_by_id[stack[-1]["operator_id"]]
-                if top["operator_type"] not in ("prefix", "postfix"):
+                top_op = op_by_id[stack[-1]["operator_id"]]
+                if top_op["operator_type"] not in ("prefix", "postfix"):
                     break
                 output.append(stack.pop())
             _bump_operand_count()
@@ -240,8 +244,8 @@ def _shunting_yard_to_rpn(tokens, op_by_id):
         if assoc == "none" and op_type == "relational":
             while stack and stack[-1]["operator_id"] != "paren_open":
                 top_id = stack[-1]["operator_id"]
-                top = op_by_id.get(top_id)
-                if top and top["operator_type"] == "relational":
+                top_op = op_by_id.get(top_id)
+                if top_op and top_op["operator_type"] == "relational":
                     break
                 output.append(stack.pop())
             stack.append({**tok, "consumed": 0})
@@ -251,23 +255,25 @@ def _shunting_yard_to_rpn(tokens, op_by_id):
             top_id = top_entry["operator_id"]
             if top_id == "paren_open":
                 break
-            top = op_by_id.get(top_id)
-            if top is None or top["operator_type"] in ("prefix", "postfix"):
+            top_op = op_by_id.get(top_id)
+            if top_op is None or top_op["operator_type"] in ("prefix", "postfix"):
                 break
-            if top_entry["consumed"] < top["arity"]:
-                break
-            if top["precedence"] > prec or (
-                top["precedence"] == prec and assoc == "left"
+            if (
+                top_op["precedence"] == prec
+                and assoc == "left"
+                and top_entry["consumed"] >= top_op["arity"]
             ):
+                output.append(stack.pop())
+            elif top_op["precedence"] > prec and top_entry["consumed"] >= top_op["arity"]:
                 output.append(stack.pop())
             else:
                 break
         stack.append({**tok, "consumed": 0})
 
     while stack:
-        top = stack.pop()
-        if top["operator_id"] in ("paren_open", "paren_close"):
+        top_entry = stack.pop()
+        if top_entry["operator_id"] in ("paren_open", "paren_close"):
             raise ValueError("unmatched parenthesis")
-        output.append(top)
+        output.append(top_entry)
 
     return output

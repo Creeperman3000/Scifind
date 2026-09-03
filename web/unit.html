@@ -2,7 +2,7 @@
 {% block title %}{{ _(unit.name) or unit.id }}{% endblock %}
 {% block content %}
 
-<h2>{% if unit.symbol %}${{ render_symbol(unit.symbol) }}$ {% endif %}{{ _(unit.name) or unit.id }}</h2>
+<h2>{% if unit.symbol %}${{ wrap_symbol_in_latex(unit.symbol) }}$ {% endif %}{{ _(unit.name) or unit.id }}</h2>
 
 <div class="detail-desc">{{ _('detail.unit') }}</div>
 
@@ -28,15 +28,15 @@
       <tr>
         <th>{{ _('detail.unit') }}</th>
         <th>{{ _('detail.system') }}</th>
-        <th>{{ _('detail.factor_to') }}{% if table_data.ref_label %} <span class="units-ref-name">{{ table_data.ref_label }}</span>{% endif %}</th>
+        <th>{{ _('detail.conversion_to') }}{% if table_data.ref_label %} <span class="units-ref-name">{{ table_data.ref_label }}</span>{% endif %}</th>
       </tr>
     </thead>
     <tbody>
     {% for u in units %}
       <tr data-unit-id="{{ u.id }}"{% if u.is_ref %} class="is-ref"{% endif %}>
-        <td>${{ u.symbol_latex }}$ {{ u.name_html }}<button type="button" class="units-ref-btn filter-btn" data-action="units-ref-pick" data-unit-id="{{ u.id }}" title="{{ _('detail.reference_unit') }}" aria-label="{{ _('detail.reference_unit') }}" aria-pressed="{{ 'true' if u.is_ref else 'false' }}"{{ ' disabled' if u.is_ref }}><span class="ref-ic ref-ic-offer"><i data-lucide="circle" width="14" height="14"></i></span><span class="ref-ic ref-ic-active"><i data-lucide="circle-dot" width="14" height="14"></i></span></button></td>
-        <td>{{ u.unit_system or _('unit.system_any') }}</td>
-        <td class="uv-conv">{% if u.is_ref %}&ndash;{% endif %}</td>
+        <td>${{ u.symbol_latex }}$ {{ u.name_html }}{% if not fixed_ref %}<button type="button" class="units-ref-btn filter-btn" data-action="units-ref-pick" data-unit-id="{{ u.id }}" title="{{ _('detail.reference_unit') }}" aria-label="{{ _('detail.reference_unit') }}" aria-pressed="{{ 'true' if u.is_ref else 'false' }}"{{ ' disabled' if u.is_ref }}><span class="ref-ic ref-ic-offer"><i data-lucide="circle" width="14" height="14"></i></span><span class="ref-ic ref-ic-active"><i data-lucide="circle-dot" width="14" height="14"></i></span></button>{% endif %}</td>
+        <td>{{ u.system or _('unit.system_any') }}</td>
+        <td class="uv-conv">{% if u.is_ref %}&ndash;{% elif u.latex_by_ref.get(table_data.ref) %}<span class="latex-observe" data-latex="{{ u.latex_by_ref[table_data.ref] }}"></span>{% endif %}</td>
       </tr>
     {% endfor %}
     </tbody>
@@ -46,10 +46,10 @@
     <colgroup><col class="units-c1"><col class="units-c2"><col class="units-c3"></colgroup>
     <tbody>
     {% for p in si_prefixes %}
-      <tr data-unit-id="{{ p.payload_id }}" class="{{ p.row_class }}{% if p.is_ref %} is-ref{% endif %}">
-        <td><span class="latex-observe" data-latex="{{ p.symbol_latex }}"></span> {% if p.link_unit_id %}<a href="/unit/{{ p.link_unit_id }}">{{ p.name }}</a>{% else %}{{ p.name }}{% endif %}<button type="button" class="units-ref-btn filter-btn" data-action="units-ref-pick" data-unit-id="{{ p.payload_id }}" title="{{ _('detail.reference_unit') }}" aria-label="{{ _('detail.reference_unit') }}" aria-pressed="{{ 'true' if p.is_ref else 'false' }}"{{ ' disabled' if p.is_ref }}><span class="ref-ic ref-ic-offer"><i data-lucide="circle" width="14" height="14"></i></span><span class="ref-ic ref-ic-active"><i data-lucide="circle-dot" width="14" height="14"></i></span></button></td>
+      <tr data-unit-id="{{ p.id }}" class="{% if p.collapsed %}si-extra{% endif %}{% if p.is_ref %} is-ref{% endif %}">
+        <td>${{ p.symbol_latex }}$ {% if p.link_unit_id %}<a href="/unit/{{ p.link_unit_id }}">{{ p.name }}</a>{% else %}{{ p.name }}{% endif %}{% if not fixed_ref %}<button type="button" class="units-ref-btn filter-btn" data-action="units-ref-pick" data-unit-id="{{ p.id }}" title="{{ _('detail.reference_unit') }}" aria-label="{{ _('detail.reference_unit') }}" aria-pressed="{{ 'true' if p.is_ref else 'false' }}"{{ ' disabled' if p.is_ref }}><span class="ref-ic ref-ic-offer"><i data-lucide="circle" width="14" height="14"></i></span><span class="ref-ic ref-ic-active"><i data-lucide="circle-dot" width="14" height="14"></i></span></button>{% endif %}</td>
         <td>{% if p.system_key %}{{ _(p.system_key) }}{% endif %}</td>
-        <td class="uv-conv"><span class="latex-observe" data-latex="{{ p.value_latex }}"></span></td>
+        <td class="uv-conv">{% if p.is_ref %}&ndash;{% elif p.latex_by_ref.get(table_data.ref) %}<span class="latex-observe" data-latex="{{ p.latex_by_ref[table_data.ref] }}"></span>{% else %}<span class="latex-observe" data-latex="{{ p.value_latex }}"></span>{% endif %}</td>
       </tr>
     {% endfor %}
       <tr class="si-toggle-row" data-action="toggle-si-prefixes" aria-expanded="false" title="{{ _('detail.si_show_all') }}" data-more="{{ _('detail.si_show_all') }}" data-less="{{ _('detail.si_show_less') }}">

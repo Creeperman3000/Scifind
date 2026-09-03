@@ -1,7 +1,8 @@
 """Sorting helpers used by the list pages."""
-# Licensed under the LICENSE file in the project root.
 
-from scifind_lib.queries import _in_clause, fetch_formula_qty_const_tokens
+from scifind_lib.constants import _BASE_DIMENSION_QTY_IDS
+from scifind_lib.db import in_clause
+from scifind_lib.queries import fetch_formula_quantity_constant_tokens
 from scifind_lib.tree import topic_tree_order
 from scifind_lib.i18n import localise
 
@@ -19,18 +20,18 @@ DEFAULT_FORMULA_SORT = "id"
 DEFAULT_QUANTITY_SORT = "id"
 DEFAULT_SEARCH_SORT = "relevance"
 
+UNKNOWN_TREE_SORT_KEY = float("inf")
 
-def _meta_by_id(conn, sql, ids):
-    """{id: row-dict} for `sql` (containing an `{}` slot for the IN list)."""
+
+def _metadata_by_id(conn, sql, ids):
     if not ids:
         return {}
-    placeholders, params = _in_clause(ids)
+    placeholders, params = in_clause(ids)
     return {r["id"]: dict(r)
             for r in conn.execute(sql.format(placeholders), params).fetchall()}
 
 
 def entity_sort_key(row, sort_key, locale, tree_order, qty_const_tokens=None):
-    """Sort key shared by formulas and quantities."""
     if sort_key == "name":
         return (localise(row["name"], locale).lower(), row["id"])
     if sort_key == "diff_asc":
@@ -40,7 +41,7 @@ def entity_sort_key(row, sort_key, locale, tree_order, qty_const_tokens=None):
     if sort_key in ("topic_tree", "topic_alpha"):
         topic = row.get("topic_id") or ""
         if sort_key == "topic_tree":
-            return (tree_order.get(topic, 10 ** 9), topic, row["id"])
+            return (tree_order.get(topic, UNKNOWN_TREE_SORT_KEY), topic, row["id"])
         return (topic, row["id"])
     if sort_key == "qty":
         tokens = (qty_const_tokens or {}).get(row["id"], [])
@@ -49,17 +50,15 @@ def entity_sort_key(row, sort_key, locale, tree_order, qty_const_tokens=None):
 
 
 def sort_formulas(conn, rows, sort_key, locale="en-us"):
-    """Return formula dict-rows sorted by the given key."""
     if sort_key not in FORMULA_SORT_KEYS:
         sort_key = DEFAULT_FORMULA_SORT
-    qty_const_tokens = fetch_formula_qty_const_tokens(conn) if sort_key == "qty" else {}
+    qty_const_tokens = fetch_formula_quantity_constant_tokens(conn) if sort_key == "qty" else {}
     tree_order = topic_tree_order() if sort_key == "topic_tree" else {}
     key_fn = lambda r: entity_sort_key(r, sort_key, locale, tree_order, qty_const_tokens)
     return sorted(rows, key=key_fn)
 
 
 def sort_quantities(rows, sort_key, locale="en-us"):
-    """Return quantity dict-rows sorted by the given key."""
     if sort_key not in QUANTITY_SORT_KEYS:
         sort_key = DEFAULT_QUANTITY_SORT
     tree_order = topic_tree_order() if sort_key == "topic_tree" else {}
@@ -68,79 +67,51 @@ def sort_quantities(rows, sort_key, locale="en-us"):
 
 
 def sort_search_rows(conn, rows, sort_key, locale="en-us"):
-    """Sort mixed search hits (kind, id, display_name)."""
     if sort_key not in SEARCH_SORT_KEYS:
         sort_key = DEFAULT_SEARCH_SORT
     if sort_key == "relevance":
         return list(rows)
 
-    formula_ids = [r[1] for r in rows if r[0] == "formula"]
-    quantity_ids = [r[1] for r in rows if r[0] == "quantity"]
-    unit_ids = [r[1] for r in rows if r[0] == "unit"]
-    constant_ids = [r[1] for r in rows if r[0] == "constant"]
+    meta_by_kind = {
+        k: _metadata_by_id(conn, sql, [r[1] for r in rows if r[0] == k])
+        for k, sql in {
+            "formula": "SELECT id, name, topic, difficulty FROM formula WHERE id IN ({})",
+            "quantity": "SELECT id, name, topic, difficulty FROM quantity WHERE id IN ({})",
+            "unit": (
+                "SELECT u.id, u.name, u.quantity_id, q.name AS quantity_name, "
+                "q.topic AS quantity_topic, q.difficulty AS quantity_difficulty "
+                "FROM unit u LEFT JOIN quantity q ON q.id = u.quantity_id WHERE u.id IN ({})"
+            ),
+            "constant": (
+                "SELECT c.id, c.name, c.difficulty, q.topic AS quantity_topic "
+                "FROM constant c LEFT JOIN quantity q ON q.id = c.quantity_id WHERE c.id IN ({})"
+            ),
+        }.items()
+    }
 
-    formula_meta = _meta_by_id(
-        conn,
-        "SELECT id, name, topic, difficulty FROM formula WHERE id IN ({})",
-        formula_ids,
-    )
-    quantity_meta = _meta_by_id(
-        conn,
-        "SELECT id, name, topic, difficulty FROM quantity WHERE id IN ({})",
-        quantity_ids,
-    )
-    unit_meta = _meta_by_id(
-        conn,
-        """
-        SELECT u.id, u.name, u.quantity_id, q.name AS quantity_name,
-               q.topic AS quantity_topic, q.difficulty AS quantity_difficulty
-        FROM unit u LEFT JOIN quantity q ON q.id = u.quantity_id
-        WHERE u.id IN ({})
-        """,
-        unit_ids,
-    )
-    constant_meta = _meta_by_id(
-        conn,
-        """
-        SELECT c.id, c.name, c.difficulty, q.topic AS quantity_topic
-        FROM constant c LEFT JOIN quantity q ON q.id = c.quantity_id
-        WHERE c.id IN ({})
-        """,
-        constant_ids,
-    )
-
-    qty_const_tokens = fetch_formula_qty_const_tokens(conn)
+    qty_const_tokens = fetch_formula_quantity_constant_tokens(conn)
     tree_order = topic_tree_order() if sort_key == "topic_tree" else {}
 
-    def key(row):
+    def _metadata_for(kind, ent_id):
+        meta = meta_by_kind[kind].get(ent_id) or {}
+        difficulty = meta.get("difficulty") or meta.get("quantity_difficulty") or 0
+        topic = meta.get("topic") or meta.get("quantity_topic") or ""
+        return difficulty, topic
+
+    def search_row_sort_key(row):
         kind, ent_id, display_name = row[0], row[1], row[2]
         if sort_key == "id":
             return (kind, ent_id)
         if sort_key == "name":
-            name = display_name or ent_id
-            return (name.lower(), kind, ent_id)
+            return ((display_name or ent_id).lower(), kind, ent_id)
         if sort_key in ("diff_asc", "diff_desc", "topic_tree", "topic_alpha"):
-            meta = None
-            if kind == "formula":
-                meta = formula_meta.get(ent_id)
-            elif kind == "quantity":
-                meta = quantity_meta.get(ent_id)
-            elif kind == "unit":
-                meta = unit_meta.get(ent_id)
-            elif kind == "constant":
-                meta = constant_meta.get(ent_id)
-            if meta is None:
-                difficulty = 0
-                topic = ""
-            else:
-                difficulty = meta.get("difficulty") or meta.get("quantity_difficulty") or 0
-                topic = meta.get("topic") or meta.get("quantity_topic") or ""
+            difficulty, topic = _metadata_for(kind, ent_id)
             if sort_key == "diff_asc":
                 return (difficulty, kind, ent_id)
             if sort_key == "diff_desc":
                 return (-difficulty, kind, ent_id)
             if sort_key == "topic_tree":
-                return (tree_order.get(topic, 10 ** 9), topic, kind, ent_id)
+                return (tree_order.get(topic, UNKNOWN_TREE_SORT_KEY), topic, kind, ent_id)
             return (topic, kind, ent_id)
         if sort_key == "qty":
             if kind == "formula":
@@ -152,10 +123,19 @@ def sort_search_rows(conn, rows, sort_key, locale="en-us"):
             if kind == "quantity":
                 return ([f"quantity {ent_id}"], kind, ent_id)
             if kind == "unit":
-                meta = unit_meta.get(ent_id)
+                meta = meta_by_kind["unit"].get(ent_id)
                 qid = meta["quantity_id"] if meta else None
                 return ([f"quantity {qid}"] if qid else [], kind, ent_id)
             return ([], kind, ent_id)
         return (kind, ent_id)
 
-    return sorted(rows, key=key)
+    return sorted(rows, key=search_row_sort_key)
+
+
+def sort_quantities_base_first(quantity_rows):
+    """Sort quantities: base dimensions first, rest by id."""
+    base_order = {qid: i for i, qid in enumerate(_BASE_DIMENSION_QTY_IDS.values())}
+    def dimension_sort_key(quantity):
+        base_index = base_order.get(quantity["id"], len(base_order))
+        return (0 if base_index < len(base_order) else 1, base_index, quantity["id"])
+    return sorted(quantity_rows, key=dimension_sort_key)

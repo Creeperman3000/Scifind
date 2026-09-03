@@ -1,5 +1,4 @@
-"""Constants shared across the scifind_lib submodules."""
-# Licensed under the LICENSE file in the project root.
+"""Shared paths, base-dimension order, superscript digit map."""
 
 from pathlib import Path
 
@@ -18,24 +17,4 @@ _BASE_DIMENSION_QTY_IDS = {
     "J": "luminous_intensity",
 }
 
-
-# Quantities excluded from user-facing listings (search results,
-# /quantities, the qty filter sidebar). "drop" is a placeholder used by
-# some formulas and is meaningless on its own; "dimensionless" is a
-# meta-quantity with no own dimension.
-_HIDDEN_QUANTITY_IDS = frozenset({"drop", "dimensionless"})
-
-# ASCII digits and minus -> Unicode superscripts, for compact unit strings.
 SUPERSCRIPT_DIGITS = str.maketrans("0123456789-", "⁰¹²³⁴⁵⁶⁷⁸⁹⁻")
-
-
-def is_hidden_quantity(q):
-    """Return True when a quantity's id is in _HIDDEN_QUANTITY_IDS.
-
-    Accepts an id string or a row/dict with an "id" key."""
-    if not q:
-        return True
-    if isinstance(q, str):
-        return q in _HIDDEN_QUANTITY_IDS
-    return q["id"] in _HIDDEN_QUANTITY_IDS
-

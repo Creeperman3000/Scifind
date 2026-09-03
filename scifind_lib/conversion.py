@@ -30,7 +30,7 @@ import math
 import re
 from typing import Any
 
-from scifind_lib.units import format_default_unit_symbol
+from scifind_lib.units import format_compound_unit_symbol
 
 logger = logging.getLogger(__name__)
 
@@ -50,13 +50,6 @@ def _fraction(value):
         except ValueError:
             return float("nan")
     return float("nan")
-
-
-def _step_operand(step, constants):
-    """Resolve a step's operand as a float."""
-    if "constant" in step:
-        return constants.get(step["constant"], float("nan"))
-    return _fraction(step.get("value"))
 
 
 def _apply(expr, x, constants, ctx=None):
@@ -136,22 +129,44 @@ class UnitGraph:
             self.edges[row["id"]] = (ref, expr)
 
     def _ensure_unit_loaded(self, unit_id):
-        """Load a unit row into the graph if it's not already present
-        (and not a compound row). Returns the edge (ref_id, expr) or None
-        if the unit doesn't exist or is compound. Also adds the row's
-        full data to unit_rows so cross-quantity detection works.
+        """Load a unit row into the graph if it's not already present.
+
+        Returns the edge (ref_id, expr) or None if the unit doesn't exist.
+        A compound_unit row is treated as a graph root (no outgoing edge):
+        when it belongs to this quantity it was captured by the constructor;
+        a *cross-quantity* compound (e.g. `kilogram`, `metre_cubed`) is loaded
+        lazily and registered here so references that pass through it, such as
+        `pound → kilogram`, resolve instead of hitting an orphan.
         """
         if unit_id in self.edges or unit_id in self.unit_rows:
             return self.edges.get(unit_id)
         if unit_id in self.compound_rows:
-            return None  # compound unit = root, no edge
+            return None  # in-quantity compound = root, no edge
         row = self.conn.execute(
             "SELECT id, quantity_id, symbol, reference_unit_id, reference_expr "
             "FROM unit WHERE id = ?",
             (unit_id,),
         ).fetchone()
         if row is None:
-            return None
+            # Not a plain unit: it may be a compound belonging to another
+            # quantity. Load it as a compound root so the chain continues.
+            crow = self.conn.execute(
+                "SELECT id, quantity_id, unit, symbol_overwrite, system, "
+                "is_base, reference_unit_id, reference_expr "
+                "FROM compound_unit WHERE id = ?",
+                (unit_id,),
+            ).fetchone()
+            if crow is None:
+                return None
+            self.compound_rows[unit_id] = dict(crow)
+            expr = None
+            if crow["reference_expr"]:
+                try:
+                    expr = json.loads(crow["reference_expr"])
+                except (json.JSONDecodeError, TypeError):
+                    expr = None
+            self.edges[unit_id] = (crow["reference_unit_id"], expr)
+            return self.edges[unit_id]
         expr_raw = row["reference_expr"]
         expr = None
         if expr_raw:
@@ -179,6 +194,36 @@ class UnitGraph:
         ).fetchall():
             out[row["id"]] = float(row["value"])
         return out
+
+    def _is_temperature_unit(self, unit_id):
+        """Check if a unit_id is a temperature unit (any quantity)."""
+        row = self.conn.execute(
+            "SELECT quantity_id FROM unit WHERE id = ? UNION SELECT quantity_id FROM compound_unit WHERE id = ?",
+            (unit_id, unit_id),
+        ).fetchone()
+        return row and row["quantity_id"] == "temperature"
+
+    def root_value_differential(self, unit_id):
+        """Return the differential scale factor for a temperature unit,
+        or the normal root_value for non-temperature units.
+
+        For temperature units, this returns the ratio of 1 unit step
+        in the root temperature unit (kelvin/degree_celsius), e.g.:
+        - kelvin, degree_celsius → 1
+        - degree_fahrenheit, degree_rankine → 5/9
+        - degree_reaumur → 5/4
+        """
+        if not self._is_temperature_unit(unit_id):
+            return self.root_value(unit_id)
+        # Temperature differential scales relative to kelvin/celsius (both step=1)
+        diff_scales = {
+            "kelvin": 1.0,
+            "degree_celsius": 1.0,
+            "degree_fahrenheit": 5.0 / 9.0,
+            "degree_rankine": 5.0 / 9.0,
+            "degree_reaumur": 5.0 / 4.0,
+        }
+        return diff_scales.get(unit_id, 1.0)
 
     def path_to_root(self, unit_id):
         """Return [unit_id, ..., root] or None on cycle / orphan.
@@ -270,6 +315,9 @@ class UnitGraph:
         For `metre_per_second`, returns 1 (since 1 m/s = 1 m × 1 /s, both
         of which are unit rows). For `metre_squared`, returns 1 (1 m²
         involves 1 m, no second unit).
+
+        Temperature parts use their differential scale (1 for K/°C, 5/9
+        for °F/°R, 5/4 for °Ré) rather than the affine absolute value.
         """
         row = self.compound_rows.get(compound_id)
         if row is None:
@@ -284,9 +332,15 @@ class UnitGraph:
         for part in parts:
             uid = part.get("unit")
             exp = part.get("exponent", 1)
-            v = self.root_value(uid)
+            v = self.root_value_differential(uid)
             if v is None or not math.isfinite(v):
                 return None
+            prefix = part.get("prefix")
+            if prefix is not None:
+                try:
+                    v = v * (10.0 ** int(prefix))
+                except (TypeError, ValueError):
+                    return None
             result *= v ** exp
         return result
 
@@ -489,7 +543,7 @@ def _render_inverse_chain_equation(graph, path, row_id, ref_id):
         expr = graph.edges[cur][1]
         return _render_offset_equation(graph, [cur, path[1]], row_sym, ref_sym, constants)
     if has_constant:
-        return _render_symbolic_factor(graph, path, ref_sym, row_sym)
+        return _render_numeric_equation(graph, row_id, ref_id)
     # Pure multiplicative — compute the numeric ratio.
     return _render_numeric_equation(graph, row_id, ref_id)
 
@@ -508,13 +562,37 @@ def _render_numeric_equation(graph, row_id, ref_id):
     ratio = row_val / ref_val
     if not math.isfinite(ratio) or ratio == 1:
         return None
-    factor_str = _pretty_factor(ratio)
+    factor_str = _single_factor_value(ratio)
     row_sym = _unit_latex(graph, row_id)
     ref_sym = _unit_latex(graph, ref_id)
     return f"1\\,{row_sym} = {factor_str}\\,{ref_sym}"
 
 
 # ---------- LaTeX emission ----------
+
+def _prefix_symbol_latex(conn, exp):
+    """LaTeX for an SI prefix symbol (e.g. 'c', '\\mu ').
+
+    Pulls the localized (en-us) symbol for a prefix exponent from the DB
+    and returns it as a raw string: command-like symbols (e.g. micro) are
+    returned verbatim (preserving any trailing spacing so they don't
+    merge with the following unit symbol). The caller is expected to
+    wrap the final joined symbol in \\mathrm{} (typically via
+    ``format_compound_unit_symbol`` which now does so per-part).
+    """
+    row = conn.execute(
+        "SELECT symbol FROM si_prefix WHERE id = ?", (str(exp),)
+    ).fetchone()
+    if not row:
+        return ""
+    try:
+        symbol = json.loads(row["symbol"]).get("en-us", "")
+    except (json.JSONDecodeError, TypeError):
+        symbol = row["symbol"]
+    if not symbol:
+        return ""
+    return symbol
+
 
 def _unit_symbol(graph, unit_id):
     if unit_id in graph.unit_rows:
@@ -527,11 +605,23 @@ def _unit_symbol(graph, unit_id):
             parts = json.loads(row["unit"])
         except (json.JSONDecodeError, TypeError):
             return unit_id
-        sym_map = {uid: graph.unit_rows[uid]["symbol"]
-                   for uid in graph.unit_rows if uid in graph.unit_rows}
-        return format_default_unit_symbol(
+
+        def _part_symbol(uid):
+            if uid in graph.unit_rows:
+                return graph.unit_rows[uid].get("symbol") or uid
+            # Cross-quantity part not loaded into this graph yet — fall
+            # back to the DB so we don't render the bare id.
+            part_row = graph.conn.execute(
+                "SELECT symbol FROM unit WHERE id = ?", (uid,)).fetchone()
+            return part_row["symbol"] if part_row else uid
+
+        sym_map = {uid: _part_symbol(uid)
+                   for part in parts
+                   if (uid := part.get("unit")) is not None}
+        return format_compound_unit_symbol(
             json.dumps(parts),
             unit_symbol=lambda uid: sym_map.get(uid, uid),
+            prefix_symbol=lambda exp: _prefix_symbol_latex(graph.conn, int(exp)),
         )
     return unit_id
 
@@ -540,72 +630,60 @@ def _unit_latex(graph, unit_id):
     sym = _unit_symbol(graph, unit_id)
     if not sym:
         return ""
-    if "\\" in sym or "{" in sym:
+    if "\\mathrm{" in sym:
         return sym
     return f"\\mathrm{{{sym}}}"
 
 
-def _step_latex(step, constants):
-    """LaTeX for a step's operand (no threading, just the value)."""
-    if "constant" in step:
-        cid = step["constant"]
-        row = constants.get(cid) if isinstance(constants, dict) and "cid" in constants else None
-        # Pull from DB (constants dict is just numeric; we need symbols):
-        return _constant_symbol(constants, cid)
-    val = step.get("value")
-    if isinstance(val, str) and "/" in val and re.fullmatch(r"-?\d+(?:\.\d+)?/-?\d+(?:\.\d+)?", val):
-        n, d = val.split("/")
-        return f"\\frac{{{n}}}{{{d}}}"
-    try:
-        v = _fraction(val)
-        if not math.isfinite(v):
-            return "?"
-        if isinstance(val, (int, float)) and v == int(v) and abs(v) < 1e15:
-            return str(int(v))
-        return f"{v:.6g}"
-    except (ValueError, TypeError):
-        return str(val)
-
-
-def _constant_symbol(conn, cid):
-    """Look up a constant's symbol LaTeX from DB."""
-    if hasattr(conn, "execute"):
-        row = conn.execute("SELECT symbol FROM constant WHERE id = ?", (cid,)).fetchone()
-        if row:
-            return row["symbol"]
-    return cid
+def _unit_latex_for_var(graph, unit_id):
+    """Like _unit_latex but strips \\mathrm{} if present for use in subscripts/vars."""
+    sym = _unit_latex(graph, unit_id)
+    if sym.startswith("\\mathrm{") and sym.endswith("}"):
+        return sym[len("\\mathrm{"):-1]
+    return sym
 
 
 def _pretty_factor(x):
     if x == 0:
         return "0"
+    if math.isinf(x):
+        return "\\infty"
     ax = abs(x)
     sign = "-" if x < 0 else ""
-    if ax >= 1e15 or ax < 1e-4:
+    if ax >= 1e4 or ax < 1e-4:
+        # Normalise to mantissa in [1, 10). If the mantissa rounds to
+        # 10.0 (or 1.0 in the case of a 0.99... value), bump to the next
+        # decade so the display stays tidy.
         exp = int(math.floor(math.log10(ax)))
         mant = x / (10 ** exp)
-        # If mant is in [0.1, 1) bump up (so mantissa is in [1, 10)).
         if 0.1 <= abs(mant) < 1:
             mant *= 10
             exp -= 1
-        # If mant is exactly 10 (rounding put it over), bump back.
-        if abs(mant) >= 10:
+        if abs(mant) >= 10 or abs(mant) >= 9.999995:
             mant /= 10
             exp += 1
-        return f"{sign}{mant:.4g}\\times10^{{{exp}}}"
+        # Format the mantissa to 6 significant digits (no exponential),
+        # then trim trailing zeros so e.g. 9.9999999999 displays as 9.99999.
+        # This avoids the `:4g` rounding-up-to-10 problem.
+        mant_str = f"{mant:.6f}".rstrip("0").rstrip(".")
+        return f"{sign}{mant_str}\\times10^{{{exp}}}"
     if x == int(x) and abs(x) < 1e15:
         return str(int(x))
     return f"{x:.6g}"
 
 
 def render_equation(graph, row_id, ref_id):
-    """Build the conversion-cell LaTeX: '1 row = N ref'.
+    """Build the conversion-cell LaTeX.
 
-    Picks the path that yields the cleanest display:
-    - If row and ref are in the same quantity, walk the reference graph
-      (forward or inverse) for symbolic / offset / numeric forms.
-    - If cross-quantity (e.g. `hectare` ↔ `square_foot`), compute the
-      ratio numerically from root values and emit a numeric form.
+    Picks the form by walking the path between row and ref:
+    - Offset chain → equation form: `x <ref> = x <row> ± k ...`
+    - Single hop, single clean factor (no constant, no offset) → direct
+      equality: `1 <row> = N <ref>`
+    - Otherwise → chain form: `1 <row> = <chain> [= N] <ref>` where
+      `<chain>` is the multiplicative walk with `×` between factors and
+      `÷` for divisors, repeated same-value factors collapsed into
+      powers (e.g. `× 60 × 60 → 60^2`).
+    - Cross-quantity or no path → numeric fallback from root values.
     """
     if row_id == ref_id:
         return None
@@ -617,7 +695,6 @@ def render_equation(graph, row_id, ref_id):
             return _emit_path_equation(graph, path_fwd, dirs_fwd)
         if path_inv is not None and len(path_inv) >= 2:
             return _emit_inverse_path_equation(graph, path_inv, dirs_inv)
-        # Both quantities in same table but no path? Numeric fallback.
     return _render_numeric_equation(graph, row_id, ref_id)
 
 
@@ -633,21 +710,391 @@ def _same_quantity(graph, a, b):
 
 
 def _emit_path_equation(graph, path, directions):
-    """Emit the equation for a path: path = [row, ..., ref].
+    """Emit the chain-style equation for a path.
 
-    `directions` has the same length as `path - 1`. Each entry is "fwd"
-    or "bwd": "fwd" means use `edges[cur][1]` (cur → ref); "bwd" means
-    the connection runs in reverse (someone else points to cur with that
-    expression, so to invert we take 1/x).
+    `directions` is per-hop "fwd" or "bwd". A "bwd" hop means the
+    stored edge is on the next node; we invert it: mul↔div, add↔sub.
     """
-    row_sym = _unit_latex(graph, path[0])
-    ref_sym = _unit_latex(graph, path[-1])
+    return _render_chain(graph, path, directions, invert=False)
 
+
+def _emit_inverse_path_equation(graph, path, directions):
+    """Emit the chain-style equation for an inverse-direction path."""
+    return _render_chain(graph, path, directions, invert=True)
+
+
+def _render_chain(graph, path, directions, invert):
+    """Core chain rendering. Used by both forward and inverse paths.
+
+    Picks the form by path shape:
+    - Offset present → affine equation form (temperature etc.).
+    - Single hop, single clean factor → direct equality
+      `1 row = N ref` (no chain notation).
+    - Single hop with constant (1 or 2 factors) → chain form
+      `1 row = <chain> ref` (no final value).
+    - All-divisor chain → exact reciprocal `1 row = 1/(...) ref`.
+    - Multi-hop → chain form `1 row = <chain> = N ref`.
+    """
+    row_id = path[0]
+    ref_id = path[-1]
+    row_sym = _unit_latex(graph, row_id)
+    ref_sym = _unit_latex(graph, ref_id)
+
+    groups, has_constant, has_offset = _collect_factors(
+        graph, path, directions, invert)
+    if has_offset:
+        # Offset chain: affine equation form (preserves the offset).
+        return _render_affine_equation(graph, path, directions, invert)
+
+    factors = [f for group in groups for f in group]
+    if not factors:
+        return f"1\\,{row_sym} = 1\\,{ref_sym}"
+
+    collapsed = _collapse_factors(factors)
+    multi_hop = len(path) > 2
+    n_collapsed = len(collapsed)
+
+    if n_collapsed == 1 and not multi_hop:
+        # Single factor, single hop → direct equality.
+        f0 = collapsed[0]
+        if f0["kind"] == "const":
+            return f"1\\,{row_sym} = {_factor_text(f0, graph)}\\,{ref_sym}"
+        v = _fraction(f0["value"])
+        v = v if f0["op"] == "mul" else 1.0 / v
+        v = v ** f0.get("count", 1)
+        return f"1\\,{row_sym} = {_single_factor_value(v)}\\,{ref_sym}"
+
+    # All-divisor chain → render as an exact reciprocal (no decimal).
+    if all(f["op"] == "div" for f in collapsed):
+        den = _denominator_latex(collapsed, graph)
+        return f"1\\,{row_sym} = 1/{den}\\,{ref_sym}"
+
+    chain_str = _format_chain(collapsed, has_constant, groups, graph)
+    final = 1.0
+    for f in collapsed:
+        v = _fraction(f["value"]) if f["kind"] == "num" else f["value"]
+        base = v if f["op"] == "mul" else 1.0 / v
+        final *= base ** f.get("count", 1)
+    if multi_hop:
+        return (f"1\\,{row_sym} = {chain_str} = "
+                f"{_pretty_factor_value(final)}\\,{ref_sym}")
+    # Single-hop with constant: chain only, no final.
+    return f"1\\,{row_sym} = {chain_str}\\,{ref_sym}"
+
+
+def _collect_factors(graph, path, directions, invert):
+    """Walk the path and return (edge_groups, has_constant, has_offset).
+
+    `edge_groups` is a list (one entry per hop, in path order) of factor
+    lists. Each factor is a dict: {"op": "mul"|"div", "kind": "num"|"const",
+    "value": float}. The "value" is always positive (sign carried by op).
+
+    A "bwd" hop inverts the stored edge (mul↔div, add↔sub). When `invert`
+    is set (the whole path direction is inverted) every hop is flipped too.
+    """
+    groups = []
     has_constant = False
     has_offset = False
-    # Compose the chain product: for each hop, multiply by the edge
-    # expression (or its inverse if direction is "bwd").
-    x = 1.0
+    constants = graph.constants_dict()
+    for i, cur in enumerate(path[:-1]):
+        direction = directions[i]
+        if direction == "fwd":
+            expr = graph.edges.get(cur, (None, None))[1]
+        else:
+            pred = path[i + 1]
+            expr = graph.edges.get(pred, (None, None))[1]
+        group = []
+        if expr is not None:
+            steps = expr if isinstance(expr, list) else [expr]
+            for s in steps:
+                if s is None:
+                    continue
+                op = s.get("op")
+                if op in ("add", "sub"):
+                    has_offset = True
+                    continue
+                # A constant-substitution step ({"constant": "pi"}) has no
+                # explicit "op"; treat it as multiplication.
+                if op is None and "constant" in s:
+                    op = "mul"
+                if direction == "bwd":
+                    op = {"mul": "div", "div": "mul"}.get(op, op)
+                if "constant" in s:
+                    cid = s["constant"]
+                    v = constants.get(cid)
+                    if v is None or not math.isfinite(v):
+                        continue
+                    group.append({"op": op, "kind": "const",
+                                  "value": v, "cid": cid})
+                    has_constant = True
+                elif op in ("mul", "div"):
+                    v = _fraction(s.get("value"))
+                    if not math.isfinite(v) or v == 0:
+                        continue
+                    group.append({"op": op, "kind": "num", "value": v})
+        if invert:
+            for f in group:
+                f["op"] = "div" if f["op"] == "mul" else "mul"
+        groups.append(group)
+    return groups, has_constant, has_offset
+
+
+def _factor_sig(f):
+    """Identity for cancellation/consumption: (kind, op, canonical value)."""
+    if f["kind"] == "num":
+        v = f["value"]
+        canon = int(v) if (isinstance(v, float) and v.is_integer() and abs(v) < 1e15) else repr(v)
+        return ("num", f["op"], canon)
+    return ("const", f["op"], f.get("cid", id(f)))
+
+
+def _collapse_factors(factors):
+    """Combine repeated same factors and cancel mul↔div pairs.
+
+    Cancellation keys on (kind, canonical value) across BOTH op kinds so
+    `× π` followed by `÷ π` cancels out (the old code keyed on the op,
+    so it could never cancel across directions). Constants are keyed by
+    `cid`; numerics by integer value when integral.
+    """
+    recs = {}    # key -> [n_mul, n_div, first_value]
+    order = []   # keys in first-seen order (stable output ordering)
+    for f in factors:
+        if f["kind"] == "num":
+            v = f["value"]
+            canon = int(v) if (isinstance(v, float) and v.is_integer() and abs(v) < 1e15) else repr(v)
+            key = ("num", canon)
+        else:
+            key = ("const", f.get("cid", id(f)))
+        if key not in recs:
+            recs[key] = [0, 0, f["value"]]
+            order.append(key)
+        rec = recs[key]
+        if f["op"] == "mul":
+            rec[0] += 1
+        else:
+            rec[1] += 1
+    kept = []
+    for key in order:
+        n_mul, n_div, value = recs[key]
+        diff = n_mul - n_div
+        if diff == 0:
+            continue
+        out = {"op": "mul" if diff > 0 else "div",
+               "kind": key[0], "value": value, "count": abs(diff)}
+        if key[0] == "const":
+            out["cid"] = key[1]
+        kept.append(out)
+    return kept
+
+
+def _factor_text(f, graph):
+    """LaTeX for a single (collapsed) factor's value, e.g. `60^{2}` or `π`."""
+    if f["kind"] == "const":
+        base = _constant_latex_for(f["value"], graph)
+    else:
+        v = f["value"]
+        if isinstance(v, float) and v.is_integer() and abs(v) < 1e7:
+            base = str(int(v))
+        else:
+            base = _pretty_factor(v)
+    count = f.get("count", 1)
+    if count > 1:
+        return f"{base}^{{{count}}}"
+    return base
+
+
+def _render_factor_seq(factors, graph):
+    """Render factors in order with ×/÷ separators (leading × omitted)."""
+    parts = []
+    for i, f in enumerate(factors):
+        t = _factor_text(f, graph)
+        op = "\\times" if f["op"] == "mul" else "\\div"
+        if i == 0 and f["op"] == "mul":
+            parts.append(t)
+        else:
+            parts.append(f"{op} {t}")
+    return " ".join(parts)
+
+
+def _format_chain(collapsed, has_constant, groups, graph):
+    """Format a list of collapsed factors into a readable chain.
+
+    With a constant (π etc.) the chain is reordered so the constant reads
+    naturally at the head (forward: `π ÷ 180`) or at the tail when it is
+    a divisor (inverted: `180 ÷ π`). Parens around the constant head are
+    used only when the head contains a divisor AND a multiplying factor
+    follows (the parsec case) — `1° = π ÷ 180 rad` and
+    `1′ = π ÷ 180 ÷ 60 rad` stay unparenthesised.
+    """
+    cf = next((f for f in collapsed if f["kind"] == "const"), None)
+    if cf is None:
+        return _format_generic_chain(collapsed, graph)
+
+    raw = None
+    for g in groups:
+        if any(fd.get("kind") == "const" and fd.get("cid") == cf.get("cid") for fd in g):
+            raw = g
+            break
+
+    if raw is None:
+        seg = [cf]
+        rest = [f for f in collapsed if f is not cf]
+    else:
+        sigs = {}
+        for f in collapsed:
+            s = _factor_sig(f)
+            sigs[s] = sigs.get(s, 0) + 1
+
+        def avail(s):
+            return sigs.get(s, 0) > 0
+
+        def consume(s):
+            sigs[s] = sigs.get(s, 0) - 1
+
+        consume(_factor_sig(cf))
+        seg = [cf]
+        for fd in raw:
+            if fd.get("kind") == "const" and fd.get("cid") == cf.get("cid"):
+                continue
+            if fd["op"] == "div":
+                s = _factor_sig(fd)
+                if avail(s):
+                    seg.append(fd)
+                    consume(s)
+        rest = []
+        for f in collapsed:
+            s = _factor_sig(f)
+            if avail(s):
+                rest.append(f)
+                consume(s)
+
+    if cf["op"] == "mul":
+        return _join_const_head(seg, rest, graph)
+    rest = [f for f in collapsed if f is not cf]
+    return _join_const_divisor(cf, rest, graph)
+
+
+def _join_const_head(seg, rest, graph):
+    """Const head first, then remaining muls and divs (parens rule)."""
+    seg_str = _render_factor_seq(seg, graph)
+    has_div = any(f["op"] == "div" for f in seg)
+    rem_muls = [f for f in rest if f["op"] == "mul"]
+    rem_divs = [f for f in rest if f["op"] == "div"]
+    parts = []
+    if has_div and rem_muls:
+        parts.append(f"({seg_str})")
+    else:
+        parts.append(seg_str)
+    for f in rem_muls + rem_divs:
+        t = _factor_text(f, graph)
+        op = "\\times" if f["op"] == "mul" else "\\div"
+        parts.append(f"{op} {t}")
+    return " ".join(parts)
+
+
+def _join_const_divisor(cf, rest, graph):
+    """Const is a divisor → emit muls first, then other divs, then ÷ const."""
+    muls = [f for f in rest if f["op"] == "mul"]
+    divs = [f for f in rest if f["op"] == "div"]
+    items = [("\\times", _factor_text(f, graph)) for f in muls]
+    items += [("\\div", _factor_text(f, graph)) for f in divs]
+    items.append(("\\div", _factor_text(cf, graph)))
+    parts = []
+    for i, (op, t) in enumerate(items):
+        if i == 0 and op == "\\times":
+            parts.append(t)
+        else:
+            parts.append(f"{op} {t}")
+    return " ".join(parts)
+
+
+def _format_generic_chain(collapsed, graph):
+    """Numeric chain without constants: muls first, then divs (no lead ÷)."""
+    muls = [f for f in collapsed if f["op"] == "mul"]
+    divs = [f for f in collapsed if f["op"] == "div"]
+    parts = []
+    for i, f in enumerate(muls):
+        t = _factor_text(f, graph)
+        parts.append(t if i == 0 else f"\\times {t}")
+    for f in divs:
+        parts.append(f"\\div {_factor_text(f, graph)}")
+    return " ".join(parts)
+
+
+def _single_factor_value(v):
+    """Render a single-factor value, using exact forms when clean.
+
+    `1/12`, `1/60`, `1/10^{8}`, `10^{8}` instead of `0.0833333`,
+    `0.0166667`, `1e-08`, `100000000`.
+    """
+    if v == 0:
+        return "0"
+    if v > 0:
+        r = 1.0 / v
+        r_int = round(r)
+        if abs(r - r_int) <= 1e-9 * max(1.0, abs(r)) and r_int > 1:
+            if r_int < 10000:
+                return f"1/{r_int}"
+            log10 = math.log10(r_int)
+            if abs(log10 - round(log10)) < 1e-9:
+                return f"1/10^{{{int(round(log10))}}}"
+            return f"1/{_pretty_factor(r_int)}"
+    if v >= 1e4:
+        log10 = math.log10(v)
+        if abs(log10 - round(log10)) < 1e-9:
+            return f"10^{{{int(round(log10))}}}"
+    return _pretty_factor_value(v)
+
+
+def _denominator_latex(collapsed, graph):
+    """Render an all-divisor chain as the exact denominator of `1/(…)`."""
+    texts = [_factor_text(f, graph) for f in collapsed]
+    if len(texts) == 1:
+        t = texts[0]
+        if "\\times" in t or "\\div" in t:
+            return "(" + t + ")"
+        return t
+    return "(" + " \\times ".join(texts) + ")"
+
+
+def _constant_latex_for(value, graph):
+    """Return the LaTeX symbol for the constant whose value matches.
+
+    Looks up the constant table by numeric value and returns its symbol.
+    """
+    if graph is None or not hasattr(graph, "conn"):
+        return f"{value:.6g}"
+    row = graph.conn.execute(
+        "SELECT symbol FROM constant WHERE value IS NOT NULL "
+        "ORDER BY ABS(value - ?) LIMIT 1",
+        (value,),
+    ).fetchone()
+    if row is None:
+        return f"{value:.6g}"
+    return row["symbol"]
+
+
+def _pretty_factor_value(x):
+    """Pretty-print a numeric value for the cell's final = N ref term."""
+    if x == 0:
+        return "0"
+    if isinstance(x, float) and x.is_integer() and abs(x) < 1e15:
+        return str(int(x))
+    return _pretty_factor(x)
+
+
+def _render_affine_equation(graph, path, directions, invert):
+    """Equation form for offset chains: `T_ref = a·T_row + b`.
+
+    Composes the affine mapping x_ref = a·x_row + b across the whole path
+    (bwd hops invert the stored edge first), then picks the cleanest form:
+    - a ≈ 1            → `T_ref = T_row ± b`
+    - b ≈ 0            → `a × T_row`
+    - −b/a nice        → `(T_row − c) × a`    (e.g. `(T_F − 32) × 5/9`)
+    - otherwise        → `a × T_row + b`      (e.g. `9/5 × T_K − 459.67`)
+    """
+    constants = graph.constants_dict()
+    a, b = 1.0, 0.0
     for i, cur in enumerate(path[:-1]):
         direction = directions[i]
         if direction == "fwd":
@@ -657,91 +1104,104 @@ def _emit_path_equation(graph, path, directions):
             expr = graph.edges.get(pred, (None, None))[1]
         if expr is None:
             return None
-        for step in (expr if isinstance(expr, list) else [expr]):
-            if "constant" in step:
-                has_constant = True
-            if step.get("op") in ("add", "sub"):
-                has_offset = True
-        if direction == "fwd":
-            x = _apply(expr, x, graph.constants_dict())
-        else:
-            v = _apply(expr, 1.0, graph.constants_dict())
-            if not math.isfinite(v) or v == 0:
-                return None
-            x /= v
-        if not math.isfinite(x):
+        m, c = _affine_of_steps(expr, constants)
+        if not math.isfinite(m) or m == 0:
             return None
-
-    if has_offset:
-        return _render_offset_equation_directed(graph, path, directions,
-                                                row_sym, ref_sym, graph.conn)
-    if has_constant:
-        return _render_symbolic_factor(graph, path, row_sym, ref_sym)
-    factor_str = _pretty_factor(x)
-    if factor_str == "1":
-        return f"1\\,{row_sym} = 1\\,{ref_sym}"
-    return f"1\\,{row_sym} = {factor_str}\\,{ref_sym}"
-
-
-def _emit_inverse_path_equation(graph, path, directions):
-    """Emit the equation when path was computed `from_id=ref_id, to_id=row_id`.
-
-    `path = [ref, ..., row]`. The first hop is from `ref` toward `row`.
-    For each hop we want the equation in the form `x_row = f(x_ref)`,
-    so the path is traversed in reverse: for hop i (going from
-    `path[i]` to `path[i+1]` in the original forward direction),
-    we invert if `directions[i]` was "fwd" (the chain was stored forward
-    but we want the inverse direction), and keep "bwd" hops as-is
-    (they already represent the inverse).
-    """
-    row_id = path[-1]
-    ref_id = path[0]
-    row_sym = _unit_latex(graph, row_id)
-    ref_sym = _unit_latex(graph, ref_id)
-
-    has_constant = False
-    has_offset = False
-    # Walk path in reverse: from path[-1] (row) back to path[0] (ref).
-    # Each step corresponds to an original hop. If the original hop was
-    # "fwd" (path[i] → edges[path[i]]), we now invert it: 1 / f.
-    # If the original hop was "bwd", the relationship was already
-    # inverse, so we apply it directly.
-    x = 1.0
-    for i in range(len(path) - 1, 0, -1):
-        original_idx = i - 1
-        direction = directions[original_idx]
-        cur = path[i]
-        prev = path[i - 1]
-        if direction == "fwd":
-            expr = graph.edges.get(prev, (None, None))[1]
-        else:
-            expr = graph.edges.get(cur, (None, None))[1]
-        if expr is None:
+        if direction == "bwd":
+            m, c = 1.0 / m, -c / m
+        a, b = m * a, m * b + c
+    if invert:
+        if a == 0 or not math.isfinite(a):
             return None
-        for step in (expr if isinstance(expr, list) else [expr]):
-            if "constant" in step:
-                has_constant = True
-            if step.get("op") in ("add", "sub"):
-                has_offset = True
-        if direction == "fwd":
-            v = _apply(expr, 1.0, graph.constants_dict())
-            if not math.isfinite(v) or v == 0:
-                return None
-            x /= v
+        a, b = 1.0 / a, -b / a
+
+    row_sym = _unit_latex(graph, path[0])
+    ref_sym = _unit_latex(graph, path[-1])
+    var = _temp_var_fn(graph)
+    lhs = var(ref_sym)
+    body = var(row_sym)
+
+    if abs(a - 1.0) < 1e-9:
+        if abs(b) < 1e-12:
+            return f"{lhs} = {body}"
+        if b < 0:
+            return f"{lhs} = {body} - {_nice_num(-b)}"
+        return f"{lhs} = {body} + {_nice_num(b)}"
+
+    if abs(b) < 1e-9 * max(1.0, abs(a)):
+        return f"{lhs} = {_nice_num(a)} \\times {body}"
+
+    c = -b / a
+    if _nice_offset(c):
+        if c < 0:
+            return f"{lhs} = ({body} + {_nice_num(-c)}) \\times {_nice_num(a)}"
+        return f"{lhs} = ({body} - {_nice_num(c)}) \\times {_nice_num(a)}"
+    out = f"{lhs} = {_nice_num(a)} \\times {body}"
+    if abs(b) >= 1e-12:
+        if b < 0:
+            out += f" - {_nice_num(-b)}"
         else:
-            x = _apply(expr, x, graph.constants_dict())
-            if not math.isfinite(x):
-                return None
+            out += f" + {_nice_num(b)}"
+    return out
 
-    if has_offset:
-        return _render_offset_equation_inverse(graph, path, row_id, ref_id, directions)
-    if has_constant:
-        return _render_symbolic_factor(graph, path, ref_sym, row_sym)
 
-    factor_str = _pretty_factor(x)
-    if factor_str == "1":
-        return f"1\\,{row_sym} = 1\\,{ref_sym}"
-    return f"1\\,{row_sym} = {factor_str}\\,{ref_sym}"
+def _affine_of_steps(expr, constants):
+    """Compute the affine (m, c) of a step list: f(x) = m·x + c."""
+    m, c = 1.0, 0.0
+    if expr is None:
+        return m, c
+    steps = expr if isinstance(expr, list) else [expr]
+    for s in steps:
+        if s is None:
+            continue
+        if "constant" in s:
+            operand = constants.get(s["constant"], float("nan"))
+        else:
+            operand = _fraction(s.get("value"))
+        if not math.isfinite(operand) or operand == 0:
+            continue
+        op = s.get("op")
+        if op is None or op == "mul":
+            m *= operand
+            c *= operand
+        elif op == "div":
+            m /= operand
+            c /= operand
+        elif op == "add":
+            c += operand
+        elif op == "sub":
+            c -= operand
+    return m, c
+
+
+def _temp_var_fn(graph):
+    if getattr(graph, "quantity_id", None) == "temperature":
+        return lambda sym: f"T_{{{sym}}}"
+    return lambda sym: f"x\\,{sym}"
+
+
+def _nice_num(x):
+    """Render a coefficient readably: int, simple fraction, ≤2 dp, else .6g."""
+    r = round(x)
+    if abs(x - r) < 1e-9 and abs(r) < 1e15:
+        return str(int(r))
+    for d in range(2, 21):
+        n = x * d
+        nr = round(n)
+        if abs(n - nr) < 1e-9 and abs(nr) <= 1000:
+            return f"{int(nr)}/{d}"
+    r2 = round(x, 2)
+    if abs(x - r2) < 1e-6:
+        return f"{r2:.2f}".rstrip("0").rstrip(".")
+    return f"{x:.6g}"
+
+
+def _nice_offset(c):
+    """True when c = −b/a is a clean zero-point (int or ≤ 2 decimal places)."""
+    if abs(c - round(c)) < 1e-9:
+        return True
+    r2 = round(c, 2)
+    return abs(c - r2) < 1e-6
 
 
 def _render_offset_equation(graph, path, row_sym, ref_sym, constants):
@@ -778,193 +1238,6 @@ def _render_offset_equation(graph, path, row_sym, ref_sym, constants):
             return f"x\\,{_unit_latex(graph, path[-1])} = ({inner}){tail_str}"
         return f"x\\,{_unit_latex(graph, path[-1])} = {inner}"
     return None
-
-
-def _render_offset_equation_directed(graph, path, directions, row_sym, ref_sym, constants):
-    """Offset-equation form honouring per-hop directions.
-
-    For a "fwd" hop the stored relation is `x_next = f(x_cur)` and we
-    display `x_next = (...)`. For a "bwd" hop the stored relation on
-    `pred` is `x_pred = f(x_cur)` (i.e., `x_cur = f^{-1}(x_pred)`);
-    the equation form has cur on the left.
-
-    For multi-hop chains this picks the first offset edge it finds and
-    emits the equation form for that single edge.
-    """
-    for i, cur in enumerate(path[:-1]):
-        direction = directions[i]
-        if direction == "fwd":
-            expr = graph.edges.get(cur, (None, None))[1]
-        else:
-            pred = path[i + 1]
-            expr = graph.edges.get(pred, (None, None))[1]
-        if expr is None:
-            continue
-        steps = expr if isinstance(expr, list) else [expr]
-        ops = [s.get("op") for s in steps]
-        if not any(op in ("add", "sub") for op in ops):
-            continue
-        additive = [s for s in steps if s.get("op") in ("add", "sub")]
-        tail = [s for s in steps if s.get("op") not in ("add", "sub")]
-        if direction == "bwd":
-            # x_pred = f(x_cur) is already in our preferred form.
-            inner = f"x\\,{_unit_latex(graph, cur)}"
-            for s in additive:
-                op = s.get("op")
-                inner += f" {'+' if op == 'add' else '-'} {_operand_latex(s, constants)}"
-            tail_str = ""
-            for s in tail:
-                op = s.get("op")
-                tail_str += (f" \\times {_operand_latex(s, constants)}"
-                              if op == "mul" else
-                              f" \\div {_operand_latex(s, constants)}")
-            if additive and tail_str:
-                return f"x\\,{_unit_latex(graph, pred)} = ({inner}){tail_str}"
-            if additive:
-                return f"x\\,{_unit_latex(graph, pred)} = {inner}"
-            return f"x\\,{_unit_latex(graph, pred)} = {inner}"
-        # "fwd": x_next = f(x_cur); emit x_next = ... x_cur ...
-        inner = f"x\\,{_unit_latex(graph, cur)}"
-        for s in additive:
-            op = s.get("op")
-            inner += f" {'+' if op == 'add' else '-'} {_operand_latex(s, constants)}"
-        tail_str = ""
-        for s in tail:
-            op = s.get("op")
-            tail_str += (f" \\times {_operand_latex(s, constants)}"
-                          if op == "mul" else
-                          f" \\div {_operand_latex(s, constants)}")
-        if tail_str:
-            return f"x\\,{_unit_latex(graph, path[-1])} = ({inner}){tail_str}"
-        return f"x\\,{_unit_latex(graph, path[-1])} = {inner}"
-    return None
-
-
-def _render_offset_equation_inverse(graph, path, row_id, ref_id, directions):
-    """Invert an offset chain and emit 'x row = f⁻¹(x ref)' symbolically.
-
-    The stored chain path = [ref, ..., row] encodes x_next = f(x_cur)
-    for each edge (where direction is "fwd"); for "bwd" hops the
-    relationship is inverted (x_cur = f(x_next)).
-    """
-    constants = graph.constants_dict()
-    row_sym = _unit_latex(graph, row_id)
-    ref_sym = _unit_latex(graph, ref_id)
-
-    # Take the first offset edge (forward or backward).
-    for i, cur in enumerate(path[:-1]):
-        direction = directions[i]
-        if direction == "fwd":
-            expr = graph.edges.get(cur, (None, None))[1]
-        else:
-            pred = path[i + 1]
-            expr = graph.edges.get(pred, (None, None))[1]
-        if expr is None:
-            return None
-        steps = expr if isinstance(expr, list) else [expr]
-        ops = [s.get("op") for s in steps]
-        if not any(op in ("add", "sub") for op in ops):
-            continue
-        # Partition additive vs multiplicative.
-        additive = [s for s in steps if s.get("op") in ("add", "sub")]
-        mul_tail = [s for s in steps if s.get("op") == "mul"]
-        div_tail = [s for s in steps if s.get("op") == "div"]
-
-        # For a "bwd" hop the chain is already inverted (x_cur = f(x_pred)),
-        # so we don't need to apply the algebraic inversion.
-        if direction == "bwd":
-            # x_row = f(x_ref) directly. Compose additive + mul + div.
-            inner = f"x\\,{ref_sym}"
-            for s in additive:
-                op = s.get("op")
-                inner += f" {'+' if op == 'add' else '-'} {_operand_latex(s, constants)}"
-            tail_str = ""
-            for s in mul_tail:
-                tail_str += f" \\times {_operand_latex(s, constants)}"
-            for s in div_tail:
-                tail_str += f" \\div {_operand_latex(s, constants)}"
-            if additive and tail_str:
-                return f"x\\,{row_sym} = ({inner}){tail_str}"
-            if additive:
-                return f"x\\,{row_sym} = {inner}"
-            return f"x\\,{row_sym} = {inner}"
-
-        # "fwd" hop: invert. x_cur = f(x_next) means x_ref = f^{-1}(x_row).
-        additive_inv = []
-        for s in additive:
-            new = dict(s)
-            new["op"] = "sub" if s.get("op") == "add" else "add"
-            additive_inv.append(new)
-        mul_tail_inv = [{"op": "div", "value": s["value"]} for s in mul_tail]
-        div_tail_inv = [{"op": "mul", "value": s["value"]} for s in div_tail]
-
-        inner = f"x\\,{ref_sym}"
-        for s in additive_inv:
-            op = s.get("op")
-            inner += f" {'+' if op == 'add' else '-'} {_operand_latex(s, constants)}"
-        for s in mul_tail_inv:
-            inner += f" \\div {_operand_latex(s, constants)}"
-        for s in div_tail_inv:
-            inner += f" \\times {_operand_latex(s, constants)}"
-        if additive and (mul_tail_inv or div_tail_inv):
-            return f"x\\,{row_sym} = ({inner})"
-        if additive:
-            return f"x\\,{row_sym} = {inner}"
-        return f"x\\,{row_sym} = {inner}"
-    return None
-
-
-def _render_symbolic_factor(graph, path, row_sym, ref_sym):
-    """Symbolic factor form for chains that touch a constant.
-
-    e.g. degree → radian via [pi, div 180] yields '1° = π/180 rad'.
-    """
-    # Compose the factor symbolically, substituting constants inline.
-    numerator_parts = []
-    denominator_parts = []
-    for cur in path[:-1]:
-        expr = graph.edges[cur][1]
-        steps = expr if isinstance(expr, list) else [expr]
-        for s in steps:
-            if "constant" in s:
-                sym = _constant_symbol(graph.conn, s["constant"])
-                numerator_parts.append(sym)
-            elif s.get("op") == "div":
-                d = s.get("value")
-                if isinstance(d, str) and "/" in d:
-                    n, dn = d.split("/")
-                    numerator_parts.append(n)
-                    denominator_parts.append(dn)
-                else:
-                    denominator_parts.append(str(int(_fraction(d))))
-            elif s.get("op") == "mul":
-                v = s.get("value")
-                if isinstance(v, str) and "/" in v:
-                    n, d = v.split("/")
-                    numerator_parts.append(n)
-                    denominator_parts.append(d)
-                else:
-                    v_int = int(_fraction(v))
-                    if v_int == 1:
-                        pass
-                    else:
-                        numerator_parts.append(str(v_int))
-            elif s.get("op") is None and "value" in s:
-                v = s.get("value")
-                if isinstance(v, str) and "/" in v:
-                    n, d = v.split("/")
-                    numerator_parts.append(n)
-                    denominator_parts.append(d)
-                else:
-                    numerator_parts.append(str(_fraction(v)))
-
-    num_str = " \\cdot ".join(numerator_parts) if numerator_parts else "1"
-    den_str = " \\cdot ".join(denominator_parts) if denominator_parts else None
-    if den_str:
-        factor = f"\\frac{{{num_str}}}{{{den_str}}}"
-    else:
-        factor = num_str
-    return f"1\\,{row_sym} = {factor}\\,{ref_sym}"
 
 
 def _operand_latex(step, conn_or_constants):

@@ -1,5 +1,4 @@
 """CSV / XLSX / ODS / SQL export of all tables."""
-# Licensed under the LICENSE file in the project root.
 
 import csv
 import io
@@ -12,7 +11,7 @@ from scifind_lib.dimensions import dimension_columns
 
 EXPORT_TABLE_ORDER = [
     "formula", "formula_token", "formula_relation",
-    "operator", "constant", "quantity", "unit",
+    "operator", "constant", "compound_unit", "quantity", "unit",
 ]
 
 EXPORT_TABLE_COLUMNS = {
@@ -20,29 +19,32 @@ EXPORT_TABLE_COLUMNS = {
     "formula_token": [
         "formula_id", "position", "token_kind",
         "quantity_id", "constant_id", "operator_id",
-        "value", "label", "symbol_overwrite", "quantity_name_overwrite",
+        "value", "symbol_overwrite", "name_overwrite",
     ],
     "formula_relation": ["formula_id", "related_id", "relation_type", "description"],
-    "operator": ["id", "symbol", "math", "arity", "precedence", "associativity", "operator_type"],
+    "operator": ["id", "symbol", "arity", "precedence", "associativity", "operator_type"],
     "constant": ["id", "name", "symbol", "difficulty", "description",
-                 "links", "value", "default_unit", "quantity_id"],
+                 "links", "value", "quantity_id", "unit_id", "compound_unit_id"],
+    "compound_unit": ["id", "quantity_id", "name_overwrite", "symbol_overwrite", "unit", "system", "is_base"],
     "quantity": [
         "id", "name", "symbol", "symbol_overwrite", "topic",
-        "difficulty", "description", "links", "default_unit",
+        "difficulty", "description", "links",
+        "hidden",
     ],
     "unit": [
-        "id", "name", "symbol", "quantity_id", "default_unit", "unit_system",
-        "factor", "latex_factor", "offset",
+        "id", "name", "symbol", "quantity_id", "system", "is_base",
+        "factor", "offset",
     ],
 }
 
 
-def _each_table(conn):
+def _iter_export_tables(conn):
     """Yield (table_name, columns, rows) for all tables in export order."""
     for table in EXPORT_TABLE_ORDER:
         columns = list(EXPORT_TABLE_COLUMNS[table])
         if table == "quantity":
-            columns[9:9] = dimension_columns()
+            insert_at = columns.index("hidden") + 1
+            columns[insert_at:insert_at] = dimension_columns()
         rows = conn.execute(
             f"SELECT {','.join(columns)} FROM {table} ORDER BY rowid"
         ).fetchall()
@@ -52,7 +54,7 @@ def _each_table(conn):
 def export_to_csv(conn):
     """Export all tables to a single CSV string with section headers."""
     buffer = io.StringIO()
-    for table, columns, rows in _each_table(conn):
+    for table, columns, rows in _iter_export_tables(conn):
         buffer.write(f"=== {table} ===\n")
         writer = csv.writer(buffer)
         writer.writerow(columns)
@@ -65,7 +67,7 @@ def export_to_csv_directory(conn, directory):
     """Export each table to a separate CSV file in a directory."""
     out_dir = Path(directory)
     out_dir.mkdir(parents=True, exist_ok=True)
-    for table, columns, rows in _each_table(conn):
+    for table, columns, rows in _iter_export_tables(conn):
         with open(out_dir / f"{table}.csv", "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(columns)
@@ -77,7 +79,7 @@ def export_to_xlsx(conn, output):
     from openpyxl import Workbook
     workbook = Workbook()
     first = True
-    for table, columns, rows in _each_table(conn):
+    for table, columns, rows in _iter_export_tables(conn):
         if first:
             sheet = workbook.active
             sheet.title = table[:31]
@@ -96,7 +98,7 @@ def export_to_ods(conn, output):
     from odf.table import Table, TableRow, TableCell
     from odf.text import P
     document = OpenDocumentSpreadsheet()
-    for table, columns, rows in _each_table(conn):
+    for table, columns, rows in _iter_export_tables(conn):
         sheet = Table(name=table[:31])
         document.spreadsheet.addElement(sheet)
         for row_data in [columns] + rows:
@@ -109,12 +111,12 @@ def export_to_ods(conn, output):
     document.save(output)
 
 
-def build_formula_sql(conn, formula_id):
+def build_formula_insert_sql(conn, formula_id):
     """Build (formula_sql, token_sql) for an existing formula, mirroring
     build_create_sql's two-block layout (the token block also carries any
     formula_relation rows pointing at the formula)."""
 
-    def insert_rows(table, where):
+    def build_insert_sql(table, where):
         columns = list(EXPORT_TABLE_COLUMNS[table])
         rows = conn.execute(
             f"SELECT {','.join(columns)} FROM {table} WHERE {where} ORDER BY rowid",
@@ -131,10 +133,10 @@ def build_formula_sql(conn, formula_id):
             )
         return "".join(out)
 
-    formula_sql = insert_rows("formula", "id = ?")
+    formula_sql = build_insert_sql("formula", "id = ?")
     token_sql = (
-        insert_rows("formula_token", "formula_id = ?")
-        + insert_rows("formula_relation", "formula_id = ? OR related_id = ?")
+        build_insert_sql("formula_token", "formula_id = ?")
+        + build_insert_sql("formula_relation", "formula_id = ? OR related_id = ?")
     )
     return formula_sql, token_sql
 
@@ -150,7 +152,7 @@ def export_to_sql(conn):
         "\nPRAGMA foreign_keys = OFF;\n",
         "BEGIN TRANSACTION;\n",
     ]
-    for table, columns, rows in _each_table(conn):
+    for table, columns, rows in _iter_export_tables(conn):
         col_list = ", ".join(columns)
         out.append(f"\n-- table: {table}\n")
         for row in rows:

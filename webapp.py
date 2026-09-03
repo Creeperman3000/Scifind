@@ -13,6 +13,7 @@ import secrets
 import sqlite3
 import sys
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 
@@ -28,17 +29,19 @@ from scifind_lib import (
     open_database,
     database_path,
     database_has_formula_table,
-    init_database,
-    render_formula,
+    initialize_database,
+    render_formula_latex,
     format_dimensions_latex,
-    format_default_unit_html,
-    format_default_unit_symbol,
+    format_compound_unit_html,
+    format_compound_unit_symbol,
     localise,
+    load_locale_config,
     fetch_formula,
-    fetch_formula_related,
-    fetch_formula_detail_items,
-    render_variable_base,
-    parse_quantity_name_markers,
+    fetch_formula_relations,
+    fetch_formula_token_quantities,
+    render_variable_symbol,
+    expand_quantity_markers,
+    build_entity_link,
     fetch_quantity,
     fetch_quantity_units,
     fetch_si_prefixes,
@@ -50,17 +53,21 @@ from scifind_lib import (
     fetch_quantity_constants,
     compute_formula_dimensions,
     compute_all_formula_dimensions,
-    compute_default_unit_dimensions,
+    compute_compound_unit_dimensions,
     fetch_formulas_with_all_quantities,
     fetch_formulas_with_any_quantity,
     fetch_unit,
-    build_dimension_symbol_maps,
+    build_dimension_symbol_triplet,
     fetch_all_quantities,
     fetch_all_constants,
     fetch_all_operators,
     fetch_all_formulas,
-    search_headings,
-    suggest_headings,
+    compound_unit_by_id,
+    select_base_unit,
+    select_base_unit_with_fallback,
+    unit_by_id,
+    search_entities,
+    suggest_entities,
     FORMULA_SORT_KEYS,
     QUANTITY_SORT_KEYS,
     SEARCH_SORT_KEYS,
@@ -74,18 +81,17 @@ from scifind_lib import (
     export_to_xlsx,
     export_to_ods,
     export_to_sql,
-    build_formula_sql,
-    preview_equation,
+    build_formula_insert_sql,
+    parse_and_preview_equation,
     build_create_sql,
     unit_name_map,
     unit_symbol_map,
     unit_quantity_map,
-    render_symbol,
+    wrap_symbol_in_latex,
     dimension_matches,
     dimension_symbols,
     dimension_quantity_ids,
-    extract_dimensions_from_row,
-    is_hidden_quantity,
+    dimensions_from_row,
     locale_sibilants,
     load_tree,
     topic_name_map,
@@ -95,11 +101,14 @@ from scifind_lib import (
     topic_path,
     topic_tree_order,
     walk_tree,
-    _in_clause,
+    in_clause,
 )
 from scifind_lib.constants import SUPERSCRIPT_DIGITS
 from scifind_lib.filter import MIN_DIFFICULTY, MAX_DIFFICULTY, parse_filter_state
-from scifind_lib.units import parse_default_unit
+from scifind_lib.units import parse_compound_unit, parse_compound_unit_parts
+from scifind_lib.conversion import (
+    UnitGraph, precompute_latex_map, convert_value,
+)
 
 app = Flask(
     __name__,
@@ -146,9 +155,14 @@ def _secret_key():
 
 app.secret_key = _secret_key()
 app.config["MAX_CONTENT_LENGTH"] = (
-    int(os.environ.get("SCIFIND_MAX_UPLOAD_MB", "32")) * 1024 * 1024
+    int(os.environ.get("SCIFIND_MAX_UPLOAD_MB", "1")) * 1024 * 1024
 )
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 365 * 86400
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = bool(
+    os.environ.get("SCIFIND_COOKIE_SECURE", "").lower() in ("1", "true", "yes")
+)
 
 
 _GZIP_TYPES = ('text/', 'application/json', 'application/javascript')
@@ -190,6 +204,7 @@ def gzip_response(response):
 
 SEARCH_QUERY_MAX_LENGTH = 200
 SUGGEST_QUERY_MAX_LENGTH = 50
+CREATE_EQUATION_MAX_LENGTH = 2000
 
 logger = logging.getLogger("scifind")
 
@@ -217,9 +232,9 @@ def _attach_breadcrumbs(row, locale):
     tree = load_tree()
     name_map = topic_name_map(tree, locale)
     topic = row.get("topic_id")
-    path = topic_path(tree, topic)
-    if path:
-        row["breadcrumbs"] = [{"id": n, "name": name_map.get(n, n)} for n in path]
+    topic_path_ids = topic_path(tree, topic)
+    if topic_path_ids:
+        row["breadcrumbs"] = [{"id": n, "name": name_map.get(n, n)} for n in topic_path_ids]
     else:
         row["breadcrumbs"] = []
     return row
@@ -234,10 +249,10 @@ def _all_tree_root_ids(tree):
     return {r["id"] for r in tree}
 
 
-def _localised_quantity_names(db, quantity_ids, locale):
+def _localised_quantity_names(conn, quantity_ids, locale):
     if not quantity_ids:
         return []
-    names_by_id = fetch_quantities_by_ids(db, quantity_ids)
+    names_by_id = fetch_quantities_by_ids(conn, quantity_ids)
     return [localise(names_by_id[qid], locale) for qid in quantity_ids
             if qid in names_by_id]
 
@@ -254,8 +269,19 @@ def _join_names(names, locale="en-us", conj_key="heading.and"):
         return ""
     if len(names) == 1:
         return names[0]
-    conj = _ui_lookup(locale, conj_key)
-    if conj == conj_key:
+    data = _available_locales()
+    cat, _, child = conj_key.partition(".")
+    conj = None
+    for loc in _locale_chain(locale):
+        conj = data.get(loc, {}).get("ui", {}).get(cat, {}).get(child)
+        if conj is not None:
+            break
+    if not isinstance(conj, str):
+        conj = data.get(DEFAULT_LOCALE, {}).get("ui", {}).get(cat, {}).get(child)
+    if not isinstance(conj, str):
+        if conj_key not in _WARNED_KEYS:
+            _WARNED_KEYS.add(conj_key)
+            logger.warning("l10n: _join_names key %r not found in any locale, falling back to 'and'", conj_key)
         conj = "and"
     if len(names) == 2:
         return f"{names[0]} {conj} {names[1]}"
@@ -280,47 +306,47 @@ def _tree_gen_map(tree):
     return out
 
 
-def _render_list_heading(view_label, tree, compressed, fs, db, locale):
+def _render_list_heading(view_label, tree, compressed, fs, conn, locale):
     return _heading_from_compressed(
         view_label, compressed, topic_name_map(tree, locale), locale, fs,
         dim_mode=g.get("dim_mode", "dim"), dimension_caches=_get_dimension_caches(),
-        active_quantity_names=_localised_quantity_names(db, fs.quantity_ids, locale),
+        active_quantity_names=_localised_quantity_names(conn, fs.quantity_ids, locale),
     )
+
+
+_OP_SYMBOLS = {"eq": "=", "geq": "\u2265", "leq": "\u2264"}
 
 
 def _heading_from_compressed(view_label, compressed, name_map, locale, fs,
                              dim_mode="dim", dimension_caches=None,
                              active_quantity_names=None):
-    ui = lambda key: _ui_lookup(locale, key)
+    def _ui(key): return _ui_lookup(locale, key)
     parts = [view_label]
 
     if compressed:
         tree = load_tree()
         order = topic_tree_order()
         gen_map = _tree_gen_map(tree) if locale == "cs-cz" else {}
-        seen = set()
-        topic_names = []
-        for nid in sorted(compressed, key=lambda x: order.get(x, 9**9)):
+        seen, topic_names = set(), []
+        for nid in sorted(compressed, key=lambda x: order.get(x, float("inf"))):
             n = gen_map.get(nid) or name_map.get(nid, nid)
             if n not in seen:
                 topic_names.append(n)
                 seen.add(n)
         if topic_names:
             joined = _join_names(topic_names, locale)
-            prep = _sibilant_prep(joined, ui("heading.from"), locale)
-            parts.append(f"{prep} {joined}")
+            parts.append(f"{_sibilant_prep(joined, _ui('heading.from'), locale)} {joined}")
 
     if active_quantity_names:
-        q_label = ui("heading.quantity" if len(active_quantity_names) == 1
-                     else "heading.quantities")
+        q_label = _ui("heading.quantity" if len(active_quantity_names) == 1
+                      else "heading.quantities")
         q_conj = "heading.or" if fs.quantity_mode == "or" else "heading.and"
         joined = _join_names(active_quantity_names, locale, q_conj)
-        prep = _sibilant_prep(joined, ui("heading.with"), locale)
-        parts.append(f"{prep} {q_label} {joined}")
+        parts.append(f"{_sibilant_prep(joined, _ui('heading.with'), locale)} {q_label} {joined}")
 
     clauses = []
     if fs.diff_min > MIN_DIFFICULTY or fs.diff_max < MAX_DIFFICULTY:
-        where = ui("heading.where_difficulty_is")
+        where = _ui("heading.where_difficulty_is")
         if fs.diff_min == fs.diff_max:
             clauses.append(f"{where} {fs.diff_min}")
         else:
@@ -330,28 +356,25 @@ def _heading_from_compressed(view_label, compressed, name_map, locale, fs,
         dimension_caches = {}
     x_map = dimension_caches.get("var" if dim_mode == "unit" else dim_mode, {})
     y_map = dimension_caches.get("unit", {})
-    op_syms = {"eq": "=", "geq": "\u2265", "leq": "\u2264"}
     dim_parts = []
     for symbol in dimension_symbols():
         d = fs.dimension_filter.get(symbol, {})
-        value = d.get("val")
-        if value is None:
+        if d.get("val") is None:
             continue
-        op = d.get("op", "eq")
         x_sym = _strip_textcmd(x_map.get(symbol, symbol))
         y_sym = _strip_textcmd(y_map.get(symbol, symbol))
-        dv = str(value).translate(SUPERSCRIPT_DIGITS)
-        dim_parts.append(f"{x_sym} {op_syms[op]} {y_sym}{dv}")
+        dv = str(d["val"]).translate(SUPERSCRIPT_DIGITS)
+        dim_parts.append(f"{x_sym} {_OP_SYMBOLS[d.get('op', 'eq')]} {y_sym}{dv}")
     if dim_parts:
         d_conj = "heading.or" if fs.dim_mode == "or" else "heading.and"
         joined = _join_names(dim_parts, locale, d_conj)
-        clauses.append(f"{ui('heading.where_dimensions_are')} {joined}")
+        clauses.append(f"{_ui('heading.where_dimensions_are')} {joined}")
 
     if clauses:
-        parts.append(f" {ui('heading.and')} ".join(clauses))
+        parts.append(f" {_ui('heading.and')} ".join(clauses))
 
     text = " ".join(parts)
-    return text[0].upper() + text[1:] if text else f"{ui('heading.all')} {view_label}"
+    return text[0].upper() + text[1:] if text else f"{_ui('heading.all')} {view_label}"
 
 
 DEFAULT_LOCALE = "en-us"
@@ -361,30 +384,35 @@ DEFAULT_LOCALE_FALLBACK = {
 }
 
 _LOCALES: dict | None = None
+_WARNED_KEYS: set = set()
 
 
 def _load_locales():
     global _LOCALES
     if _LOCALES is not None:
         return _LOCALES
-    data = {}
-    lang_map = {}
+    locales_data, lang_map = {}, {}
     if _LOCALE_DIR.is_dir():
         for path in sorted(_LOCALE_DIR.glob("*.json")):
-            locale = path.stem
             try:
                 with open(path, encoding="utf-8") as f:
-                    payload = json.load(f)
+                    locale_data = json.load(f)
             except (OSError, ValueError):
                 continue
-            data[locale] = payload
-            lang = payload.get("meta", {}).get("acceptLanguage", locale)
-            lang_map[lang] = locale
-    if DEFAULT_LOCALE not in data:
-        data[DEFAULT_LOCALE] = DEFAULT_LOCALE_FALLBACK
+            locale = path.stem
+            locales_data[locale] = locale_data
+            lang_map[locale_data.get("meta", {}).get("acceptLanguage", locale)] = locale
+    if DEFAULT_LOCALE not in locales_data:
+        locales_data[DEFAULT_LOCALE] = DEFAULT_LOCALE_FALLBACK
     lang_map.setdefault("en-US", DEFAULT_LOCALE)
     lang_map.setdefault("en", DEFAULT_LOCALE)
-    _LOCALES = (data, lang_map)
+    _LOCALES = (locales_data, lang_map)
+    for loc, locale_data in locales_data.items():
+        if loc == DEFAULT_LOCALE:
+            continue
+        empty_cats = sorted(c for c, children in locale_data.get("ui", {}).items() if not children)
+        if empty_cats:
+            logger.warning("l10n: locale %r has empty ui categories: %s", loc, empty_cats)
     return _LOCALES
 
 
@@ -394,6 +422,74 @@ def _available_locales():
 
 def _lang_to_locale():
     return _load_locales()[1]
+
+
+_CSRF_SESSION_KEY = "_csrf_token"
+_CSRF_HEADER = "X-CSRF-Token"
+_CSRF_FORM_FIELD = "_csrf_token"
+
+
+def _ensure_csrf_token():
+    token = session.get(_CSRF_SESSION_KEY)
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session[_CSRF_SESSION_KEY] = token
+    return token
+
+
+@app.before_request
+def _csrf_protect():
+    if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
+        return
+    if request.endpoint in (None, "static"):
+        return
+    sent = (
+        request.headers.get(_CSRF_HEADER)
+        or request.form.get(_CSRF_FORM_FIELD)
+        or ""
+    )
+    expected = session.get(_CSRF_SESSION_KEY) or ""
+    if not expected or not sent or not secrets.compare_digest(sent, expected):
+        return ("CSRF token missing or invalid", 400)
+
+
+@app.before_request
+def _seed_csrf_token():
+    _ensure_csrf_token()
+
+
+@app.context_processor
+def _inject_csrf_token():
+    return {"csrf_token": _ensure_csrf_token}
+
+
+_RATE_LIMIT_BUCKETS = {}
+
+
+def _rate_limit(bucket, max_per_minute):
+    """Sliding 60-second counter in-process; returns a 429 response or None."""
+    try:
+        max_n = int(max_per_minute)
+    except (TypeError, ValueError):
+        return None
+    if max_n <= 0:
+        return None
+    now = time.monotonic()
+    cutoff = now - 60.0
+    window = _RATE_LIMIT_BUCKETS.get(bucket)
+    if window is None:
+        window = []
+        _RATE_LIMIT_BUCKETS[bucket] = window
+    while window and window[0] < cutoff:
+        window.pop(0)
+    if len(window) >= max_n:
+        return (f"Rate limit exceeded for {bucket}", 429)
+    window.append(now)
+    return None
+
+
+def _client_key():
+    return (request.remote_addr or "anon") + "|" + (request.endpoint or "?")
 
 
 def _locale_chain(start):
@@ -442,6 +538,20 @@ def _ui_lookup(locale, key):
         val = data.get(loc, {}).get("ui", {}).get(cat, {}).get(child)
         if val is not None:
             return val
+    if key in _WARNED_KEYS:
+        return key
+    _WARNED_KEYS.add(key)
+    intended = key in data.get(DEFAULT_LOCALE, {}).get("ui", {}).get(cat, {})
+    if intended:
+        logger.warning(
+            "l10n: key %r (locale %s) fell back to en-us — translation missing in chain %s",
+            key, locale, list(_locale_chain(locale)),
+        )
+    else:
+        logger.warning(
+            "l10n: unknown key %r (locale %s) — not present in any locale file",
+            key, locale,
+        )
     return key
 
 
@@ -456,7 +566,7 @@ def _(data):
     return _ui_lookup(loc, data)
 
 
-app.template_global()(render_symbol)
+app.template_global()(wrap_symbol_in_latex)
 
 
 _STATIC_VERSION_CACHE: dict = {}
@@ -482,18 +592,27 @@ def static_v(filename):
 
 @app.before_request
 def detect_locale():
-    locale = request.args.get("locale") or request.cookies.get("sf_locale")
-    if locale and locale in _available_locales():
-        session["locale"] = locale
-    if session.get("locale") in _available_locales():
-        g.locale = session["locale"]
-    else:
-        g.locale = _resolve_locale(request.headers.get("Accept-Language", ""))
+    def _resolve_setting(arg_key, cookie_key, allowed, default):
+        value = request.args.get(arg_key) or request.cookies.get(cookie_key)
+        if value in allowed:
+            session[arg_key] = value
+        g.__setattr__(arg_key, session.get(arg_key, default))
 
-    dim_mode = request.args.get("dim_mode") or request.cookies.get("sf_dim_mode")
-    if dim_mode in ("dim", "var", "unit"):
-        session["dim_mode"] = dim_mode
-    g.dim_mode = session.get("dim_mode", "dim")
+    locale = request.args.get("locale") or request.cookies.get("sf_locale")
+    if locale in _available_locales():
+        session["locale"] = locale
+    g.locale = (
+        session["locale"]
+        if session.get("locale") in _available_locales()
+        else _resolve_locale(request.headers.get("Accept-Language", ""))
+    )
+
+    _resolve_setting("dim_mode", "sf_dim_mode", ("dim", "var", "unit"), "dim")
+    _resolve_setting("unit_system", "sf_unit_system", ("SI", "CGS", "Imperial"), "SI")
+
+    meta = load_locale_config(g.locale)
+    g.locale_seo_description = meta.get("seoDescription") or load_locale_config(DEFAULT_LOCALE).get("seoDescription", "")
+    g.locale_seo_keywords = meta.get("seoKeywords") or load_locale_config(DEFAULT_LOCALE).get("seoKeywords", "")
 
 
 _NOT_INITIALISED = (
@@ -504,15 +623,11 @@ _NOT_INITIALISED = (
 )
 
 
-def _database_is_initialised(db):
-    return database_has_formula_table(db)
-
-
 def _bootstrap_database():
     conn = open_database()
     try:
-        if not _database_is_initialised(conn):
-            init_database()
+        if not database_has_formula_table(conn):
+            initialize_database()
             logger.info("Database initialised at %s", database_path())
     finally:
         conn.close()
@@ -543,7 +658,7 @@ def ensure_db_open():
     except sqlite3.DatabaseError as exc:
         logger.warning("Database open failed: %s", exc)
         return _uninitialised_response()
-    if not _database_is_initialised(db):
+    if not database_has_formula_table(db):
         return _uninitialised_response()
 
 
@@ -554,7 +669,7 @@ def _uninitialised_response():
 def _get_dimension_caches():
     if 'dim_caches' not in g:
         try:
-            var_map, unit_map, dim_map = build_dimension_symbol_maps(get_db())
+            var_map, unit_map, dim_map = build_dimension_symbol_triplet(get_db())
             g.dim_caches = {"var": var_map, "unit": unit_map, "dim": dim_map}
         except sqlite3.OperationalError as exc:
             logger.warning("Dimension symbol lookup failed: %s", exc)
@@ -575,323 +690,950 @@ def _get_unit_symbol_map():
     return g.unit_symbol_map
 
 
+def _get_prefix_name_map(locale=None):
+    """{prefix_exponent_int: localized prefix name}, e.g. {-2: 'Centi'}."""
+    if 'prefix_name_map' not in g:
+        loc = locale or g.get("locale", "en-us")
+        g.prefix_name_map = {
+            int(p["id"]): localise(p["name"], loc)
+            for p in fetch_si_prefixes(get_db())
+        }
+    return g.prefix_name_map
+
+
+def _get_prefix_symbol_map(locale=None):
+    """{prefix_exponent_int: localized prefix symbol}, e.g. {-2: 'c'}."""
+    if 'prefix_symbol_map' not in g:
+        loc = locale or g.get("locale", "en-us")
+        g.prefix_symbol_map = {
+            int(p["id"]): localise(p["symbol"], loc)
+            for p in fetch_si_prefixes(get_db())
+        }
+    return g.prefix_symbol_map
+
+
 def _unit_name_link(unit_id):
     names = _get_unit_name_map()
     if unit_id in names:
-        return Markup(f'<a href="/unit/{html_module.escape(unit_id)}">{html_module.escape(names[unit_id])}</a>')
+        return Markup(build_entity_link("unit", unit_id, names[unit_id]))
     return Markup(html_module.escape(unit_id.replace("_", " ").title()))
 
 
-def _render_unit_html(default_unit, locale):
+def _unit_name_callback(locale):
+    """Build a `unit_name` callback for format_compound_unit_html.
+
+    Localises each part's name (lowercase) and capitalises only the
+    first part, e.g. "Square metre" from metre_squared.
+    """
     names = _get_unit_name_map()
     first = [True]
+
     def unit_name(uid):
         name = names.get(uid, uid.replace("_", " ")).lower()
         if first[0]:
             first[0] = False
             return name[0].upper() + name[1:]
         return name
-    return format_default_unit_html(
-        default_unit,
-        unit_url=lambda uid: f"/unit/{uid}",
-        unit_name=unit_name,
+
+    return unit_name
+
+
+def _prefix_name_callback(locale):
+    """Return callable(prefix_exp) -> localized prefix name (e.g. 'Centi')."""
+    pmap = _get_prefix_name_map(locale)
+    return lambda exp: pmap.get(exp, "")
+
+
+def _prefix_symbol_callback(locale):
+    """Return callable(prefix_exp) -> localized prefix symbol (e.g. 'c')."""
+    smap = _get_prefix_symbol_map(locale)
+    return lambda exp: smap.get(exp, "")
+
+
+def _render_unit_html(unit_json, locale):
+    names = _get_unit_name_map()
+    return format_compound_unit_html(
+        unit_json,
+        unit_url=lambda uid: f"/unit/{uid}" if uid in names else None,
+        unit_name=_unit_name_callback(locale),
         locale=locale,
         unit_quantity_map=unit_quantity_map(get_db()),
+        prefix_name=_prefix_name_callback(locale),
     )
 
 
-def _render_unit_symbol(default_unit):
+def _render_unit_symbol(unit_json, locale=None):
     symbols = _get_unit_symbol_map()
-    return format_default_unit_symbol(
-        default_unit,
-        unit_symbol=lambda uid: render_symbol(symbols.get(uid, uid)),
+    loc = locale or g.get("locale", "en-us")
+    # `format_compound_unit_symbol` wraps each part in \\mathrm{} itself,
+    # so pass raw symbols here to avoid double-wrapping.
+    return format_compound_unit_symbol(
+        unit_json,
+        unit_symbol=lambda uid: symbols.get(uid, uid),
+        prefix_symbol=lambda exp: _get_prefix_symbol_map(loc).get(exp, ""),
     )
 
 
-def _render_default_unit(default_unit, locale):
-    if not default_unit:
+def _render_compound_unit(cu_row, locale):
+    """Render a base row (unit or compound_unit) as (html, latex_symbol)."""
+    if not cu_row:
         return Markup(""), ""
-    return (
-        Markup(_render_unit_html(default_unit, locale)),
-        _render_unit_symbol(default_unit),
+    if cu_row["kind"] == "unit":
+        return Markup(_unit_name_link(cu_row["id"])), wrap_symbol_in_latex(cu_row["symbol"])
+    unit = cu_row["unit"]
+    sym_latex = (
+        wrap_symbol_in_latex(cu_row["symbol_overwrite"]) if cu_row["symbol_overwrite"]
+        else _render_unit_symbol(unit, locale)
     )
+    name_html = (
+        localise(cu_row["name_overwrite"], locale)
+        if cu_row.get("name_overwrite")
+        else _render_unit_html(unit, locale)
+    )
+    return Markup(name_html), sym_latex
 
 
-def _default_unit_system(db, du_ids):
-    """Unit system of a quantity's default-unit parts ('SI' unless some
-    part belongs to another system)."""
-    if not du_ids:
-        return "SI"
-    placeholders, params = _in_clause(tuple(du_ids))
-    row = db.execute(
-        f"SELECT unit_system FROM unit WHERE id IN ({placeholders}) "
-        f"AND unit_system != 'SI' LIMIT 1",
-        params,
-    ).fetchone()
-    return row["unit_system"] if row else "SI"
+def _format_system_label(system, is_base, locale):
+    """Return the localized system column label, prefixed with 'Base '
+    when the row is the canonical base for its system.
+
+    `system` is the raw column value ('SI', 'CGS', 'Imperial', or None
+    for non-system units). `is_base` is True when the row is the system
+    base for that quantity+system. `locale` is used to look up i18n.
+    """
+    if not system:
+        return _("unit.system_any")
+    if is_base:
+        return _("unit.system_base").format(system=_(f"unit.system_{system.lower()}"))
+    return _(f"unit.system_{system.lower()}")
 
 
-def _quantity_units_table(db, quantity_id, default_unit, ref_unit_id=None):
-    """Rows for the units table shared by /quantity/<id> and /unit/<id>:
-    the quantity's default unit first, then its registered units.
+def _row_is_base(conn, row_id, system, kind):
+    """Return True if `row_id` is the base row for its quantity.
 
-    Factor/offset cells are filled client-side (web/app.js) so the
-    reference unit can be switched without a page reload; the reference
-    defaults to ref_unit_id when it is one of the quantity's units,
-    otherwise to the quantity default. The raw per-unit conversion data
-    is embedded as JSON for the client."""
+    `kind` is 'unit' or 'compound_unit'. The is_base flag is checked
+    against the rows own table only; the current `system` filter is
+    intentionally not applied so a row that is a system base shows up
+    regardless of the display system.
+    """
+    if not row_id:
+        return False
+    if kind == "unit":
+        row = conn.execute(
+            "SELECT 1 FROM unit WHERE id = ? AND is_base = 1 LIMIT 1",
+            (row_id,),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT 1 FROM compound_unit WHERE id = ? AND is_base = 1 LIMIT 1",
+            (row_id,),
+        ).fetchone()
+    return row is not None
+
+
+def _quantity_units_table(conn, quantity_id, system, ref_unit_id=None):
+    """Rows for the units table shared by /quantity/<id> and /unit/<id>.
+
+    Each row carries its name/symbol/system metadata plus the conversion
+    LaTeX to *every* reachable unit (precomputed server-side), so the
+    client only needs to look up the cached string when the user picks
+    a different reference unit.
+    """
     locale = g.locale
-    default_unit_html, default_unit_symbol_latex = _render_default_unit(
-        default_unit, locale
+    base = select_base_unit_with_fallback(conn, quantity_id, system)
+    default_unit_html, default_unit_symbol_latex = (
+        _render_compound_unit(base, locale) if base else (Markup(""), "")
     )
-    default_parts = parse_default_unit(default_unit)
-    du_ids = {uid for uid, _ in default_parts}
-    unit_system = _default_unit_system(db, du_ids)
+
+    graph = UnitGraph(conn, quantity_id)
+    _inject_si_prefix_nodes(graph, conn, quantity_id)
+    latex_map = precompute_latex_map(graph)
+
+    base_unit_ids = set()
+    if base and base["kind"] == "compound_unit":
+        base_unit_ids = {uid for uid, _ in parse_compound_unit(base["unit"])}
+    elif base:
+        base_unit_ids = {base["id"]}
+    base_system = base["system"] if base else "SI"
+    default_id = base["id"] if base else None
 
     entries = []
-    si_prefixes, si_cgs_id = _append_si_prefix_entries(
-        db, quantity_id, default_unit, entries
-    )
+    si_prefixes, _ = _si_prefix_rows(conn, "SI", quantity_id)
+    if si_prefixes:
+        base_entry_id = base["id"] if base else None
+        for r in si_prefixes:
+            if base_entry_id and r["payload_id"] == base_entry_id:
+                continue
+            entries.append({
+                "id": r["payload_id"],
+                "symbol_latex": Markup(r["symbol_latex"]),
+                "name_html": Markup(r["name"]),
+                "label": r["name"],
+                "system": _format_system_label(None, False, locale),
+            })
 
-    default_entry = None
-    if default_parts:
-        default_entry = {
-            "id": None,
+    if base:
+        label_json = (json.dumps([{"unit": base["id"], "exponent": 1}])
+                      if base["kind"] == "unit" else base["unit"])
+        base_is_base = _row_is_base(conn, base["id"], system, base["kind"])
+        entries.append({
+            "id": base["id"],
             "symbol_latex": default_unit_symbol_latex,
             "name_html": default_unit_html,
-            "label": format_default_unit_html(default_unit, locale=locale),
-            "unit_system": unit_system,
-            "factor": 1,
-            "offset": 0,
-        }
-        entries.append(default_entry)
+            "label": format_compound_unit_html(
+                label_json, locale=locale,
+                unit_name=_unit_name_callback(locale),
+                prefix_name=_prefix_name_callback(locale)),
+            "system": _format_system_label(base_system, base_is_base, locale),
+        })
 
-    for eu in (dict(u) for u in fetch_quantity_units(db, quantity_id)):
-        if eu["id"] in du_ids:
+    for eu in (dict(u) for u in fetch_quantity_units(conn, quantity_id)):
+        if base and base["kind"] == "unit" and eu["id"] == base["id"]:
             continue
-        # A registered CGS unit that coincides with a prefix-family row
-        # (centimetre, gram) is shown only in the family table.
-        if eu["id"] == si_cgs_id:
-            continue
+        eu_system = eu.get("system") or None
+        eu_is_base = _row_is_base(conn, eu["id"], system, "unit")
         entries.append({
             "id": eu["id"],
-            "symbol_latex": Markup(render_symbol(eu["symbol"])),
+            "symbol_latex": Markup(wrap_symbol_in_latex(eu["symbol"])),
             "name_html": _unit_name_link(eu["id"]),
             "label": (localise(eu.get("name"), locale)
                       or localise(eu.get("name"), "en-us")
                       or eu["id"].replace("_", " ")),
-            "unit_system": eu.get("unit_system") or "any",
-            "factor": eu.get("factor", 1) or 1,
-            "offset": eu.get("offset", 0) or 0,
+            "system": _format_system_label(eu_system, eu_is_base, locale),
         })
 
-    ref = next(
-        (e for e in entries if e["id"] and e["id"] == ref_unit_id),
-        None,
+    # Compound_unit rows for this quantity (hectare, square_foot, etc.).
+    # Skip the rows that are already shown in the SI prefix table — they
+    # are essentially prefixed forms of the base unit (hectare = hm², etc.)
+    # and should only appear in the second table to avoid duplication.
+    si_prefix_entry_ids = set()
+    if si_prefixes:
+        si_prefix_entry_ids = {r["id"] for r in si_prefixes}
+    for cu in conn.execute(
+        "SELECT * FROM compound_unit WHERE quantity_id = ?", (quantity_id,)
+    ).fetchall():
+        cu_row = dict(cu)
+        if cu_row["id"] in si_prefix_entry_ids:
+            continue
+        cu_row["kind"] = "compound_unit"
+        if base and base["kind"] == "compound_unit" and cu_row["id"] == base["id"]:
+            continue
+        unit_html, unit_sym = _render_compound_unit(cu_row, locale)
+        cu_system = cu_row.get("system") or None
+        cu_is_base = _row_is_base(conn, cu_row["id"], system, "compound_unit")
+        # If the compound has a name_overwrite, also show the parts-derived
+        # name in parens, e.g. "Litre (decimetre cubed)". If the parts
+        # name equals the override, dedupe.
+        no_json = cu_row.get("name_overwrite")
+        if no_json and localise(no_json, locale):
+            parts_name = format_compound_unit_html(
+                cu_row["unit"], locale=locale,
+                unit_quantity_map=unit_quantity_map(conn),
+                unit_name=_unit_name_callback(locale),
+                prefix_name=_prefix_name_callback(locale))
+            parts_text = re.sub(r"<[^>]+>", "", parts_name).strip()
+            override_text = localise(no_json, locale)
+            if parts_text and parts_text.lower() != override_text.lower():
+                cu_name_html = Markup(f"{override_text} ({parts_text})")
+                cu_label = f"{override_text} ({parts_text})"
+            else:
+                cu_name_html = Markup(override_text)
+                cu_label = override_text
+        else:
+            cu_name_html = unit_html
+            cu_label = format_compound_unit_html(
+                cu_row["unit"], locale=locale,
+                unit_name=_unit_name_callback(locale),
+                prefix_name=_prefix_name_callback(locale))
+        entries.append({
+            "id": cu_row["id"],
+            "symbol_latex": unit_sym,
+            "name_html": cu_name_html,
+            "label": cu_label,
+            "system": _format_system_label(cu_system, cu_is_base, locale),
+        })
+
+    if ref_unit_id and any(e["id"] == ref_unit_id for e in entries):
+        ref_id = ref_unit_id
+    else:
+        ref_id = default_id
+
+    ref_label = next(
+        (re.sub(r"<[^>]+>", "", str(e["label"])) for e in entries if e["id"] == ref_id),
+        "",
     )
-    if not ref and ref_unit_id and ref_unit_id == si_cgs_id and si_prefixes:
-        # On /unit/<id> for a CGS unit that lives only in the family
-        # table now (centimetre, gram), its prefixed-family twin takes
-        # over as the initial reference.
-        dup_row = next(
-            (r for r in si_prefixes if r.get("system_key") == "detail.cgs_base"),
-            None,
-        )
-        if dup_row:
-            ref = next(
-                (e for e in entries if e["id"] == dup_row["payload_id"]), None
-            )
-    # Without an explicit reference (/quantity/<id>) the default unit
-    # starts as the reference.
-    if ref is None:
-        ref = default_entry
 
-    units = [{
-        "id": e["id"] or "",
-        "symbol_latex": e["symbol_latex"],
-        "name_html": e["name_html"],
-        "unit_system": e["unit_system"],
-        "is_ref": e is ref,
-    } for e in entries if not (e["id"] or "").startswith("si_")]
+    si_payload_ids = {r["payload_id"] for r in (si_prefixes or [])}
+    units_rows = []
+    for e in entries:
+        if (e["id"] or "").startswith("si_"):
+            continue
+        # DB-overwritten SI prefix entries (hectare, are, etc.) are
+        # already shown in the SI prefix table; exclude from the main
+        # units table to avoid duplication.
+        if e["id"] in si_payload_ids:
+            continue
+        plain_label = re.sub(r"<[^>]+>", "", e["label"]) if e.get("label") else (e["id"] or "").replace("_", " ")
+        units_rows.append({
+            "id": e["id"] or "",
+            "symbol_latex": e["symbol_latex"],
+            "name_html": e["name_html"],
+            "label": plain_label,
+            "system": e["system"],
+            "is_ref": e["id"] == ref_id,
+            "latex_by_ref": {rid: latex_map.get(e["id"], {}).get(rid)
+                             for rid in latex_map},
+        })
 
-    payload = {
-        "ref": (ref["id"] or "") if ref else "",
-        "ref_label": re.sub(r"<[^>]+>", "",
-                            (ref["label"] if ref else "")),
-        "entries": [{"id": e["id"] or "", "factor": e["factor"],
-                     "offset": e["offset"], "si_exp": e.get("si_exp"),
-                     "label": e["label"]}
-                    for e in entries],
-    }
+    si_payload = []
     if si_prefixes:
         for r in si_prefixes:
-            r["is_ref"] = r["payload_id"] == payload["ref"]
+            pid = r["payload_id"]
+            si_payload.append({
+                "id": pid,
+                "symbol_latex": Markup(r["symbol_latex"]),
+                "name": r["name"],
+                "system_key": r.get("system_key"),
+                "link_unit_id": r.get("link_unit_id"),
+                "value_latex": r.get("value_latex", ""),
+                "is_ref": pid == ref_id,
+                "collapsed": bool(r.get("collapsed")),
+                "latex_by_ref": {rid: latex_map.get(pid, {}).get(rid)
+                                 for rid in latex_map},
+            })
+
+    payload = {
+        "ref": ref_id or "",
+        "ref_label": ref_label,
+        "entries": units_rows,
+        "si_entries": si_payload,
+    }
     return {
-        "units": units,
+        "units": units_rows,
         "payload": payload,
-        "si_prefixes": si_prefixes,
+        "si_prefixes": si_payload,
     }
 
 
-# Quantity default units whose SI-prefixed forms get a prefix table;
-# kilogram prefixes attach to the gram.
-PREFIXABLE_BASE_UNITS = {
-    "metre": "metre",
-    "kilogram": "gram",
-    "second": "second",
-    "ampere": "ampere",
-    "kelvin": "kelvin",
-    "mole": "mole",
-    "candela": "candela",
-}
+def _normalise_prefix_symbol(prefix_sym, next_token):
+    """Return the prefix symbol adjusted so it doesn't merge with the
+    following token in LaTeX.
 
-# Exponent (relative to the prefixable base) of the actual SI base unit;
+    A backslash-command prefix like `\\mu` followed by a letter token
+    would parse as a single (undefined) command. We insert a single
+    space at the join whenever the prefix ends with a backslash command
+    (i.e. ends with a non-space letter that follows a backslash) and
+    the next token begins with a letter or digit.
+    """
+    if not prefix_sym or not next_token:
+        return prefix_sym
+    if not next_token[0].isalnum() and next_token[0] != "_":
+        return prefix_sym
+    if prefix_sym.endswith(" "):
+        return prefix_sym
+    # Detect "ends with a backslash command": the last non-space char
+    # is a letter that is preceded (possibly with whitespace) by a
+    # backslash. This catches "\\mu", "\\hbar ", etc.
+    stripped = prefix_sym.rstrip()
+    if not stripped.endswith("\\") and "\\" in stripped:
+        # Find the last backslash; if everything after it is a letter
+        # sequence, treat as a command that needs spacing.
+        last_bs = stripped.rfind("\\")
+        tail = stripped[last_bs + 1:]
+        if tail and tail.isalpha():
+            return prefix_sym + " "
+    if stripped.endswith("\\") or stripped.endswith("}"):
+        return prefix_sym + " "
+    return prefix_sym
+
+
+def _unit_symbol_for(conn, uid):
+    """Look up a unit's raw symbol from the DB, or return the id as fallback."""
+    row = fetch_unit(conn, uid)
+    return row["symbol"] if row else uid
+
+
+def _prefix_symbol_for(conn, exp):
+    """Look up the localised SI prefix symbol for a given exponent, or
+    return the exp as a string fallback (e.g. 'k3' for unknown exp 3)."""
+    row = conn.execute(
+        "SELECT symbol FROM si_prefix WHERE id = ?", (str(exp),)
+    ).fetchone()
+    if not row:
+        return str(exp)
+    sym_json = row["symbol"]
+    localised = localise(sym_json, g.locale)
+    if not localised:
+        localised = localise(sym_json, "en-us")
+    return localised or str(exp)
+
+
+def _build_compound_sym_latex(conn, prefix_sym, primary_uid, parts):
+    """Build a LaTeX symbol for a prefixed compound unit by prepending
+    the prefix symbol to the primary prefixable part. Other parts keep
+    their original symbol/exponent. The returned string uses LaTeX
+    mathrm-wrapped atoms and " / " for division, matching the shape of
+    ``format_compound_unit_symbol`` so the output looks uniform.
+    """
+    def _wrap(sym):
+        return wrap_symbol_in_latex(sym)
+
+    primary_sym_raw = _unit_symbol_for(conn, primary_uid)
+    out_parts = []
+    for part_uid, part_exp in parts:
+        if part_uid == primary_uid:
+            normalized = _normalise_prefix_symbol(prefix_sym, primary_sym_raw)
+            combined = normalized + primary_sym_raw
+            sym_latex = _wrap(combined)
+        else:
+            sym_latex = _wrap(_unit_symbol_for(conn, part_uid))
+        out_parts.append([part_uid, part_exp, sym_latex])
+    numerators, denominators = [], []
+    for part_uid, part_exp, sym_latex in out_parts:
+        if part_exp >= 0:
+            numerators.append((sym_latex, part_exp))
+        else:
+            denominators.append((sym_latex, -part_exp))
+
+    def _render_group(group):
+        out = []
+        for sym_latex, exp in group:
+            if exp == 1:
+                out.append(sym_latex)
+            else:
+                out.append(f"{sym_latex}^{{{int(exp)}}}")
+        return " \\cdot ".join(out)
+
+    num_str = _render_group(numerators)
+    den_str = _render_group(denominators)
+    if not den_str:
+        return num_str
+    if not num_str:
+        return f"1 / {den_str}" if len(denominators) == 1 else f"1 / ({den_str})"
+    return (
+        f"{num_str} / {den_str}"
+        if len(denominators) == 1
+        else f"{num_str} / ({den_str})"
+    )
+
+
+def _inject_si_prefix_nodes(graph, conn, quantity_id):
+    """Inject synthetic SI-prefixed nodes into the graph so the existing
+    conversion-rendering machinery can produce LaTeX like "1 km = 1000 m"
+    for the prefix table. Each synthetic node has a single edge to its
+    base (e.g. si_kilo -> metre, factor 1000) and lives in either
+    unit_rows (simple bases) or compound_rows (compound bases) with a
+    pre-rendered symbol like "km" or "km^2".
+
+    For compound bases the factor accounts for the combined exponent of
+    the prefixable parts (e.g. 10^3 * 10^2 = 10^6 for si_kilo on
+    metre_squared). The display symbol is the prefix symbol prepended to
+    the primary prefixable part's symbol so that "_unit_symbol" can
+    resolve it without a graph walk.
+    """
+    locale = g.locale
+    base = select_base_unit_with_fallback(conn, quantity_id, g.get("unit_system", "SI"))
+    if not base:
+        return
+
+    prefixable = _get_prefixable_base_units(conn)
+    if base["kind"] == "unit":
+        pref_base_id = prefixable.get(base["id"], base["id"])
+        base_unit_row = fetch_unit(conn, pref_base_id)
+        if base_unit_row is None:
+            return
+        base_symbol = base_unit_row["symbol"]
+        base_symbol_latex = wrap_symbol_in_latex(base_symbol)
+        for p in fetch_si_prefixes(conn):
+            exp = int(p["id"])
+            pid = f"si_{p['id']}"
+            graph.edges[pid] = (
+                pref_base_id,
+                [{"op": "mul", "value": 10 ** exp}],
+            )
+            prefix_sym = _normalise_prefix_symbol(localise(p["symbol"], locale), base_symbol)
+            graph.unit_rows[pid] = {
+                "id": pid,
+                "symbol": prefix_sym + base_symbol,
+                "system": "SI",
+                "quantity_id": quantity_id,
+                "is_base": 0,
+            }
+    else:
+        parts = parse_compound_unit(base["unit"])
+        if not parts:
+            return
+        prefixable = _get_prefixable_base_units(conn)
+        prefixable_parts = []
+        compound_prefix_exp = 0
+        for part_uid, part_exp in parts:
+            pref_uid = prefixable.get(part_uid)
+            if pref_uid:
+                prefixable_parts.append((part_uid, part_exp, pref_uid))
+                if part_exp > 0:
+                    compound_prefix_exp += part_exp
+        if compound_prefix_exp == 0 and prefixable_parts:
+            compound_prefix_exp = abs(prefixable_parts[0][1])
+        if not prefixable_parts:
+            return
+
+        # Identify the primary part for symbol rendering.
+        primary_part_uid = None
+        for part_uid, part_exp in parts:
+            if part_exp > 0 and part_uid in prefixable:
+                primary_part_uid = part_uid
+                break
+        if primary_part_uid is None:
+            for part_uid, _ in parts:
+                if part_uid in prefixable:
+                    primary_part_uid = part_uid
+                    break
+
+        for p in fetch_si_prefixes(conn):
+            exp = int(p["id"])
+            pid = f"si_{p['id']}"
+            factor = 10 ** (exp * compound_prefix_exp)
+            graph.edges[pid] = (
+                base["id"],
+                [{"op": "mul", "value": factor}],
+            )
+            prefixed_sym_latex = _build_compound_sym_latex(
+                conn, localise(p["symbol"], locale), primary_part_uid, parts
+            )
+            graph.compound_rows[pid] = {
+                "id": pid,
+                "unit": base["unit"],
+                "symbol_overwrite": prefixed_sym_latex,
+                "system": "SI",
+                "quantity_id": quantity_id,
+                "is_base": 0,
+            }
+
+
+def _get_prefixable_base_units(conn):
+    """Compute the dict of prefixable SI base units from the database.
+
+    Returns a dict mapping unit IDs to their prefixable base: for most SI
+    base units this is the unit itself; for ``kilogram`` it is ``gram``
+    since kilogram already carries the kilo prefix.
+    """
+    result = {}
+    rows = conn.execute(
+        "SELECT id FROM unit WHERE is_base = 1 AND system = 'SI'"
+    ).fetchall()
+    for r in rows:
+        result[r["id"]] = r["id"]
+    result["kilogram"] = "gram"
+    result["gram"] = "gram"
+    return result
+
+# Exponent of the actual SI base relative to the prefixable base;
 # kilogram is the SI base of mass even though prefixes attach to gram.
 SI_BASE_EXPONENT = {"gram": 3}
 
-# Prefix exponents shown before the user expands the full list; the CGS
-# base row is added to this set when it coincides with a prefixed form.
+# Exponents shown before the user expands the full list: base SI unit
+# (exp 0), kilo (exp 3), and milli (exp -3). Deca (1) and hecto (2) are
+# only visible by default when they have a database entry (e.g. hectare,
+# are for area); synthetic deca/hecto rows are collapsed.
 DEFAULT_VISIBLE_EXPONENTS = {0, 3, -3}
 
 
-def _si_prefix_rows(db, default_unit, quantity_id):
-    """Rows for the SI-prefix table shared by /quantity/<id> and
-    /unit/<id>: every SI-prefixed form of the quantity's base unit
-    (km kilometre 10^3), largest exponent first, plus the unprefixed
-    base unit at 10^0.
+def _si_prefix_rows(conn, system, quantity_id):
+    """Rows for the SI-prefix table: every SI-prefixed form of the
+    quantity's base unit (km, kilometre, 10^3, etc.) plus the
+    unprefixed base at 10^0.
 
-    Rows carry a stable payload id ("si_<prefix>") so they can join the
-    reference-unit picking, and small linked "SI base"/"CGS base"
-    badges. A quantity's registered CGS unit that coincides with a
-    prefixed form (centimetre, gram) is badged in place; any other CGS
-    unit (dyne) simply stays in the regular units table. Returns None
-    when the default unit is not a single prefixable base unit."""
+    Always returns rows for any quantity with units, even if no unit
+    is formally marked `is_base=1`. We fall back to
+    `select_base_unit_with_fallback` and, if that also returns None,
+    to the first unit of the quantity.
+
+    For compound bases (e.g. `metre_squared`, `metre_per_second`)
+    the table shows fully prefixed compound names and scaled values:
+    e.g. area "Square kilometer" 10^6, velocity "Kilometer per second"
+    10^3, volume "Kilometer cubed" 10^9.
+
+    Returns (rows, cgs_unit_id).
+    """
     locale = g.locale
-    parts = parse_default_unit(default_unit)
-    if len(parts) != 1 or parts[0][1] != 1:
-        return None
-    base_id = PREFIXABLE_BASE_UNITS.get(parts[0][0])
-    if not base_id:
-        return None
-    base = fetch_unit(db, base_id)
+    base = select_base_unit_with_fallback(conn, quantity_id, system)
     if not base:
-        return None
+        base = conn.execute(
+            "SELECT * FROM unit WHERE quantity_id = ? LIMIT 1",
+            (quantity_id,),
+        ).fetchone()
+        if not base:
+            return None, None
+        base = {"kind": "unit", **dict(base)}
 
-    base_name = localise(base["name"], locale) or localise(base["name"], "en-us")
-    base_symbol_latex = render_symbol(base["symbol"])
-    base_factor = float(base["factor"] or 1)
-    # The actual SI base unit of the quantity (kilogram for mass), which
-    # prefixes attach to the gram.
-    default_unit_id = parts[0][0]
-
-    cgs_row = None
-    for cu in db.execute(
-        "SELECT id, factor FROM unit WHERE quantity_id = ? AND unit_system = 'CGS'",
+    cgs_unit = conn.execute(
+        "SELECT id FROM unit WHERE quantity_id = ? AND system = 'CGS' LIMIT 1",
         (quantity_id,),
-    ).fetchall():
-        f = float(cu["factor"] or 0)
-        if f > 0:
-            cgs_row = {"id": cu["id"], "factor": f}
+    ).fetchone()
+    cgs_unit_id = cgs_unit["id"] if cgs_unit else None
+
+    prefixable = _get_prefixable_base_units(conn)
+    if base["kind"] == "unit":
+        base_id = prefixable.get(base["id"], base["id"])
+        base_unit_row = fetch_unit(conn, base_id)
+        if base_unit_row is None:
+            return None, None
+        base_symbol = base_unit_row["symbol"]
+        base_name = localise(base_unit_row["name"], locale) or localise(base_unit_row["name"], "en-us")
+        base_id_for_link = base_id if fetch_unit(conn, base_id) else None
+
+        def make_prefix_rows(base_id, base_name, base_symbol):
+            base_symbol_latex = wrap_symbol_in_latex(base_symbol)
+            def system_field(exp):
+                if exp == SI_BASE_EXPONENT.get(base_id, 0):
+                    return ("detail.si_base", base_id_for_link)
+                return (None, None)
+            prefixed = []
+
+            # Add base entry at exp=0 first
+            prefixed.append({
+                "id": base_id,
+                "exp": 0,
+                "symbol_latex": base_symbol_latex,
+                "name": base_name,
+                "system_key": system_field(0)[0],
+                "link_unit_id": base_id_for_link,
+                "value_latex": "10^{0}",
+            })
+
+            for p in fetch_si_prefixes(conn):
+                exp = int(p["id"])
+                combined = localise(p["name"], locale) + base_name.lower()
+                sys_key, _ = system_field(exp)
+                # For simple units, the link target is always the base
+                # unit (e.g. /unit/metre) so the link wraps only the
+                # unit part of the joined prefix+unit name.
+                link_unit_id = base_id_for_link
+                prefix_sym = localise(p["symbol"], locale)
+                normalised_prefix = _normalise_prefix_symbol(prefix_sym, base_symbol)
+                # Split the prefix from the unit name so the link
+                # wraps only the unit part (e.g. "Kilo[meter]").
+                prefix_word = localise(p["name"], locale)
+                name_html = (
+                    html_module.escape(prefix_word)
+                    + f'<a href="/unit/{link_unit_id}">'
+                    + html_module.escape(base_name.lower())
+                    + "</a>"
+                )
+                prefixed.append({
+                    "id": f"si_{p['id']}",
+                    "exp": exp,
+                    "symbol_latex": wrap_symbol_in_latex(normalised_prefix) + base_symbol_latex,
+                    "name": Markup(name_html),
+                    "system_key": sys_key,
+                    "link_unit_id": None,
+                    "value_latex": f"10^{{{exp}}}",
+                })
+            for r in prefixed:
+                r["collapsed"] = r["exp"] not in DEFAULT_VISIBLE_EXPONENTS
+                r["payload_id"] = r["id"] or base_id or "si_base"
+            prefixed.sort(key=lambda x: x["exp"], reverse=True)
+            return prefixed
+
+        return make_prefix_rows(base_id, base_name, base_symbol), cgs_unit_id
+
+    # --- compound_unit base: compound-aware prefixing ---
+    parts_with_prefix = parse_compound_unit_parts(base["unit"])
+    parts = [(uid, exp) for uid, exp, _prefix in parts_with_prefix]
+    if not parts:
+        return None, None
+
+    # Find the natural prefix exponent of the base itself (e.g. kilogram
+    # is gram with prefix 3, so its natural exp in the SI prefix table is
+    # 3, not 0). When the primary part has a built-in prefix, the base
+    # entry should sit at that exp rather than at exp=0.
+    primary_part_uid = None
+    primary_natural_exp = 0
+    for uid, exp, prefix in parts_with_prefix:
+        if exp > 0 and uid in prefixable:
+            primary_part_uid = uid
+            primary_natural_exp = prefix or 0
             break
+    if primary_part_uid is None:
+        for uid, exp, prefix in parts_with_prefix:
+            if uid in prefixable:
+                primary_part_uid = uid
+                primary_natural_exp = prefix or 0
+                break
+
+    # Find prefixable parts and compute compound prefix exponent.
+    # The exponent used for scaling is the sum of POSITIVE exponents
+    # of prefixable parts (numerator parts). This matches SI prefixing
+    # convention: prefix the numerator unit(s).
+    prefixable_parts = []
+    compound_prefix_exp = 0
+    for part_uid, part_exp in parts:
+        pref_uid = prefixable.get(part_uid)
+        if pref_uid:
+            prefixable_parts.append((part_uid, part_exp, pref_uid))
+            if part_exp > 0:
+                compound_prefix_exp += part_exp
+    # Fallback: if no positive prefixable parts, use absolute of first prefixable part
+    if compound_prefix_exp == 0 and prefixable_parts:
+        compound_prefix_exp = abs(prefixable_parts[0][1])
+
+    if not prefixable_parts:
+        # No prefixable parts (e.g. compound contains only non-base units like
+        # second, kelvin). There is no meaningful SI prefix table for the
+        # unprefixed base; skip the table entirely.
+        return None, None
+
+    def make_prefixed_name_func(prefix_name, locale):
+        """Return a function mapping unit_id -> prefixed name (only for primary part)."""
+        def name_func(unit_id):
+            if unit_id == primary_part_uid and unit_id in prefixable:
+                row = fetch_unit(conn, unit_id)
+                if row:
+                    full = localise(row["name"], locale) or localise(row["name"], "en-us")
+                    return prefix_name + full.lower()
+            # Non-primary part: return its normal name
+            row = fetch_unit(conn, unit_id)
+            if row:
+                return localise(row["name"], locale) or localise(row["name"], "en-us")
+            return unit_id.replace("_", " ").title()
+        return name_func
+
+    # Get the base compound name and symbol (unprefixed)
+    # base["unit"] is already a JSON string from the database
+    from scifind_lib.units import format_compound_unit_html, format_compound_unit_symbol
+    if base.get("name_overwrite") and primary_natural_exp == 0:
+        # For bases without a built-in prefix (e.g. metre_squared), use
+        # the human-friendly override directly.
+        base_name = localise(base["name_overwrite"], locale) or localise(base["name_overwrite"], "en-us")
+        if not base_name:
+            base_name = base["id"].replace("_", " ").title()
+    else:
+        # Render the name with the part-derived form so the prefix
+        # shows as plain text and each simple-unit part is a link
+        # (e.g. "Kilo[gram]" for kilogram, or "[Metre] squared" for
+        # metre_squared). The `prefix_name` callback supplies the
+        # localised prefix name (e.g. "Kilo"); `unit_url` makes the
+        # simple-unit part a clickable link.
+        base_name = format_compound_unit_html(
+            base["unit"], locale=locale,
+            prefix_name=_prefix_name_callback(locale),
+            unit_url=lambda uid: f"/unit/{uid}" if uid in _get_unit_name_map() else None,
+        )
+    if base.get("symbol_overwrite"):
+        base_symbol_latex = base["symbol_overwrite"]
+    else:
+        base_symbol_latex = format_compound_unit_symbol(
+            base["unit"],
+            unit_symbol=lambda uid: _unit_symbol_for(conn, uid),
+            prefix_symbol=lambda exp: _prefix_symbol_for(conn, exp),
+        )
+    base_id = base.get("id")
 
     def system_field(exp):
-        """System-column designation for a prefix row: ("SI base" /
-        "CGS base", unit id whose page the row name links to) — or None
-        for a plain family row, whose "SI" merges into the Unit cell."""
-        row_factor = (10 ** exp) * base_factor
-        if exp == SI_BASE_EXPONENT.get(base_id, 0) and default_unit_id:
-            return ("detail.si_base", default_unit_id)
-        if cgs_row and math.isclose(row_factor, cgs_row["factor"], rel_tol=1e-12):
-            return ("detail.cgs_base", cgs_row["id"])
-        return None
+        return (None, None)
+
+    # Check for existing database entries that have SI prefixes applied
+    # (e.g. hectare, are for area). These should replace synthetic entries.
+    import json
+    db_prefix_entries = {}  # prefix_exp -> db_entry
+    for row in conn.execute(
+        "SELECT id, unit, name_overwrite, symbol_overwrite FROM compound_unit WHERE quantity_id = ? AND is_base = 0",
+        (quantity_id,),
+    ).fetchall():
+        try:
+            units = json.loads(row["unit"])
+            if isinstance(units, list):
+                for u in units:
+                    if isinstance(u, dict) and "prefix" in u:
+                        pref_val = u["prefix"]
+                        if pref_val is not None:
+                            try:
+                                pref_exp = int(pref_val)
+                                db_prefix_entries[pref_exp] = row
+                            except (ValueError, TypeError):
+                                pass
+        except (json.JSONDecodeError, TypeError):
+            pass
 
     prefixed = []
-    for p in fetch_si_prefixes(db):
-        exp = int(p["exponent"])
-        combined = localise(p["name"], locale) + base_name.lower()
-        sys_key, link_unit_id = system_field(exp) or (None, None)
+    db_entry_exps = set(db_prefix_entries.keys())
+
+    # Add base entry at its natural exp (e.g. kilogram = gram with prefix
+    # 3, so the base sits at exp=3, not exp=0). The base's own unit_id
+    # is used to identify it; value_latex uses the proper power of 10.
+    if primary_natural_exp not in db_prefix_entries:
+        prefixed.append({
+            "id": base_id,
+            "exp": primary_natural_exp,
+            "symbol_latex": base_symbol_latex,
+            "name": Markup(base_name),
+            "system_key": "detail.si_base",
+            # The base's `name` already has inline links on each
+            # simple-unit part (e.g. "[Metre] squared"); leave
+            # `link_unit_id` unset so the template doesn't wrap the
+            # whole name in another <a>.
+            "link_unit_id": None,
+            "value_latex": f"10^{{{primary_natural_exp * compound_prefix_exp}}}",
+        })
+
+    # When the base has a built-in prefix (e.g. kilogram at exp=3), also
+    # add an exp=0 row for the unprefixed simple unit (e.g. gram).
+    if primary_natural_exp != 0 and 0 not in db_entry_exps:
+        unprefixed_json = json.dumps([
+            {"unit": uid, "exponent": exp_val}
+            for uid, exp_val in parts
+        ])
+        # Render the name with inline links on each simple-unit part
+        # (e.g. "[Gram]"); leave `link_unit_id` unset so the template
+        # doesn't wrap the whole name in another <a>.
+        unprefixed_name = format_compound_unit_html(
+            unprefixed_json, locale=locale,
+            unit_name=_unit_name_callback(locale),
+            unit_url=lambda uid: f"/unit/{uid}" if uid in _get_unit_name_map() else None,
+        )
+        unprefixed_sym = format_compound_unit_symbol(
+            unprefixed_json,
+            unit_symbol=lambda uid: _unit_symbol_for(conn, uid),
+        )
+        prefixed.append({
+            "id": f"si_0",
+            "exp": 0,
+            "symbol_latex": unprefixed_sym,
+            "name": Markup(unprefixed_name),
+            "system_key": None,
+            "link_unit_id": None,
+            "value_latex": f"10^{{0}}",
+        })
+
+    for p in fetch_si_prefixes(conn):
+        exp = int(p["id"])
+
+        # Use database entry if it exists for this prefix
+        if exp in db_prefix_entries:
+            db_entry = db_prefix_entries[exp]
+            from scifind_lib.units import format_compound_unit_html, format_compound_unit_symbol
+            name_json = db_entry["name_overwrite"]
+            if name_json:
+                db_entry_name = localise(name_json, locale)
+                if not db_entry_name:
+                    db_entry_name = localise(name_json, "en-us")
+            else:
+                db_entry_name = db_entry["id"].replace("_", " ").title()
+            db_parts = parse_compound_unit(db_entry["unit"])
+            sym_overwrite = db_entry["symbol_overwrite"]
+            if sym_overwrite:
+                db_sym_latex = sym_overwrite
+            elif db_parts and primary_part_uid:
+                prefix_sym = localise(p["symbol"], locale)
+                db_sym_latex = _build_compound_sym_latex(
+                    conn, prefix_sym, primary_part_uid, db_parts
+                )
+            else:
+                db_sym_latex = format_compound_unit_symbol(
+                    db_entry["unit"],
+                    unit_symbol=lambda uid: _unit_symbol_for(conn, uid),
+                    prefix_symbol=lambda exp: _prefix_symbol_for(conn, exp),
+                )
+            prefixed.append({
+                "id": db_entry["id"],
+                "exp": exp,
+                "symbol_latex": db_sym_latex,
+                "name": db_entry_name,
+                "system_key": None,
+                "link_unit_id": primary_part_uid,
+                "value_latex": f"10^{{{exp * compound_prefix_exp}}}",
+            })
+            continue
+
+        # Skip synthetic entry for the base's natural exp — it's already
+        # added above as the base row (e.g. kilogram at exp=3).
+        if exp == primary_natural_exp:
+            continue
+
+        # At exp=0 there is no prefix, so render the unprefixed form
+        # of the primary unit (e.g. "gram" for kilogram) instead of
+        # reusing the prefixed name from `name_func`.
+        if exp == 0:
+            unprefixed_parts = [(uid, exp_val) for uid, exp_val in parts]
+            unprefixed_json = json.dumps([
+                {"unit": uid, "exponent": exp_val}
+                for uid, exp_val in unprefixed_parts
+            ])
+            # Render the name without an inline link — the template wraps
+            # the whole name cell in its own <a> using `link_unit_id`.
+            pref_name_html = Markup(format_compound_unit_html(
+                unprefixed_json, locale=locale,
+                unit_name=_unit_name_callback(locale),
+            ))
+            pref_sym_latex = format_compound_unit_symbol(
+                unprefixed_json,
+                unit_symbol=lambda uid: _unit_symbol_for(conn, uid),
+            )
+        else:
+            prefix_name_val = localise(p["name"], locale)
+            prefix_sym = localise(p["symbol"], locale)
+            # Render with `prefix_name` so the prefix shows as plain
+            # text and the unit name becomes a link (e.g. "Kilo[gram]"
+            # rather than "[Kilogram]").
+            pref_name_html = Markup(format_compound_unit_html(
+                base["unit"], locale=locale,
+                unit_name=_unit_name_callback(locale),
+                prefix_name=lambda _exp: prefix_name_val,
+                unit_url=lambda uid: f"/unit/{uid}" if uid in _get_unit_name_map() else None,
+            ))
+            pref_sym_latex = _build_compound_sym_latex(
+                conn, prefix_sym, primary_part_uid, parts
+            )
+
+        sys_key, _ = system_field(exp)
+        # The inline link in `pref_name_html` (e.g. "Kilo<a>gram</a>")
+        # provides navigation; setting `link_unit_id` to None prevents
+        # the template from wrapping the entire name in another <a>.
+        link_unit_id = None
+        compound_value_exp = exp * compound_prefix_exp
         prefixed.append({
             "id": f"si_{p['id']}",
             "exp": exp,
-            "factor": (10 ** exp) * base_factor,
-            "symbol_latex": Markup(render_symbol(p["symbol"]) + base_symbol_latex),
-            "name": combined[:1].upper() + combined[1:],
+            "symbol_latex": pref_sym_latex,
+            "name": Markup(pref_name_html),
             "system_key": sys_key,
             "link_unit_id": link_unit_id,
-            "value_latex": f"10^{{{exp}}}",
+            "value_latex": f"10^{{{compound_value_exp}}}",
         })
-    # The unprefixed base row sits between deca (10^1) and deci (10^-1).
-    insert_at = next(
-        (i for i, r in enumerate(prefixed) if r["exp"] < 0), len(prefixed)
-    )
-    base_sys = system_field(0) or (None, None)
-    prefixed.insert(insert_at, {
-        "id": "",
-        "exp": 0,
-        "factor": base_factor,
-        "symbol_latex": Markup(base_symbol_latex),
-        "name": base_name,
-        "system_key": base_sys[0],
-        "link_unit_id": base_sys[1],
-        "value_latex": "10^{0}",
-    })
-    visible = set(DEFAULT_VISIBLE_EXPONENTS)
-    if cgs_row:
-        visible.update(
-            r["exp"] for r in prefixed
-            if math.isclose((10 ** r["exp"]) * base_factor,
-                            cgs_row["factor"], rel_tol=1e-12)
-        )
+
     for r in prefixed:
-        r["collapsed"] = r["exp"] not in visible
-    # A registered CGS unit that coincides with a family row (centimetre,
-    # gram) is represented there, so the caller can drop the duplicate
-    # from the regular units table.
-    return prefixed, (cgs_row["id"] if cgs_row else None)
+        # DB-overwritten entries (hectare, are, etc.) are always visible.
+        # Synthetic prefixed entries follow DEFAULT_VISIBLE_EXPONENTS.
+        is_db_entry = r["exp"] in db_entry_exps
+        r["collapsed"] = (not is_db_entry) and (r["exp"] not in DEFAULT_VISIBLE_EXPONENTS)
+        r["payload_id"] = r["id"] or base_id or "si_base"
+    prefixed.sort(key=lambda x: x["exp"], reverse=True)
+    return prefixed, cgs_unit_id
 
-
-def _append_si_prefix_entries(db, quantity_id, default_unit, entries):
-    """Join the SI-prefix family onto the shared units-table state.
-
-    Every prefix row gets a synthetic payload id ("si_<prefix>"; the
-    bare base unit becomes "si_base") so both tables in the Units
-    section — registered units and the prefix family — share one
-    reference-unit picker without colliding with real unit ids.
-    Returns (decorated rows for template rendering or None, id of the
-    registered CGS unit duplicated by a family row or None)."""
-    result = _si_prefix_rows(db, default_unit, quantity_id)
-    if result is None:
-        return None, None
-    rows, cgs_unit_id = result
-    for r in rows:
-        classes = []
-        if not r["id"]:
-            classes.append("si-base-row")
-        if r["collapsed"]:
-            classes.append("si-extra")
-        r["row_class"] = " ".join(classes)
-        r["payload_id"] = r["id"] or "si_base"
-        # Synthetic rows carry their decade exponent so the client-side
-        # converter can hop through them (ms -> s -> min -> hour -> day).
-        entries.append({
-            "id": r["payload_id"],
-            "label": r["name"],
-            "factor": r["factor"],
-            "offset": 0,
-            "si_exp": r["exp"],
-        })
-    return rows, cgs_unit_id
 
 
 @app.context_processor
 def inject_globals():
     locale = g.get("locale", "en-us")
     tree = load_tree()
-    db = None
+    conn = None
     try:
-        db = get_db()
+        conn = get_db()
     except sqlite3.OperationalError as exc:
         logger.warning("Database unavailable: %s", exc)
+    # Validate the unit reference graph: any unit that has no path to a
+    # root (cycle or orphan) is a hard-stop error. The app refuses to
+    # serve pages until the seed is fixed.
+    if conn is not None:
+        from scifind_lib.conversion import UnitGraphError, validate_graph
+        try:
+            validate_graph(conn)
+        except UnitGraphError as exc:
+            logger.error("Unit graph integrity violated: %s", exc)
+            raise RuntimeError(
+                f"Unit reference graph broken: {exc}. "
+                f"Fix seed.sql before serving traffic."
+            ) from exc
     fs = parse_filter_state(request.args)
     name_map = topic_name_map(tree, locale)
     compressed = compress_selection(tree, fs.ids)
@@ -899,12 +1641,11 @@ def inject_globals():
     all_quantities_for_filter = []
     dimension_caches = {"var": {}, "unit": {}, "dim": {}}
     dim_qty_names = {}
-    if db is not None:
+    if conn is not None:
         try:
             all_quantities_for_filter = [
                 {"id": q["id"], "name": localise(q["name"], locale), "symbol": q["symbol"] or ""}
-                for q in fetch_all_quantities(db)
-                if not is_hidden_quantity(q)
+                for q in fetch_all_quantities(conn)
             ]
         except sqlite3.OperationalError as exc:
             logger.warning("Quantity table unavailable: %s", exc)
@@ -912,7 +1653,7 @@ def inject_globals():
         try:
             qid_to_name = {
                 q["id"]: localise(q["name"], locale)
-                for q in db.execute(
+                for q in conn.execute(
                     f"SELECT id, name FROM quantity WHERE id IN ({','.join('?' * len(dimension_quantity_ids()))})",
                     tuple(dimension_quantity_ids().values()),
                 ).fetchall()
@@ -945,7 +1686,7 @@ def inject_globals():
         all_quantities_for_filter=all_quantities_for_filter,
         dim_symbols=dim_symbols,
         dim_qty_names=dim_qty_names,
-        dimension_symbol_list=dimension_symbols() if db else [],
+        dimension_symbol_list=dimension_symbols() if conn else [],
         available_locales=locale_list,
         locale_ui=locale_ui,
         sort=sort_context["sort"],
@@ -989,7 +1730,7 @@ def create_formula():
     return render_template("create.html")
 
 
-def _items_from_tokens(db, tokens):
+def _items_from_tokens(conn, tokens):
     """Build detail-items-shaped dicts from in-memory RPN tokens + overrides."""
     qids = {tok["quantity_id"] for tok in tokens
             if tok.get("token_kind") == "quantity"}
@@ -997,24 +1738,24 @@ def _items_from_tokens(db, tokens):
             if tok.get("token_kind") == "constant"}
     qrows = {}
     if qids:
-        placeholder, qparams = _in_clause(qids)
+        placeholder, qparams = in_clause(qids)
         qrows = {
-            r["id"]: r for r in db.execute(
-                f"SELECT id, name, symbol, default_unit FROM quantity "
-                f"WHERE id IN ({placeholder})", qparams
+            r["id"]: r for r in conn.execute(
+                f"SELECT id, name, symbol FROM quantity WHERE id IN ({placeholder})", qparams
             ).fetchall()
         }
     crows = {}
     if cids:
-        placeholder, cparams = _in_clause(cids)
+        placeholder, cparams = in_clause(cids)
         crows = {
-            r["id"]: r for r in db.execute(
+            r["id"]: r for r in conn.execute(
                 f"""
                 SELECT c.id, c.name, c.symbol,
+                       c.unit_id,
+                       c.compound_unit_id,
                        rq.id AS related_quantity_id,
                        rq.name AS related_quantity_name,
-                       rq.symbol AS related_quantity_symbol,
-                       rq.default_unit AS related_quantity_default_unit
+                       rq.symbol AS related_quantity_symbol
                 FROM constant c
                 LEFT JOIN quantity rq ON rq.id = c.quantity_id
                 WHERE c.id IN ({placeholder})
@@ -1036,9 +1777,8 @@ def _items_from_tokens(db, tokens):
                 "quantity_symbol": qrow["symbol"],
                 "quantity_name": qty_name,
                 "symbol_overwrite": tok.get("symbol_overwrite") or "",
-                "quantity_name_overwrite": tok.get("quantity_name_overwrite") or "",
+                "name_overwrite": tok.get("name_overwrite") or "",
                 "label": tok.get("label") or "",
-                "default_unit": qrow["default_unit"],
             })
         elif kind == "constant":
             crow = crows.get(tok["constant_id"])
@@ -1051,16 +1791,14 @@ def _items_from_tokens(db, tokens):
                 "related_quantity_id": crow["related_quantity_id"] or "",
                 "related_quantity_name": localise(crow["related_quantity_name"] or "", "en-us") or None,
                 "related_quantity_symbol": crow["related_quantity_symbol"] or "",
-                "related_quantity_default_unit": crow["related_quantity_default_unit"],
+                "constant_unit_id": crow["unit_id"],
+                "constant_compound_unit_id": crow["compound_unit_id"],
             })
     return items
 
 
 def _format_constant_value(value):
-    """Format a constant's numerical value as a compact LaTeX string.
-
-    Same thresholds and precision as _constant_value_display so tables
-    and the big display box always agree."""
+    """Compact LaTeX for a constant's numerical value (matches _constant_value_display)."""
     if value is None:
         return ""
     d = _constant_value_display(value)
@@ -1073,9 +1811,10 @@ def _format_constant_value(value):
 def _constant_value_display(value):
     """Split a constant's value for the big display box.
 
-    Returns {"sign", "int", "dec", "exp"}: integer digits shown large,
-    `dec` digits shrink progressively, and values that are too large or
-    too small are normalised to a 10^`exp` factor (mantissa in [1, 10))."""
+    Returns {sign, int, dec, exp}: integer digits shown large, `dec`
+    digits shrink progressively, values too large or small are
+    normalised to a 10^exp factor (mantissa in [1, 10)).
+    """
     v = float(value)
     sign = "-" if v < 0 else ""
     a = abs(v)
@@ -1097,10 +1836,10 @@ def _constant_value_latex(display):
     """LaTeX for the big display box, rendered by KaTeX on the client.
 
     Sign + integer part, the decimal mark and every decimal digit carry
-    \\htmlClass wrappers (.cv-int/.cv-dot/.cv-dec) so the client fit/fade
-    layout can measure them and anchor the fade at the end of the
-    mantissa. A \\times10^ factor is appended when the value needs one,
-    wrapped as .cv-times so the fade can be kept off it."""
+    \\htmlClass wrappers (.cv-int/.cv-dot/.cv-dec) so the client
+    fit/fade layout can measure them and anchor the fade at the end of
+    the mantissa.
+    """
     parts = [
         "\\htmlClass{cv-int}{" + display["sign"] + (display["int"] or "0") + "}"
     ]
@@ -1116,82 +1855,92 @@ def _constant_value_latex(display):
     return "".join(parts)
 
 
-def _constant_units_table(db, c):
-    """Rows for the constant's per-unit value table: exactly the units of
-    constant.quantity_id as shown on that quantity's page (its default
-    unit first, then its registered units)."""
+def _constant_units_table(conn, c, system):
+    """Rows for the constant's per-unit value table.
+
+    Each row holds the constant's value converted to a different unit,
+    computed by walking the unit reference graph (no fixed (factor,
+    offset) columns). The constant's preferred unit appears first.
+    """
     si_value = c.get("value")
     rq_id = c.get("quantity_id")
     if si_value is None or not rq_id:
         return []
 
     locale = g.locale
-    quantity_default = (c.get("related_quantity_default_unit")
-                        or c.get("default_unit"))
-    default_unit_html, default_unit_symbol = _render_default_unit(
-        quantity_default, locale
+    base = None
+    if c.get("unit_id"):
+        base = unit_by_id(conn, c["unit_id"])
+    elif c.get("compound_unit_id"):
+        base = compound_unit_by_id(conn, c["compound_unit_id"])
+    if base is None:
+        base = select_base_unit_with_fallback(conn, rq_id, system)
+    default_unit_html, default_unit_symbol = (
+        _render_compound_unit(base, locale) if base else (Markup(""), "")
     )
-    rows = []
-    default_parts = parse_default_unit(quantity_default)
-    du_ids = {uid for uid, _ in default_parts}
-    if default_parts:
-        rows.append({
+
+    graph = UnitGraph(conn, rq_id)
+    base_unit_ids = set()
+    if base and base["kind"] == "compound_unit":
+        base_unit_ids = {uid for uid, _ in parse_compound_unit(base["unit"])}
+    elif base:
+        base_unit_ids = {base["id"]}
+    base_system = base["system"] if base else "SI"
+
+    units_rows = []
+    if base:
+        units_rows.append({
             "symbol_latex": default_unit_symbol,
             "name_html": default_unit_html,
-            "unit_system": _default_unit_system(db, du_ids),
+            "system": base_system,
             "value_latex": _format_constant_value(si_value),
         })
 
-    seen_values = {rows[0]["value_latex"]} if rows else set()
-    for eu_row in fetch_quantity_units(db, rq_id):
+    seen_values = {units_rows[0]["value_latex"]} if units_rows else set()
+    for eu_row in fetch_quantity_units(conn, rq_id):
         eu = dict(eu_row)
-        if eu["id"] in du_ids:
+        if eu["id"] in base_unit_ids:
             continue
-        factor = eu["factor"] or 1
-        offset = eu["offset"] or 0
-        converted = (si_value - offset) / factor
+        converted = convert_value(si_value, base["id"], eu["id"], graph)
+        if converted is None:
+            continue
         value_latex = _format_constant_value(converted)
         if value_latex in seen_values:
             continue
         seen_values.add(value_latex)
-        rows.append({
-            "symbol_latex": Markup(render_symbol(eu["symbol"])),
+        units_rows.append({
+            "symbol_latex": Markup(wrap_symbol_in_latex(eu["symbol"])),
             "name_html": _unit_name_link(eu["id"]),
-            "unit_system": eu.get("unit_system") or "any",
+            "system": eu.get("system") or "any",
             "value_latex": value_latex,
         })
-    return rows
+    return units_rows
 
 
-def _constant_detail_item(db, item, locale):
-    """Detail-table entry for one constant token: symbol + linked name,
-    parenthesised related quantity, related quantity's default unit."""
+def _constant_detail_item(conn, item, locale):
+    """Detail-table entry for one constant token."""
     cid = item.get("constant_id")
     if not cid:
         return None
     name = item.get("constant_name") or cid.replace("_", " ").title()
-    name_html = (
-        f'<a href="/constant/{html_module.escape(cid)}">'
-        f"{html_module.escape(name)}</a>"
-    )
+    name_html = build_entity_link("constant", cid, name)
     rq_id = item.get("related_quantity_id")
     rq_name = item.get("related_quantity_name")
     rq_symbol = (item.get("related_quantity_symbol") or "").strip()
     paren_parts = []
     if rq_name:
         paren_parts.append(f"${rq_symbol}$" if rq_symbol else "")
-        paren_parts.append(
-            f'<a href="/quantity/{html_module.escape(rq_id)}">'
-            f"{html_module.escape(rq_name)}</a>"
-        )
-    paren_html = (
-        f"({' '.join(part for part in paren_parts if part)})"
-        if any(paren_parts) else ""
-    )
+        paren_parts.append(build_entity_link("quantity", rq_id, rq_name))
+    paren_html = f"({' '.join(part for part in paren_parts if part)})" if rq_name else ""
 
-    unit_html, unit_sym = _render_default_unit(
-        item.get("related_quantity_default_unit"), locale
-    )
+    base = None
+    if item.get("constant_unit_id"):
+        base = unit_by_id(conn, item["constant_unit_id"])
+    elif item.get("constant_compound_unit_id"):
+        base = compound_unit_by_id(conn, item["constant_compound_unit_id"])
+    if base is None and item.get("related_quantity_id"):
+        base = select_base_unit_with_fallback(conn, item["related_quantity_id"], g.unit_system)
+    unit_html, unit_sym = _render_compound_unit(base, locale)
     return {
         "symbol_latex": item.get("constant_symbol") or "",
         "name_html": Markup(name_html),
@@ -1201,51 +1950,52 @@ def _constant_detail_item(db, item, locale):
     }
 
 
-def _build_formula_detail_items(db, formula_id, locale, tokens=None):
+def _build_formula_detail_items(conn, formula_id, locale, tokens=None):
     """Build the formula detail table data from formula_id or in-memory tokens."""
     if tokens is None:
-        items = [dict(r) for r in fetch_formula_detail_items(db, formula_id)]
+        items = [dict(r) for r in fetch_formula_token_quantities(conn, formula_id)]
     else:
-        items = _items_from_tokens(db, tokens)
+        items = _items_from_tokens(conn, tokens)
 
     result = []
     for item in items:
         qid = item.get("quantity_id")
         if not qid:
-            const_item = _constant_detail_item(db, item, locale)
+            const_item = _constant_detail_item(conn, item, locale)
             if const_item:
                 result.append(const_item)
             continue
 
-        symbol_latex = render_variable_base(item, locale)
+        symbol_latex = render_variable_symbol(item, locale)
         qty_name = item.get("quantity_name") or qid.replace("_", " ").title()
         orig_symbol = (item.get("quantity_symbol") or "").strip()
         overwrite = localise(item.get("symbol_overwrite") or "", locale)
         has_overwrite = bool(overwrite and orig_symbol and overwrite != orig_symbol)
-        qno_raw = localise(item.get("quantity_name_overwrite") or "", locale)
-        qlink = (
-            f'<a href="/quantity/{html_module.escape(qid)}">'
-            f"{html_module.escape(qty_name)}</a>"
-        )
+        no_raw = localise(item.get("name_overwrite") or "", locale)
+        qlink = build_entity_link("quantity", qid, qty_name)
 
         paren_parts = []
         if has_overwrite and orig_symbol:
             paren_parts.append(f"${orig_symbol}$")
 
-        if qno_raw:
-            marker_ids = {m.split('|')[0].lower().replace(' ', '_')
-                          for m in re.findall(r'\[([^\]]+)\]', qno_raw)}
+        if no_raw:
+            marker_ids = set()
+            for m in re.finditer(r"\[\s*([^\]]+)\]", no_raw):
+                qid_from_marker = m.group(1).strip().split("|", 1)[0].strip().lower().replace(" ", "_")
+                if re.fullmatch(r"[a-z0-9]+(?:_[a-z0-9]+)*", qid_from_marker):
+                    marker_ids.add(qid_from_marker)
             if qid in marker_ids:
-                name_html = parse_quantity_name_markers(qno_raw)
+                name_html = expand_quantity_markers(no_raw)
             else:
-                name_html = html_module.escape(qno_raw)
+                name_html = html_module.escape(no_raw)
                 if has_overwrite and orig_symbol:
                     paren_parts.append(qlink)
         else:
             name_html = qlink
 
         paren_html = f"({' '.join(paren_parts)})" if paren_parts else ""
-        unit_html, unit_sym = _render_default_unit(item.get("default_unit"), locale)
+        base = select_base_unit_with_fallback(conn, qid, g.unit_system)
+        unit_html, unit_sym = _render_compound_unit(base, locale)
 
         result.append({
             "symbol_latex": symbol_latex,
@@ -1260,19 +2010,19 @@ def _build_formula_detail_items(db, formula_id, locale, tokens=None):
 
 @app.route("/formula/<formula_id>")
 def formula_detail(formula_id):
-    db = get_db()
+    conn = get_db()
     locale = g.locale
-    row = fetch_formula(db, formula_id)
+    row = fetch_formula(conn, formula_id)
     if not row:
         return "Formula not found", 404
     row = dict(row)
     _attach_breadcrumbs(row, locale)
-    latex = render_formula(db, formula_id, locale=locale)
+    latex = render_formula_latex(conn, formula_id, locale=locale)
     related = []
-    for r in fetch_formula_related(db, formula_id):
-        r["latex"] = render_formula(db, r["related_id"], locale=locale)
+    for r in fetch_formula_relations(conn, formula_id):
+        r["latex"] = render_formula_latex(conn, r["related_id"], locale=locale)
         related.append(r)
-    detail_items = _build_formula_detail_items(db, formula_id, locale)
+    detail_items = _build_formula_detail_items(conn, formula_id, locale)
 
     links = []
     if row.get("links"):
@@ -1284,7 +2034,7 @@ def formula_detail(formula_id):
             links = []
 
     dim_caches = _get_dimension_caches()
-    dimensions = compute_formula_dimensions(db, formula_id)
+    dimensions = compute_formula_dimensions(conn, formula_id)
     dim_latex = format_dimensions_latex(
         *dimensions,
         variable_symbols=dim_caches["var"],
@@ -1292,7 +2042,7 @@ def formula_detail(formula_id):
         dim_symbols=dim_caches["dim"],
         mode=g.get("dim_mode", "dim"),
     )
-    formula_sql, token_sql = build_formula_sql(db, formula_id)
+    formula_sql, token_sql = build_formula_insert_sql(conn, formula_id)
     return render_template(
         "formula.html",
         formula=row, latex=latex,
@@ -1304,41 +2054,47 @@ def formula_detail(formula_id):
 
 @app.route("/quantity/<quantity_id>")
 def quantity_detail(quantity_id):
-    db = get_db()
+    conn = get_db()
     locale = g.locale
-    q = fetch_quantity(db, quantity_id)
+    q = fetch_quantity(conn, quantity_id)
     if not q:
         return "Quantity not found", 404
     q = dict(q)
     _attach_breadcrumbs(q, locale)
-    primary_formulas, non_primary_formulas = fetch_quantity_formulas_by_side(db, quantity_id)
+    primary_formulas, non_primary_formulas = fetch_quantity_formulas_by_side(conn, quantity_id)
     primary_formulas = [dict(f) for f in primary_formulas]
     non_primary_formulas = [dict(f) for f in non_primary_formulas]
     for formulas in (primary_formulas, non_primary_formulas):
         for f in formulas:
-            f["latex"] = render_formula(db, f["id"], locale=locale) or ""
+            f["latex"] = render_formula_latex(conn, f["id"], locale=locale) or ""
     related_formulas = []
-    for r in fetch_quantity_related_formulas(db, quantity_id):
+    for r in fetch_quantity_related_formulas(conn, quantity_id):
         r = dict(r)
-        r["latex"] = render_formula(db, r["id"], locale=locale)
+        r["latex"] = render_formula_latex(conn, r["id"], locale=locale)
         related_formulas.append(r)
 
-    units_table = _quantity_units_table(db, quantity_id, q["default_unit"])
+    units_table = _quantity_units_table(conn, quantity_id, g.unit_system)
     units = units_table["units"]
 
     dim_caches = _get_dimension_caches()
     dim_latex = format_dimensions_latex(
-        *extract_dimensions_from_row(q),
+        *dimensions_from_row(q),
         variable_symbols=dim_caches["var"],
         unit_symbols=dim_caches["unit"],
         dim_symbols=dim_caches["dim"],
         mode=g.get("dim_mode", "dim"),
     )
     constants = []
-    for const in fetch_quantity_constants(db, quantity_id):
+    for const in fetch_quantity_constants(conn, quantity_id):
         const = dict(const)
         const["value_latex"] = _format_constant_value(const["value"])
-        const["unit_symbol_latex"] = _render_unit_symbol(const["unit_default"])
+        if const.get("unit_id"):
+            base = unit_by_id(conn, const["unit_id"])
+        elif const.get("compound_unit_id"):
+            base = compound_unit_by_id(conn, const["compound_unit_id"])
+        else:
+            base = None
+        _, const["unit_symbol_latex"] = _render_compound_unit(base, g.locale) if base else (Markup(""), "")
         constants.append(const)
     return render_template(
         "quantity.html",
@@ -1356,9 +2112,9 @@ def quantity_detail(quantity_id):
 
 @app.route("/constant/<constant_id>")
 def constant_detail(constant_id):
-    db = get_db()
+    conn = get_db()
     locale = g.locale
-    c = fetch_constant(db, constant_id)
+    c = fetch_constant(conn, constant_id)
     if not c:
         return "Constant not found", 404
     c = dict(c)
@@ -1379,14 +2135,22 @@ def constant_detail(constant_id):
             links = []
 
     formulas = []
-    for f in fetch_constant_formulas(db, constant_id):
+    for f in fetch_constant_formulas(conn, constant_id):
         f = dict(f)
-        f["latex"] = render_formula(db, f["id"], locale=locale) or ""
+        f["latex"] = render_formula_latex(conn, f["id"], locale=locale) or ""
         formulas.append(f)
 
     dim_caches = _get_dimension_caches()
+    if c.get("unit_id"):
+        base = unit_by_id(conn, c["unit_id"])
+    elif c.get("compound_unit_id"):
+        base = compound_unit_by_id(conn, c["compound_unit_id"])
+    else:
+        base = None
+    compound_unit_json = (base["unit"]
+                          if base and base["kind"] == "compound_unit" else None)
     dim_latex = format_dimensions_latex(
-        *compute_default_unit_dimensions(db, c.get("default_unit")),
+        *compute_compound_unit_dimensions(conn, compound_unit_json),
         variable_symbols=dim_caches["var"],
         unit_symbols=dim_caches["unit"],
         dim_symbols=dim_caches["dim"],
@@ -1394,8 +2158,8 @@ def constant_detail(constant_id):
     )
 
     display = _constant_value_display(c["value"]) if c.get("value") is not None else None
-    unit_symbol_latex = _render_unit_symbol(c.get("default_unit"))
-    units = _constant_units_table(db, c)
+    _, unit_symbol_latex = _render_compound_unit(base, g.locale)
+    units = _constant_units_table(conn, c, g.unit_system)
 
     return render_template(
         "constant.html",
@@ -1412,20 +2176,20 @@ def constant_detail(constant_id):
 
 @app.route("/unit/<unit_id>")
 def unit_detail(unit_id):
-    db = get_db()
-    unit = fetch_unit(db, unit_id)
+    conn = get_db()
+    unit = fetch_unit(conn, unit_id)
     if not unit:
         return "Unit not found", 404
     unit = dict(unit)
     locale = g.locale
-    qty = fetch_quantity(db, unit["quantity_id"])
+    qty = fetch_quantity(conn, unit["quantity_id"])
     unit["quantity_name_localized"] = localise(qty["name"], locale) if qty else unit.get("quantity_id", "")
     _attach_breadcrumbs(unit, locale)
     units = table_data = si_prefixes = None
     if qty:
         # On a unit's own page the reference unit is that unit.
         units_table = _quantity_units_table(
-            db, unit["quantity_id"], qty["default_unit"], ref_unit_id=unit_id,
+            conn, unit["quantity_id"], g.unit_system, ref_unit_id=unit_id,
         )
         units = units_table["units"]
         table_data = units_table["payload"]
@@ -1436,18 +2200,19 @@ def unit_detail(unit_id):
         units=units,
         table_data=table_data,
         si_prefixes=si_prefixes,
+        fixed_ref=True,
     )
 
 
 @app.route("/search")
 def search_page():
     query = request.args.get("q", "").strip()[:SEARCH_QUERY_MAX_LENGTH]
-    db = get_db()
+    conn = get_db()
     locale = g.locale
     sort_key = _resolve_sort(request.args.get("sort"), SEARCH_SORT_KEYS, DEFAULT_SEARCH_SORT)
-    hits = search_headings(db, query, locale=locale)
-    hits = sort_search_rows(db, hits, sort_key, locale)
-    results = _enrich_search_hits(db, hits, locale)
+    hits = search_entities(conn, query, locale=locale)
+    hits = sort_search_rows(conn, hits, sort_key, locale)
+    results = _enrich_search_hits(conn, hits, locale)
     return render_template(
         "search.html",
         query=query,
@@ -1457,52 +2222,42 @@ def search_page():
     )
 
 
-def _enrich_search_hits(db, hits, locale):
+def _enrich_search_hits(conn, hits, locale):
     """Attach latex / symbol data to each search hit so the template can
     render formula-card style entries."""
-    formula_ids = [h[1] for h in hits if h[0] == "formula"]
-    quantity_ids = [h[1] for h in hits if h[0] == "quantity"]
-    unit_ids = [h[1] for h in hits if h[0] == "unit"]
-    constant_ids = [h[1] for h in hits if h[0] == "constant"]
+    formula_ids, quantity_ids, unit_ids, constant_ids = (
+        [h[1] for h in hits if h[0] == k] for k in ("formula", "quantity", "unit", "constant")
+    )
 
-    formula_meta = {}
-    if formula_ids:
-        placeholder, params = _in_clause(formula_ids)
-        for r in db.execute(
-            f"SELECT id, json_extract(name, '$.en-us') AS name_en FROM formula WHERE id IN ({placeholder})",
-            params,
-        ).fetchall():
-            formula_meta[r["id"]] = {"name_en": r["name_en"] or r["id"]}
+    def _meta(sql, ids, row_to_meta):
+        if not ids:
+            return {}
+        placeholder, params = in_clause(ids)
+        return {r["id"]: row_to_meta(r) for r in conn.execute(
+            f"{sql} WHERE id IN ({placeholder})", params,
+        ).fetchall()}
 
-    quantity_meta = {}
-    if quantity_ids:
-        placeholder, params = _in_clause(quantity_ids)
-        for r in db.execute(
-            f"SELECT id, symbol FROM quantity WHERE id IN ({placeholder})",
-            params,
-        ).fetchall():
-            quantity_meta[r["id"]] = {"symbol": r["symbol"] or ""}
-
-    unit_meta = {}
-    if unit_ids:
-        placeholder, params = _in_clause(unit_ids)
-        for r in db.execute(
-            f"SELECT u.id, u.symbol, u.name FROM unit u WHERE u.id IN ({placeholder})",
-            params,
-        ).fetchall():
-            unit_meta[r["id"]] = {
-                "symbol": r["symbol"] or "",
-                "name": localise(r["name"], locale) if r["name"] else r["id"],
-            }
-
-    constant_meta = {}
-    if constant_ids:
-        placeholder, params = _in_clause(constant_ids)
-        for r in db.execute(
-            f"SELECT id, symbol FROM constant WHERE id IN ({placeholder})",
-            params,
-        ).fetchall():
-            constant_meta[r["id"]] = {"symbol": r["symbol"] or ""}
+    formula_meta = _meta(
+        "SELECT id, json_extract(name, '$.en-us') AS name_en FROM formula",
+        formula_ids,
+        lambda r: {"name_en": r["name_en"] or r["id"]},
+    )
+    quantity_meta = _meta(
+        "SELECT id, symbol FROM quantity",
+        quantity_ids,
+        lambda r: {"symbol": r["symbol"] or ""},
+    )
+    unit_meta = _meta(
+        "SELECT u.id, u.symbol, u.name FROM unit u",
+        unit_ids,
+        lambda r: {"symbol": r["symbol"] or "",
+                   "name": localise(r["name"], locale) if r["name"] else r["id"]},
+    )
+    constant_meta = _meta(
+        "SELECT id, symbol FROM constant",
+        constant_ids,
+        lambda r: {"symbol": r["symbol"] or ""},
+    )
 
     enriched = []
     for kind, ent_id, display_name in hits:
@@ -1511,7 +2266,7 @@ def _enrich_search_hits(db, hits, locale):
             enriched.append({
                 "kind": kind, "id": ent_id,
                 "href": f"/formula/{ent_id}",
-                "latex": render_formula(db, ent_id, locale),
+                "latex": render_formula_latex(conn, ent_id, locale),
                 "name": display_name or meta.get("name_en", ent_id),
                 "relation": _("detail.formula"),
             })
@@ -1549,7 +2304,7 @@ def _enrich_search_hits(db, hits, locale):
 def search_suggestions():
     query = request.args.get("q", "").strip()[:SUGGEST_QUERY_MAX_LENGTH]
     locale = getattr(g, "locale", DEFAULT_LOCALE)
-    suggestions = suggest_headings(get_db(), query, locale=locale)
+    suggestions = suggest_entities(get_db(), query, locale=locale)
     return {"suggestions": [
         {"id": s[0], "kind": s[1], "heading": s[2] or s[0]} for s in suggestions
     ]}
@@ -1566,7 +2321,7 @@ def _parse_override_form_keys():
         if sep not in body:
             continue
         ov_key, field = body.rsplit(sep, 1)
-        if field not in ("symbol", "name", "label"):
+        if field not in ("symbol", "name"):
             continue
         value = next((v for v in reversed(values) if v.strip()), "")
         if not value:
@@ -1578,15 +2333,17 @@ def _parse_override_form_keys():
 @app.route("/create/preview-render", methods=["POST"])
 def create_preview_render():
     """Form-POST version of /api/preview that also returns detail_items HTML."""
-    db = get_db()
-    locale = g.locale
     equation = (request.form.get("equation") or "").strip()
+    if len(equation) > CREATE_EQUATION_MAX_LENGTH:
+        return {"error": f"equation exceeds {CREATE_EQUATION_MAX_LENGTH} characters"}, 400
+    conn = get_db()
+    locale = g.locale
     overrides = _parse_override_form_keys()
     caches = _get_dimension_caches()
-    result = preview_equation(db, equation, locale=locale, dim_caches=caches, overrides=overrides, dim_mode=g.get("dim_mode", "dim"))
+    result = parse_and_preview_equation(conn, equation, locale=locale, dim_caches=caches, overrides=overrides, dim_mode=g.get("dim_mode", "dim"))
     if result.get("error") or not result.get("latex"):
         return result
-    items = _build_formula_detail_items(db, None, locale, tokens=result["tokens"])
+    items = _build_formula_detail_items(conn, None, locale, tokens=result["tokens"])
     result["detail_items"] = items
     return result
 
@@ -1657,21 +2414,21 @@ def _render_token_section(label, target_id, items, kind, locale, no_match_label)
 @app.route("/create/token-sidebar")
 def create_token_sidebar():
     """Server-rendered Q/C/O token sidebar for the /create page."""
-    db = get_db()
+    conn = get_db()
     locale = g.locale
     no_results = _("create.no_results")
     sections = [
         _render_token_section(
             _("detail.quantities"), "token-qty",
-            fetch_all_quantities(db), "qty", locale, no_results,
+            fetch_all_quantities(conn), "qty", locale, no_results,
         ),
         _render_token_section(
             _("nav.constants"), "token-const",
-            fetch_all_constants(db), "const", locale, no_results,
+            fetch_all_constants(conn), "const", locale, no_results,
         ),
         _render_token_section(
             _("nav.operators"), "token-op",
-            fetch_all_operators(db), "op", locale, no_results,
+            fetch_all_operators(conn), "op", locale, no_results,
         ),
     ]
 
@@ -1687,10 +2444,10 @@ def _render_breadcrumb(selected_id, tree, name_map):
     """Server-rendered topic breadcrumb (root > ... > selected > child trigger)."""
     selected_node = _find_node(tree, selected_id) if selected_id else None
     if selected_node is not None:
-        current_kids = selected_node.get("children") or []
+        kids = selected_node.get("children") or []
         path = topic_path(tree, selected_id) or [selected_id]
     else:
-        current_kids = tree
+        kids = tree
         path = None
 
     parts = []
@@ -1704,12 +2461,12 @@ def _render_breadcrumb(selected_id, tree, name_map):
                 f'{html_module.escape(name_map.get(tid, tid))}</span>'
             )
 
-    if current_kids:
+    if kids:
         if parts:
             parts.append(' &gt; ')
         trigger_label = _("create.topic")
         menu_items = "".join(
-            _render_menu_item(kid, name_map) for kid in current_kids
+            _render_menu_item(kid, name_map) for kid in kids
         )
         parts.append(
             f'<span class="topic-current has-menu" data-text="{html_module.escape(trigger_label)}">'
@@ -1753,7 +2510,6 @@ def _render_menu_item(node, name_map):
 
 @app.route("/create/breadcrumb")
 def create_breadcrumb():
-    """Return the server-rendered breadcrumb for the given topic id."""
     topic = (request.args.get("topic") or "").strip() or None
     tree = load_tree()
     name_map = topic_name_map(tree, g.locale)
@@ -1762,7 +2518,7 @@ def create_breadcrumb():
 
 @app.route("/create/languages")
 def create_languages():
-    """Return available locales plus the GitHub repo slug for new-issue links."""
+    """Available locales plus the GitHub repo slug for new-issue links."""
     items = [
         {"code": code, "name": data.get("meta", {}).get("name", code)}
         for code, data in sorted(_available_locales().items())
@@ -1786,7 +2542,7 @@ def _parse_translation_block(prefix):
     return out
 
 
-def _build_create_sql_payload(db, form):
+def _build_create_sql_payload(conn, form):
     """Parse the /create form fields and return (formula_sql, token_sql)."""
     def scalar(name):
         return (form.get(name) or "").strip()
@@ -1810,19 +2566,15 @@ def _build_create_sql_payload(db, form):
     tr_ov = _parse_translation_block("tr_overrides")
     translations = {}
     for loc in set(tr_top) | set(tr_ov):
-        entry = {}
         top = tr_top.get(loc, {})
-        if "name" in top:
-            entry["name"] = top["name"]
-        if "description" in top:
-            entry["description"] = top["description"]
+        entry = {k: top[k] for k in ("name", "description") if k in top}
         if loc in tr_ov:
             entry["overrides"] = tr_ov[loc]
         if entry:
             translations[loc] = entry
 
     return build_create_sql(
-        db,
+        conn,
         name_en=name_en,
         topic=topic,
         difficulty=difficulty,
@@ -1856,9 +2608,16 @@ def _render_sql_modal_html(formula_sql, token_sql):
 @app.route("/create/build-sql", methods=["POST"])
 def create_build_sql():
     """Form-POST equivalent of /api/build-sql returning rendered modal HTML."""
-    db = get_db()
+    equation = (request.form.get("equation") or "")
+    if len(equation) > CREATE_EQUATION_MAX_LENGTH:
+        body = (
+            f'<p class="detail-desc" data-error="equation-too-long">'
+            f'equation exceeds {CREATE_EQUATION_MAX_LENGTH} characters</p>'
+        )
+        return Markup(body), 400
+    conn = get_db()
     try:
-        formula_sql, token_sql = _build_create_sql_payload(db, request.form)
+        formula_sql, token_sql = _build_create_sql_payload(conn, request.form)
     except ValueError as e:
         body = (
             f'<p class="detail-desc" data-error="{html_module.escape(str(e))}">'
@@ -1870,7 +2629,7 @@ def create_build_sql():
 
 @app.route("/quantities")
 def all_quantities():
-    db = get_db()
+    conn = get_db()
     locale = g.locale
     fs = parse_filter_state(request.args)
     fs.quantity_mode = "or"
@@ -1889,9 +2648,10 @@ def all_quantities():
             available_sorts=QUANTITY_SORT_KEYS,
         )
 
-    raw_quantities = [q for q in fetch_all_quantities(db) if not is_hidden_quantity(q)]
+    raw_quantities = [q for q in fetch_all_quantities(conn)]
     topic_filter = _filtered_ids_for_query(tree, fs.ids)
     dim_qty_ids = set(dimension_quantity_ids().values()) if fs.base_quantity_only else None
+    system = g.unit_system
     filtered = []
     for q in raw_quantities:
         q = dict(q)
@@ -1909,13 +2669,14 @@ def all_quantities():
         if dim_qty_ids is not None and q["id"] not in dim_qty_ids:
             continue
 
-        q["default_unit_html"], q["default_unit_symbol_latex"] = _render_default_unit(q["default_unit"], locale)
+        cu = select_base_unit_with_fallback(conn, q["id"], system)
+        q["default_unit_html"], q["default_unit_symbol_latex"] = _render_compound_unit(cu, locale)
         filtered.append(q)
 
     filtered = sort_quantities(filtered, sort_key, locale)
 
     heading = _render_list_heading(
-        _("detail.quantities"), tree, compressed, fs, db, locale,
+        _("detail.quantities"), tree, compressed, fs, conn, locale,
     )
     if fs.base_quantity_only:
         heading = _("detail.base_quantities")
@@ -1930,7 +2691,7 @@ def all_quantities():
 
 @app.route("/formulas")
 def all_formulas():
-    db = get_db()
+    conn = get_db()
     locale = g.locale
     fs = parse_filter_state(request.args)
     tree = load_tree()
@@ -1949,7 +2710,7 @@ def all_formulas():
             available_sorts=FORMULA_SORT_KEYS,
         )
 
-    formulas = [dict(f) for f in fetch_all_formulas(db)]
+    formulas = [dict(f) for f in fetch_all_formulas(conn)]
     topic_filter = _filtered_ids_for_query(tree, fs.ids)
     if topic_filter:
         formulas = [f for f in formulas if f["topic_id"] in topic_filter]
@@ -1961,7 +2722,7 @@ def all_formulas():
 
     if fs.has_dimension_filter:
         formula_ids = {f["id"] for f in formulas}
-        dim_map = compute_all_formula_dimensions(db, formula_ids)
+        dim_map = compute_all_formula_dimensions(conn, formula_ids)
         formulas = [
             f for f in formulas
             if dimension_matches(dim_map.get(f["id"], {}), fs.dimension_filter, fs.dim_mode)
@@ -1973,18 +2734,18 @@ def all_formulas():
             if fs.quantity_mode == "or"
             else fetch_formulas_with_all_quantities
         )
-        matching_ids = quantity_match(db, fs.quantity_ids)
+        matching_ids = quantity_match(conn, fs.quantity_ids)
         if matching_ids is not None:
             formulas = [f for f in formulas if f["id"] in matching_ids]
 
-    formulas = sort_formulas(db, formulas, sort_key, locale)
+    formulas = sort_formulas(conn, formulas, sort_key, locale)
 
     for f in formulas:
         _attach_breadcrumbs(f, locale)
-        f["latex"] = render_formula(db, f["id"], locale=locale)
+        f["latex"] = render_formula_latex(conn, f["id"], locale=locale)
 
     heading = _render_list_heading(
-        _("nav.formulas"), tree, compressed, fs, db, locale,
+        _("nav.formulas"), tree, compressed, fs, conn, locale,
     )
     return render_template(
         "formulas.html",
@@ -1997,8 +2758,11 @@ def all_formulas():
 
 @app.route("/export")
 def export():
+    limited = _rate_limit("export:" + _client_key(), 6)
+    if limited is not None:
+        return limited
     fmt = request.args.get("format") or request.cookies.get("sf_export_format", "csv")
-    db = get_db()
+    conn = get_db()
 
     def _respond(data, mimetype, filename):
         resp = Response(data, mimetype=mimetype, headers={"Content-Disposition": f"attachment; filename={filename}"})
@@ -2007,12 +2771,12 @@ def export():
 
     def _binary_export(export_fn, mimetype, filename):
         buffer = io.BytesIO()
-        export_fn(db, buffer)
+        export_fn(conn, buffer)
         buffer.seek(0)
         return _respond(buffer.getvalue(), mimetype, filename)
 
     if fmt == "sql":
-        return _respond(export_to_sql(db).encode("utf-8"),
+        return _respond(export_to_sql(conn).encode("utf-8"),
                         "application/sql", "scifind.sql")
 
     if fmt == "xlsx":
@@ -2026,9 +2790,9 @@ def export():
 
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        with tempfile.TemporaryDirectory() as tmp:
-            export_to_csv_directory(db, tmp)
-            for p in Path(tmp).iterdir():
+        with tempfile.TemporaryDirectory() as tmpdir:
+            export_to_csv_directory(conn, tmpdir)
+            for p in Path(tmpdir).iterdir():
                 zf.write(p, p.name)
     buffer.seek(0)
     return _respond(buffer.getvalue(), "application/zip", "scifind_csv.zip")

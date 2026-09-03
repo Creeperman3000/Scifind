@@ -17,14 +17,13 @@
   function setCookie(name, value) { document.cookie = name + '=' + value + '; path=/; max-age=31536000'; }
 
   function dimValInputs() { return Array.prototype.slice.call(document.querySelectorAll('.filter-dim-row .dim-val')); }
-  function dimVals() { return dimValInputs().map(function(i) { return i.value.trim(); }); }
+  function dimVals() { return dimValInputs().map(function(input) { return input.value.trim(); }); }
   /* A dim field counts as set only if it resolves to an integer — this
      keeps half-typed expressions like "-" from looking like a filter. */
   function dimResolved(v) { return evalDimExpr(v) !== null; }
 
-  /* Evaluate simple integer arithmetic ("2+3*-4", "-(1+5)/2", "2^10")
-     with a tiny recursive-descent parser — no eval(). Returns the
-     integer result, or null when empty/incomplete/invalid. */
+  /* Recursive-descent parser for integer arithmetic ("2+3*-4", "2^10",
+     "-(1+5)/2"). Returns the integer result or null on any error. */
   function evalDimExpr(raw) {
     var s = String(raw == null ? '' : raw).replace(/\s+/g, '');
     if (!s || !/^[-+*/%^().0-9]+$/.test(s)) return null;
@@ -145,11 +144,10 @@
      room for it — once we have to hide it for one, we hide it for all
      so the row columns stay vertically aligned.
 
-     Hysteresis: once names are hidden they stay hidden until EVERY
-     name has at least HYSTERESIS_PX of spare room (minSlack), and
-     vice versa once shown they stay shown until something actually
-     overflows. Without it, dragging the sidebar across the threshold
-     makes the names flicker on every ResizeObserver tick. */
+     Hysteresis (HYSTERESIS_PX): once hidden, names stay hidden until
+     every name has at least that many pixels of spare room, and vice
+     versa once shown. Without it, dragging across the threshold
+     flickers the names on every ResizeObserver tick. */
   var _dimNameState = { hidden: null };
   var HYSTERESIS_PX = 8;
   function updateDimNameFits() {
@@ -756,19 +754,59 @@
         var sel = select.selectedIndex;
         for (var i = 0; i < select.options.length; i++) {
           if (i === sel) continue; /* shown in the trigger, not the list */
-          var o = select.options[i];
-          var b = document.createElement('button');
-          b.type = 'button';
-          b.className = 'sort-option';
-          b.setAttribute('role', 'option');
-          b.setAttribute('aria-selected', 'false');
-          b.setAttribute('data-cselect-index', i);
+          var option = select.options[i];
+          var btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'sort-option';
+          btn.setAttribute('role', 'option');
+          btn.setAttribute('aria-selected', 'false');
+          btn.setAttribute('data-cselect-index', i);
           var sp = document.createElement('span');
-          sp.textContent = o.textContent.trim();
-          b.appendChild(sp);
-          menu.appendChild(b);
+          var txt = option.textContent.trim();
+          sp.textContent = txt;
+          btn.appendChild(sp);
+          menu.appendChild(btn);
         }
-        label.textContent = select.options[sel] ? select.options[sel].textContent.trim() : '';
+        var curTxt = select.options[sel] ? select.options[sel].textContent.trim() : '';
+        label.textContent = curTxt;
+
+        /* Size the trigger to the widest option's full layout (label +
+           chevron + padding + gap) so the menu (min-width: 100%) matches
+           exactly. The trigger's <i data-lucide> hasn't been swapped for
+           an <svg> yet at this point, so we build a probe with a real
+           chevron <svg> matching Lucide's output and let the browser
+           compute the width — no hardcoded constants. */
+        var widestText = curTxt;
+        for (var j = 0; j < select.options.length; j++) {
+          var t = select.options[j].textContent.trim();
+          if (t.length > widestText.length) widestText = t;
+        }
+        var probe = document.createElement('button');
+        probe.className = trigger.className;
+        probe.style.cssText = 'position:absolute;visibility:hidden;left:-9999px;top:-9999px;width:auto;min-width:0;';
+        var probeLbl = document.createElement('span');
+        probeLbl.className = 'cselect-label';
+        probeLbl.textContent = widestText;
+        probe.appendChild(probeLbl);
+        if (!compact) {
+          var ns = 'http://www.w3.org/2000/svg';
+          var svg = document.createElementNS(ns, 'svg');
+          svg.setAttribute('width', '14');
+          svg.setAttribute('height', '14');
+          svg.setAttribute('viewBox', '0 0 24 24');
+          svg.setAttribute('fill', 'none');
+          svg.setAttribute('stroke', 'currentColor');
+          svg.setAttribute('stroke-width', '2');
+          svg.setAttribute('stroke-linecap', 'round');
+          svg.setAttribute('stroke-linejoin', 'round');
+          var path = document.createElementNS(ns, 'path');
+          path.setAttribute('d', 'm6 9 6 6 6-6');
+          svg.appendChild(path);
+          probe.appendChild(svg);
+        }
+        document.body.appendChild(probe);
+        trigger.style.minWidth = probe.offsetWidth + 'px';
+        document.body.removeChild(probe);
       }
 
       function commit(idx) {
@@ -1004,6 +1042,8 @@
       .then(function(html) {
         var parser = new DOMParser();
         var doc = parser.parseFromString(html, 'text/html');
+        var newTitle = doc.querySelector('title');
+        if (newTitle) document.title = newTitle.textContent;
         var newContent = doc.querySelector('#main-content .main-inner');
         if (newContent) {
           document.querySelector('#main-content .main-inner').innerHTML = newContent.innerHTML;
@@ -1157,216 +1197,13 @@
     }
   }
 
-  /* ---------- Units table: switchable reference unit ----------
-     On /quantity/<id> and /unit/<id> the factor/offset columns are
-     recomputed client-side against the unit picked in either header
-     menu ("Factor to ..." / "Offset from ..."); the choice is pure
-     view state and never touches the URL. */
-
-  function _unitsGcd(a, b) { while (b) { var t = a % b; a = b; b = t; } return a; }
-
-  /* Best rational approximation via continued fractions; null when x
-     has no snug fraction with a smallish denominator (-> exponent form). */
-  function _unitsRat(x) {
-    if (!isFinite(x) || x === 0) return null;
-    var sign = x < 0 ? -1 : 1, ax = Math.abs(x);
-    var nM2 = 0, nM1 = 1, dM2 = 1, dM1 = 0, b = ax, n1 = 0, d1 = 0;
-    for (var i = 0; i < 64; i++) {
-      var ai = Math.floor(b);
-      n1 = ai * nM1 + nM2;
-      d1 = ai * dM1 + dM2;
-      if (!d1 || d1 > 10000) { d1 = 0; break; }
-      if (Math.abs(n1 / d1 - ax) <= 1e-14 * ax) break;
-      nM2 = nM1; nM1 = n1; dM2 = dM1; dM1 = d1;
-      var frac = b - ai;
-      if (frac <= 0) { d1 = 0; break; }
-      b = 1 / frac;
-    }
-    /* Only accept essentially exact hits — stored factors are exact
-       ratios of doubles, so genuine steps land around 1e-16 relative. */
-    if (!d1 || Math.abs((sign * n1) / d1 - x) > 1e-13 * Math.max(1e-300, Math.abs(x))) return null;
-    if (Math.abs(n1) > 1e12 || String(n1).indexOf('e') !== -1) return null;
-    return { n: sign * n1, d: d1 };
-  }
-
-  function _unitsSci(x) {
-    var parts = x.toExponential(9).split('e');
-    var m = parts[0].replace(/\.?0+$/, '');
-    return m + '\\times10^{' + parseInt(parts[1], 10) + '}';
-  }
-
-  function _unitsActual(x) {
-    var v = Number(x.toPrecision(10));
-    if (v === 0) return '0';
-    var s = String(v);
-    return s.indexOf('e') !== -1 ? _unitsSci(v) : s;
-  }
-
-  /* Exact-looking form first: reduced fraction or exponent notation,
-     with plain decimal as the middle-ground fallback. */
-  function _unitsPretty(x) {
-    var r = _unitsRat(x);
-    if (r) {
-      var g = _unitsGcd(Math.abs(r.n), r.d);
-      var n = Math.abs(r.n / g), d = r.d / g, neg = r.n < 0 ? '-' : '';
-      if (n >= 1e15) return neg + _unitsSci(x);
-      var e = _unitsPow10Exp(n, d);
-      if (e !== null) return neg + '10^{' + e + '}';
-      return d === 1 ? neg + n : neg + '\\frac{' + n + '}{' + d + '}';
-    }
-    var ax = Math.abs(x);
-    if (ax >= 1e-4 && ax < 1e7) {
-      var s = String(Number(x.toPrecision(10)));
-      if (s.indexOf('e') === -1) return s;
-    }
-    return _unitsSci(x);
-  }
-
-  /* e when n/d === 10^e exactly (positive integers), else null. */
-  function _unitsPow10Exp(n, d) {
-    var e = 0;
-    while (d > 1 && d % 10 === 0) { d /= 10; e--; }
-    while (n > 1 && n % 10 === 0) { n /= 10; e++; }
-    return (n === 1 && d === 1) ? e : null;
-  }
-
-  /* Chain of consecutive unit steps between two entries (indices into
-     the factor-sorted list); consecutive equal steps collapse into
-     powers and adjacent decade steps merge into one power of ten.
-     Null when any step lacks a snug fraction. */
-  function _unitsChain(sorted, a, b) {
-    var lo = Math.min(a, b), hi = Math.max(a, b), groups = [];
-    for (var i = lo; i < hi; i++) {
-      var top = sorted[i + 1].factor, bot = sorted[i].factor;
-      if (!(top > 0) || !(bot > 0)) return null;
-      var s = _unitsRat(top / bot);
-      if (!s) return null;
-      var last = groups[groups.length - 1];
-      var e = _unitsPow10Exp(Math.abs(s.n), s.d);
-      if (e !== null) {
-        if (last && last.pow) last.e += e;
-        else groups.push({ pow: true, e: e });
-      } else if (last && !last.pow && last.n === s.n && last.d === s.d) {
-        last.k++;
-      } else {
-        groups.push({ n: s.n, d: s.d, k: 1 });
-      }
-    }
-    return groups;
-  }
-
-  function _unitsGroupLatex(g, parens) {
-    if (g.pow) return '10^{' + g.e + '}';
-    var e = _unitsPow10Exp(Math.abs(g.n), g.d);
-    if (e !== null) return '10^{' + e * g.k + '}';
-    var n = Math.abs(g.n);
-    var base = g.d === 1 ? String(n)
-      : (g.n < 0 ? '-' : '') + '\\frac{' + n + '}{' + g.d + '}';
-    if (g.d !== 1 && parens) base = '(' + base + ')';
-    return g.k === 1 ? base : base + '^{' + g.k + '}';
-  }
-
-  /* "\times60", "\times60^{2}=3600", "\times(60^{2}\cdot24)=86400",
-     "\div\frac{9}{5}" ...  mag is always the positive magnitude;
-     up=true means multiply (row factor >= reference factor). */
-  function _unitsMultLatex(groups, mag, up, allowEquals, wrapFrac) {
-    var body, complex;
-    if (groups) {
-      if (groups.length === 1) {
-        body = _unitsGroupLatex(groups[0], wrapFrac && groups[0].d !== 1);
-        complex = groups[0].k > 1 || groups[0].d !== 1;
-      } else {
-        body = '(' + groups.map(function(g) { return _unitsGroupLatex(g, false); }).join(' \\cdot ') + ')';
-        complex = true;
-      }
-    } else {
-      body = _unitsPretty(mag);
-      complex = body.indexOf('^') !== -1 || body.indexOf('frac') !== -1;
-      if (complex) body = '(' + body + ')';
-    }
-    var out = (up ? '\\times' : '\\div') + body;
-    if (allowEquals && complex) {
-      var actual = _unitsActual(mag);
-      if (body.replace(/[()]/g, '') !== actual) out += '=' + actual;
-    }
-    return out;
-  }
-
-  /* e when x === 10^e essentially exactly (x > 0), else null. */
-  function _unitsPow10(x) {
-    if (!isFinite(x) || x <= 0) return null;
-    var e = Math.round(Math.log(x) / Math.LN10);
-    return Math.abs(x - Math.pow(10, e)) <= 1e-12 * x ? e : null;
-  }
-
-  /* Factorization of the ratio between two units into hops: synthetic
-     SI-prefix endpoints contribute their decade step, then the remaining
-     real-unit pair is chained through the sorted real units (so
-     day vs ms renders as 10^{3}\cdot60^{2}\cdot24). Null when no snug
-     factorization exists. */
-  function _unitsBuildGroups(st, en, ref) {
-    var groups = [];
-    var aId = en.id, bId = ref.id;
-    if (String(aId).indexOf('si_') === 0) {
-      groups.push({ pow: true, e: en.si_exp || 0 });
-      aId = '';
-    }
-    if (String(bId).indexOf('si_') === 0) {
-      groups.push({ pow: true, e: -(ref.si_exp || 0) });
-      bId = '';
-    }
-    if (aId !== bId) {
-      var ia = st.chainIdx[aId], ib = st.chainIdx[bId];
-      if (ia == null || ib == null) return null;
-      var sub = _unitsChain(st.chainSorted, ia, ib);
-      if (!sub) return null;
-      groups = groups.concat(sub);
-    }
-    var merged = [];
-    groups.forEach(function(g) {
-      if (g.pow && merged.length && merged[merged.length - 1].pow) {
-        merged[merged.length - 1].e += g.e;
-      } else {
-        merged.push(g);
-      }
-    });
-    merged = merged.filter(function(g) { return !g.pow || g.e !== 0; });
-    return merged.length ? merged : null;
-  }
-
-  /* Operations that turn THIS row unit's value into the reference
-     unit's value:  x_ref = M·x_row + D   (M = f_row/f_ref,
-     D = (o_row − o_ref)/f_ref).  Rendered e.g. "\times60^{2}=3600",
-     "+273.15", "\div(\frac{9}{5})+255.37", ...  Magnitudes below 1 are
-     shown as a division by their inverse so operands stay >= 1.
-     Exact powers of ten always collapse to a bare "\times10^{n}" /
-     "\div10^{n}" — no mantissa and no "= digits" appendix. */
-  function _unitsConvLatex(st, en, refEntry) {
-    if (!(refEntry.factor > 0)) return null;
-    var m = en.factor / refEntry.factor;
-    var delta = (en.offset - refEntry.offset) / refEntry.factor;
-    var scale = Math.max(Math.abs(en.offset), Math.abs(refEntry.offset), 1);
-    var hasOff = Math.abs(delta) > 1e-9 * scale;
-    var hasMult = isFinite(m) && Math.abs(m - 1) > 1e-12;
-    if (!hasMult && !hasOff) return null;
-    var out = '';
-    if (hasMult) {
-      var up = m >= 1;
-      var p10 = _unitsPow10(m);
-      if (p10 !== null) {
-        out += up ? '\\times10^{' + p10 + '}' : '\\div10^{' + (-p10) + '}';
-      } else {
-        var groups = _unitsBuildGroups(st, en, refEntry);
-        out += _unitsMultLatex(groups, up ? m : 1 / m,
-                               up, !hasOff, true);
-      }
-    }
-    if (hasOff) out += (delta > 0 ? '+' : '-') + _unitsActual(Math.abs(delta));
-    return out;
-  }
+/* ---------- Units table: switchable reference unit ----------
+     On /quantity/<id> and /unit/<id> the conversion cells are rendered
+     server-side; clicking a different reference unit row swaps each
+     cell's pre-computed LaTeX (no math runs on the client). */
 
   function _setUnitsCell(td, latex) {
-    if (latex === null) { td.innerHTML = '&ndash;'; return; }
+    if (latex === null || latex === undefined) { td.innerHTML = '&ndash;'; return; }
     td.innerHTML = '';
     var span = document.createElement('span');
     span.className = 'latex-observe';
@@ -1378,33 +1215,34 @@
   function _fillUnitsTable(table) {
     var st = table._unitsData;
     if (!st) return;
-    var refEntry = st.byId[st.ref];
-    if (!refEntry) return;
     table.querySelectorAll('tbody tr[data-unit-id]').forEach(function(tr) {
       var id = tr.getAttribute('data-unit-id');
-      var en = st.byId[id];
-      if (!en) return;
-      var cTd = tr.querySelector('td.uv-conv');
-      if (cTd) {
-        _setUnitsCell(cTd, id === st.ref ? null : _unitsConvLatex(st, en, refEntry));
+      var td = tr.querySelector('td.uv-conv');
+      if (!td) return;
+      if (id === st.ref) {
+        _setUnitsCell(td, null);
+      } else {
+        var latex = (st.latex_by_ref[id] || {})[st.ref];
+        if (latex == null && st.value_latex && st.value_latex[id]) {
+          latex = st.value_latex[id];
+        }
+        _setUnitsCell(td, latex);
       }
     });
   }
 
   /* Mark the reference row and refresh every conversion cell in the
-     section's two tables (registered units + SI prefixes); the picked
-     unit is announced in the "Factor to ..." header. */
+     section's two tables (registered units + SI prefixes). */
   function _syncUnitsSection(sec) {
     var st = sec._unitsState;
     if (!st) return;
-    var refEn = st.byId[st.ref];
     sec.querySelectorAll('.units-ref-name').forEach(function(span) {
-      span.textContent = refEn && refEn.label ? refEn.label : '';
+      span.textContent = (st.ref_labels || {})[st.ref] || '';
     });
     sec.querySelectorAll('table[data-units-dynamic]').forEach(function(table) {
       table.querySelectorAll('tbody tr[data-unit-id]').forEach(function(tr) {
         var id = tr.getAttribute('data-unit-id');
-        var isRef = id === st.ref || st.twins[id] === st.ref;
+        var isRef = id === st.ref;
         tr.classList.toggle('is-ref', isRef);
         var btn = tr.querySelector('.units-ref-btn');
         if (btn) {
@@ -1414,6 +1252,7 @@
       });
       if (table._unitsData) _fillUnitsTable(table);
     });
+    if (typeof renderMathInContent === 'function') renderMathInContent();
   }
 
   function _setupUnitsTable(table) {
@@ -1425,48 +1264,57 @@
     if (!sec._unitsState) {
       var data;
       try { data = JSON.parse(dataEl.textContent); } catch (e) { return; }
-      var byId = {};
-      data.entries.forEach(function(en) { byId[en.id] = en; });
-      /* Step-chains only make sense between real units; synthetic
-         SI-prefix rows would interleave and fragment them. */
-      var chainSorted = data.entries
-        .filter(function(en) { return en.id.indexOf('si_') !== 0; })
-        .sort(function(a, b) { return a.factor - b.factor; });
-      var chainIdx = {};
-      chainSorted.forEach(function(en, i) { chainIdx[en.id] = i; });
-      /* A family row that denotes the same unit as a registered row
-         (metre <-> si_base, kilogram <-> si_kilo) pairs with it so
-         their reference buttons stay in sync. */
-      var twins = {};
-      data.entries.forEach(function(en) {
-        if (en.id.indexOf('si_') !== 0) return;
-        for (var i = 0; i < data.entries.length; i++) {
-          var o = data.entries[i];
-          if (o.id.indexOf('si_') === 0) continue;
-          if (!o.offset && !en.offset && o.factor === en.factor) {
-            twins[en.id] = o.id;
-            twins[o.id] = en.id;
-            break;
-          }
-        }
+      var latex_by_ref = {};
+      var ref_labels = {};
+      var value_latex = {};
+      var entries = (data.entries || []).concat(data.si_entries || []);
+      entries.forEach(function(e) {
+        latex_by_ref[e.id] = e.latex_by_ref || {};
+        // Strip any HTML from the label so it can be safely inserted
+        // as text content in the "Conversion to: <unit>" header.
+        var raw = e.label || e.name || e.id;
+        var tmp = document.createElement('div');
+        tmp.innerHTML = raw;
+        ref_labels[e.id] = (tmp.textContent || tmp.innerText || '').trim();
+        if (e.value_latex) value_latex[e.id] = e.value_latex;
       });
-      sec._unitsState = { byId: byId, ref: data.ref,
-                          chainSorted: chainSorted, chainIdx: chainIdx,
-                          twins: twins };
+      sec._unitsState = {
+        ref: data.ref,
+        latex_by_ref: latex_by_ref,
+        ref_labels: ref_labels,
+        value_latex: value_latex,
+      };
     }
     table._unitsData = sec._unitsState;
     _syncUnitsSection(sec);
   }
 
   function initUnitsTables(scope) {
-    (scope || document).querySelectorAll('table[data-units-dynamic]').forEach(_setupUnitsTable);
+    var root = scope || document;
+    root.querySelectorAll('table[data-units-dynamic]').forEach(_setupUnitsTable);
+    var doRender = function() {
+      renderLatexIn(root);
+      renderMathInContent();
+    };
+    if (typeof katex !== 'undefined') {
+      doRender();
+    } else {
+      var mo = new MutationObserver(function() {
+        if (document.documentElement.classList.contains('katex-ready')) {
+          mo.disconnect();
+          doRender();
+        }
+      });
+      mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    }
   }
 
   function pickUnitsRef(btn) {
     var sec = btn.closest('.detail-section');
     if (!sec || !sec._unitsState) return;
     var id = btn.getAttribute('data-unit-id');
-    if (id != null && sec._unitsState.byId[id]) sec._unitsState.ref = id;
+    if (id == null) return;
+    if (sec._unitsState.latex_by_ref[id]) sec._unitsState.ref = id;
     _syncUnitsSection(sec);
   }
 
@@ -1696,6 +1544,7 @@
       case 'switch-theme': switchTheme(el.value); break;
       case 'switch-lang': switchLang(el.value); break;
       case 'switch-dim-mode': switchDimMode(el.value); break;
+      case 'switch-unit-system': switchUnitSystem(el.value); break;
       case 'dim-filter-change':
         if (el.classList.contains('dim-val')) resolveDimExprs();
         dimFilterChange();
@@ -1750,6 +1599,11 @@
 
   function switchDimMode(mode) {
     setCookie('sf_dim_mode', mode);
+    window.location.reload();
+  }
+
+  function switchUnitSystem(system) {
+    setCookie('sf_unit_system', system);
     window.location.reload();
   }
 
@@ -1945,13 +1799,13 @@
       /* Controls inside the sheet keep their taps; only the grip and
          plain content are drag surfaces */
       if (!onHandle && t.closest(INTERACTIVE)) return;
-      /* Content grabs only become drags from the very top of the list;
-         anywhere else the gesture belongs to native scrolling */
+      /* Content grabs only become drags from the top of the list;
+         elsewhere the gesture belongs to native scrolling. */
       var scrollArea = sheet.querySelector('.sidebar-scroll');
       if (!onHandle && (!scrollArea || scrollArea.scrollTop !== 0)) return;
       dragging = true;
       target = sheet;
-      engaged = onHandle; // the grip follows the finger immediately
+      engaged = onHandle;
       activePointerId = e.pointerId;
       startY = currentY = lastY = e.clientY;
       lastT = e.timeStamp;
@@ -1988,10 +1842,9 @@
     }
     function settle(sheet, toY) {
       /* Animate inline from the finger's position; clearing the inline
-         transform instead would snap the sheet back to rest first */
+         transform would snap the sheet back to rest first. */
       sheet.style.transition = 'transform var(--dur-base) var(--ease-in-out)';
       sheet.style.transform = 'translateY(' + toY + 'px)';
-      /* Zero-displacement releases fire no transitionend */
       var done = false;
       function cleanup() {
         if (done) return;
@@ -2071,8 +1924,9 @@
           idsParam.split(',').forEach(function(id) {
             var node = _topicTree.getNodeById(id);
             if (node) _topicTree.checkNode(node, true);
-          });
-        }
+    });
+    if (typeof renderMathInContent === 'function') renderMathInContent();
+  }
       }
     } finally {
       window._restoringFilters = false;
@@ -2137,7 +1991,7 @@
       var decs = Array.prototype.slice.call(val.querySelectorAll('.cv-dec'));
       var dot = val.querySelector('.cv-dot');
       if (!decs.length && !dot) return;
-      /* Restore everything first so resizes recover hidden digits. */
+      /* Restore so resizes recover hidden digits. */
       decs.forEach(function(sp) { sp.style.display = ''; });
       if (dot) dot.style.display = '';
       val.style.maskImage = '';
@@ -2152,13 +2006,10 @@
         if (!last) break;
         last.style.display = 'none';
       }
-      /* No decimals left after trimming -> no decimal mark either. */
       var visible = decs.filter(function(sp) { return sp.style.display !== 'none'; });
       if (dot) dot.style.display = visible.length ? '' : 'none';
-      /* Anchor the fade at the end of the mantissa (last surviving
-         decimal, else the dot, else the integer part) so the \times10^
-         factor — rendered inside the same KaTeX run — stays outside
-         the gradient band. */
+      /* Anchor the fade at the end of the mantissa so the \times10^ factor
+         stays outside the gradient band. */
       var anchor = null;
       if (visible.length) {
         anchor = visible[visible.length - 1];
@@ -2250,7 +2101,7 @@
 
     if (doCopy) {
       var labelMap = { latex: 'LaTeX', unicode: 'Unicode', png: 'PNG', svg: 'SVG' };
-      var label = (window._localeUI.copy && window._localeUI.copy[fmt]) || labelMap[fmt] || fmt;
+      var label = labelMap[fmt] || fmt;
       doCopy.then(function() { showToast(window._localeUI.toast.copied + ' ' + label, 'success'); })
             .catch(function(e) { showToast(window._localeUI.toast.copy_failed + ': ' + e.message, 'error'); });
     }
@@ -2417,6 +2268,8 @@
         if (!html) return;
         var doc = new DOMParser().parseFromString(html, 'text/html');
         syncPageStyles(doc);
+        var newTitle = doc.querySelector('title');
+        if (newTitle) document.title = newTitle.textContent;
         var newContent = doc.getElementById('main-content');
         if (!newContent) { window.location.href = url; return; }
         document.getElementById('main-content').innerHTML = newContent.innerHTML;

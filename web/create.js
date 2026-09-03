@@ -6,6 +6,11 @@
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s == null ? '' : s)
     .replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const csrfHeader = window._csrfToken ? { 'X-CSRF-Token': window._csrfToken } : {};
+  function postForm(url, fd) {
+    if (window._csrfToken && !fd.has('_csrf_token')) fd.set('_csrf_token', window._csrfToken);
+    return fetch(url, { method: 'POST', body: fd, headers: csrfHeader });
+  }
   const t = (path, fallback) => {
     const ui = window._localeUI || {};
     const parts = path.split('.');
@@ -34,7 +39,7 @@
     });
   }
   const varTableHead = () => '<thead><tr>' +
-    [t('detail.quantity'), t('create.column_symbol_override'), t('create.column_name_override'), t('create.column_label')]
+    [t('detail.quantity'), t('create.column_symbol_override'), t('create.column_name_override')]
       .map((h) => '<th>' + esc(h) + '</th>').join('') + '</tr></thead>';
   function setHTML(el, html) {
     el.innerHTML = typeof html === 'string' ? html : '';
@@ -50,16 +55,16 @@
   }
 
   function filterTokenSidebar(query) {
-    const q = (query || '').toLowerCase().trim();
-    $('sidebar-left-inner').querySelectorAll('.token-list').forEach((grid) => {
-      let visible = 0;
-      grid.querySelectorAll('.qty-result').forEach((el) => {
-        const match = !q || (el.dataset.search || '').includes(q);
+    var q = (query || '').toLowerCase().trim();
+    $('sidebar-left-inner').querySelectorAll('.token-list').forEach(function(section) {
+      var visible = 0;
+      section.querySelectorAll('.qty-result').forEach(function(el) {
+        var match = !q || (el.dataset.search || '').includes(q);
         el.style.display = match ? '' : 'none';
         if (match) visible++;
       });
-      const empty = grid.nextElementSibling;
-      const collapsed = grid.dataset.collapsed === '1';
+      var empty = section.nextElementSibling;
+      var collapsed = section.dataset.collapsed === '1';
       if (empty && empty.classList.contains('token-empty')) {
         empty.style.display = (visible === 0 && !collapsed) ? 'block' : 'none';
       }
@@ -93,7 +98,6 @@
       + '<td class="qty-sym-cell">' + cellBody + '</td>'
       + '<td>' + input('symbol') + '</td>'
       + '<td>' + input('name') + '</td>'
-      + '<td>' + input('label') + '</td>'
       + '</tr>';
   }
   function occurrenceIndices(vars) {
@@ -123,16 +127,15 @@
           'create-form',
           'override',
           {
-            symbol: { placeholder: t('unit.symbol') },
+            symbol: { placeholder: '' },
             name:   { placeholder: t('create.placeholder_name') },
-            label:  { placeholder: t('create.placeholder_label') },
           },
           occ[v.key]
         );
       } else {
         rows += '<tr class="qty-row-placeholder">'
           + '<td class="qty-sym-cell">&nbsp;</td>'
-          + '<td><input disabled class="text-field" placeholder=""></td>'.repeat(3)
+          + '<td><input disabled class="text-field" placeholder=""></td>'.repeat(2)
           + '</tr>';
       }
     }
@@ -172,7 +175,7 @@
       const dimEl = $('dim-display');
       const fd = collectOverrides();
       fd.set('equation', eq);
-      fetch('/create/preview-render', { method: 'POST', body: fd })
+      postForm('/create/preview-render', fd)
         .then((r) => r.json())
         .then((data) => {
           if (seq !== previewSeq) return;
@@ -225,7 +228,6 @@
     const btn = document.getElementById('tree-select-all');
     if (btn) btn.classList.toggle('disabled', !topicSelected);
   }
-  /* Tree clicks (radio mode, wired up by app.js) */
   window._treeSelectionChanged = function(id) { selectTopic(id); };
   function selectTopic(id) {
     const hidden = $('topic');
@@ -250,10 +252,10 @@
   }
 
   const flow = {
-    history: [],            // [{kind: 'pick' | 'translate' | 'sql', ...}, ...]
+    history: [],            // [{kind: 'pick' | 'translate' | 'sql', ...}]
     translations: {},       // { 'cs-cz': { name, description, overrides } }
     variables: [],          // [{ id, alias, symbol, name, name_overwrite }, ...]
-    issueUrl: null,         // populated on the SQL page
+    issueUrl: null,
     availableLanguages: [], // [{code, name}, ...]
   };
 
@@ -265,7 +267,7 @@
     renderPage(page);
   }
   function popPage() {
-    if (flow.history.length <= 1) return; // can't pop the first page
+    if (flow.history.length <= 1) return;
     flow.history.pop();
     renderPage(currentPage());
   }
@@ -357,7 +359,6 @@
         {
           symbol: { placeholder: v.symbol || '', value: priorOv.symbol || '' },
           name:   { placeholder: localiseName(v.name, v.id), value: priorOv.name || '' },
-          label:  { placeholder: t('create.placeholder_label'), value: priorOv.label || '' },
         },
         occ[key]
       );
@@ -398,7 +399,7 @@
     setStep('<h3>' + esc(t('create.formula_insert')) + '</h3><div id="sql-formula-wrap"></div><h3>' + esc(t('create.token_inserts')) + '</h3><div id="sql-token-wrap"></div>');
 
     const fd = buildFinalFormData();
-    fetch('/create/build-sql', { method: 'POST', body: fd })
+    postForm('/create/build-sql', fd)
       .then(async (r) => ({ ok: r.ok, body: await r.text() }))
       .then((out) => {
         if (!out.ok) {
@@ -476,7 +477,7 @@
     }
     const fd = collectOverrides();
     fd.set('equation', ($('equation').value || '').trim());
-    fetch('/create/preview-render', { method: 'POST', body: fd })
+    postForm('/create/preview-render', fd)
       .then((r) => r.json())
       .then((data) => {
         flow.variables = (data && data.variables) || [];
