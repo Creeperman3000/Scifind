@@ -73,10 +73,9 @@ def _wrap(text):
 
 def _print_unit_row(u):
     mark = "\u2713" if u["is_base"] else " "
-    offset_str = f" + {u['offset']}" if u["offset"] else ""
     print(
         f"  [{mark}] ${u['symbol']}$  {_styled("bold", u['id'])}  "
-        f"[{u['system'] or 'any'}]  \u00d7{u['factor']}{offset_str} \u2192 SI"
+        f"[{u['system'] or 'any'}]"
     )
 
 
@@ -301,12 +300,12 @@ def command_units(args):
     """
     if args.quantity:
         rows = conn.execute(
-            base_query + " WHERE u.quantity_id = ? ORDER BY u.is_base DESC, u.system",
+            base_query + " WHERE u.quantity_id = ? ORDER BY u.is_base DESC, u.system, u.id",
             (args.quantity,),
         ).fetchall()
     else:
         rows = conn.execute(
-            base_query + " ORDER BY q.id, u.is_base DESC, u.system"
+            base_query + " ORDER BY q.id, u.is_base DESC, u.system, u.id"
         ).fetchall()
     conn.close()
     if not rows:
@@ -318,8 +317,16 @@ def command_units(args):
         header += f" for {_styled("yellow", args.quantity)}"
     print(header + "\n")
 
-    for unit in rows:
-        _print_unit_row(unit)
+    if args.quantity:
+        for unit in rows:
+            _print_unit_row(unit)
+    else:
+        last_qid = None
+        for unit in rows:
+            if unit["quantity_id"] != last_qid:
+                last_qid = unit["quantity_id"]
+                print(f"  {_styled("yellow", unit['quantity_id'])} \u2014 {unit['quantity_name']}")
+            _print_unit_row(unit)
     print()
 
 

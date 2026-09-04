@@ -25,7 +25,11 @@ EXPORT_TABLE_COLUMNS = {
     "operator": ["id", "symbol", "arity", "precedence", "associativity", "operator_type"],
     "constant": ["id", "name", "symbol", "difficulty", "description",
                  "links", "value", "quantity_id", "unit_id", "compound_unit_id"],
-    "compound_unit": ["id", "quantity_id", "name_overwrite", "symbol_overwrite", "unit", "system", "is_base"],
+    "compound_unit": [
+        "id", "quantity_id", "name_overwrite", "symbol_overwrite", "unit",
+        "system", "is_base", "reference_unit_id", "factor",
+        "is_factor_reciprocal", "constant_id", "constant_operator_id", "offset",
+    ],
     "quantity": [
         "id", "name", "symbol", "symbol_overwrite", "topic",
         "difficulty", "description", "links",
@@ -33,7 +37,8 @@ EXPORT_TABLE_COLUMNS = {
     ],
     "unit": [
         "id", "name", "symbol", "quantity_id", "system", "is_base",
-        "factor", "offset",
+        "reference_unit_id", "factor", "is_factor_reciprocal",
+        "constant_id", "constant_operator_id", "offset",
     ],
 }
 

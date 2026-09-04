@@ -110,4 +110,6 @@ def wrap_symbol_in_latex(symbol):
     s = symbol.strip()
     if not s:
         return s + trailing
+    if s.startswith("\\mathrm{") and s.endswith("}"):
+        return s + trailing
     return f"\\mathrm{{{s}}}" + trailing

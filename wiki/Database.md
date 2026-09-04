@@ -108,11 +108,28 @@ exponents in fixed order M, L, T, I, Θ, N, J.
 | `name` | TEXT | JSON i18n |
 | `symbol` | TEXT | LaTeX symbol |
 | `quantity_id` | TEXT | FK → quantity.id |
-| `default_unit` | INTEGER | 1 marks the quantity's primary unit |
-| `unit_system` | TEXT | `SI`, `CGS`, `Imperial`, or NULL (= any) |
-| `factor` | REAL | Conversion factor to SI |
-| `latex_factor` | TEXT | LaTeX display for the factor (e.g. `\frac{180}{\pi}`) |
-| `offset` | REAL | Conversion offset |
+| `system` | TEXT | `SI`, `CGS`, `Imperial`, or NULL (= any) |
+| `is_base` | INTEGER | 1 marks the quantity's primary unit (or one of them per system) |
+| `reference_unit_id` | TEXT | FK → unit / compound_unit.id, NULL = root |
+| `factor` | REAL | Multiplicative scaling |
+| `is_factor_reciprocal` | INTEGER | 1 means the row's relation is `x_ref = x_row / factor` (e.g. `1 inch = 1/12 ft`); 0 means the factor is direct |
+| `constant_id` | TEXT | FK → constant.id; the constant scales `factor` (`mul`/`div`) or offsets the reference value (`add`/`sub`) |
+| `constant_operator_id` | TEXT | `mul` (default), `div`, `add`, or `sub` — how `constant_id` combines with the factor (`add`/`sub` used for temperature absolute zero) |
+| `offset` | REAL | Additive offset (default 0) |
+
+`compound_unit` shares these factor/constant/offset columns (plus its
+`unit`, `name_overwrite`, `symbol_overwrite` columns).
+
+The reference graph is affine:
+
+```
+F    = (factor if is_factor_reciprocal=0 else 1/factor)
+x_ref = (F ×÷ constant_value) * (x_row + offset) ± constant_value
+```
+
+where `mul`/`div` scale F by the constant value and `add`/`sub` shift the
+reference value by it (its sign positive for `add`, negative for `sub`),
+e.g. `1 °F`: F=5/9 sub 273.15 offset 459.67 → `x_C = (5/9)(x_F − 32)`.
 
 ## `si_prefix`
 

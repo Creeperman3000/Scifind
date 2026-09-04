@@ -56,13 +56,19 @@ CREATE TABLE IF NOT EXISTS unit (
     quantity_id  TEXT NOT NULL REFERENCES quantity(id),
     system       TEXT CHECK (system IN ('SI','CGS','Imperial') OR system IS NULL),
     is_base      INTEGER NOT NULL DEFAULT 0 CHECK (is_base IN (0,1)),
-    -- reference_unit_id may point to a unit row or a compound_unit row
-    -- (the renderer treats both as nodes in one reference graph).
-    reference_unit_id TEXT,            -- hop to another unit or compound_unit; NULL = root
-    reference_expr     TEXT,            -- JSON: how to convert this unit's value to reference_unit_id's value
-    CHECK (json_valid(name)),
-    CHECK (reference_expr IS NULL OR json_valid(reference_expr)),
-    CHECK ((reference_unit_id IS NULL) = (reference_expr IS NULL))
+    -- Reference graph (NULL = root). Conversion is
+    --   x_ref = F * (x_row + offset) + (add/sub constant),
+    --   where F = factor or 1/factor, combined with `constant_id`
+    --   by `constant_operator_id` (mul/div scale F; add/sub shift the
+    --   reference value by the constant).
+    -- may point to a unit row or a compound_unit row.
+    reference_unit_id    TEXT REFERENCES unit(id),
+    factor               REAL NOT NULL DEFAULT 1,
+    is_factor_reciprocal INTEGER NOT NULL DEFAULT 0 CHECK (is_factor_reciprocal IN (0,1)),
+    constant_id          TEXT REFERENCES constant(id),
+    constant_operator_id TEXT NOT NULL DEFAULT 'mul' CHECK (constant_operator_id IN ('mul', 'div', 'add', 'sub')),
+    offset               REAL NOT NULL DEFAULT 0,
+    CHECK (json_valid(name))
 );
 
 CREATE TABLE IF NOT EXISTS compound_unit (
@@ -73,13 +79,14 @@ CREATE TABLE IF NOT EXISTS compound_unit (
     unit             TEXT NOT NULL,      -- JSON array [{"unit":"<id>","exponent":<n>},...]
     system           TEXT CHECK (system IN ('SI','CGS','Imperial') OR system IS NULL),
     is_base          INTEGER NOT NULL DEFAULT 0 CHECK (is_base IN (0,1)),
-    -- Reference graph: hop to another unit or compound_unit. NULL = root.
-    reference_unit_id TEXT,            -- may point to unit or compound_unit row
-    reference_expr     TEXT,            -- JSON: how to convert this compound's value to reference's value
-    CHECK (name_overwrite IS NULL OR json_valid(name_overwrite)),
-    CHECK (json_valid(unit)),
-    CHECK (reference_expr IS NULL OR json_valid(reference_expr)),
-    CHECK ((reference_unit_id IS NULL) = (reference_expr IS NULL))
+    -- Same affine conversion as `unit`. NULL = root.
+    reference_unit_id    TEXT,
+    factor               REAL NOT NULL DEFAULT 1,
+    is_factor_reciprocal INTEGER NOT NULL DEFAULT 0 CHECK (is_factor_reciprocal IN (0,1)),
+    constant_id          TEXT REFERENCES constant(id),
+    constant_operator_id TEXT NOT NULL DEFAULT 'mul' CHECK (constant_operator_id IN ('mul', 'div', 'add', 'sub')),
+    offset               REAL NOT NULL DEFAULT 0,
+    CHECK (json_valid(unit))
 );
 
 CREATE TABLE IF NOT EXISTS constant (

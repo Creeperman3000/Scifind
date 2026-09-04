@@ -417,14 +417,21 @@ table[data-units-dynamic] { table-layout: fixed; }
 table[data-units-dynamic] .units-c1 { width: 46%; }
 table[data-units-dynamic] .units-c2 { width: 22%; }
 table[data-units-dynamic] .units-c3 { width: 32%; }
+table[data-units-dynamic] td:first-child { position: relative; }
+/* On hover-capable layouts the pick button overlays the cell text
+   instead of sitting in the flow, where it would shove long unit
+   names onto another line. Touch layouts always show it, so they
+   keep the in-flow behaviour (see the media query below). */
 .units-ref-btn {
-  float: right; margin-left: 6px;
+  position: absolute; top: 50%; right: 10px;
+  transform: translateY(-50%);
+  pointer-events: none;
   opacity: 0; transition: opacity 0.12s ease-in-out;
 }
 tr:hover .units-ref-btn:not(:disabled),
 tr:hover .units-ref-btn:focus-visible,
-.units-ref-btn:focus-visible { opacity: 1; }
-tr.is-ref .units-ref-btn { opacity: 1; }
+.units-ref-btn:focus-visible { opacity: 1; pointer-events: auto; }
+tr.is-ref .units-ref-btn { opacity: 1; pointer-events: auto; }
 /* Hovered rows offer a plain circle; the selected reference shows the
    dotted marker. */
 .units-ref-btn .ref-ic { display: none; line-height: 0; }
@@ -449,7 +456,13 @@ tr.is-ref .units-ref-btn .ref-ic-active { display: inline-block; }
 .si-prefix-table.si-expanded .si-caret-btn { transform: rotate(180deg); }
 @media (hover: none), (width < 768px) {
   /* Touch screens have no hover — keep the pick buttons visible and
-     show their offer icon (selected rows keep the dotted marker). */
+     show their offer icon (selected rows keep the dotted marker).
+     Here the button always appears, so put it back in normal flow. */
+  table[data-units-dynamic] td:first-child { position: static; }
+  .units-ref-btn {
+    position: static; top: auto; right: auto; transform: none;
+    float: right; margin-left: 6px; pointer-events: auto;
+  }
   .units-ref-btn { opacity: 1; }
   tr:not(.is-ref) .units-ref-btn:not(:disabled) .ref-ic-offer { display: inline-block; }
 }

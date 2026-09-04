@@ -63,7 +63,6 @@ from scifind_lib import (
     fetch_all_operators,
     fetch_all_formulas,
     compound_unit_by_id,
-    select_base_unit,
     select_base_unit_with_fallback,
     unit_by_id,
     search_entities,
@@ -1147,10 +1146,7 @@ def _inject_si_prefix_nodes(graph, conn, quantity_id):
         for p in fetch_si_prefixes(conn):
             exp = int(p["id"])
             pid = f"si_{p['id']}"
-            graph.edges[pid] = (
-                pref_base_id,
-                [{"op": "mul", "value": 10 ** exp}],
-            )
+            graph.edges[pid] = (pref_base_id, 10 ** exp, 0, None, "mul", 0.0)
             prefix_sym = _normalise_prefix_symbol(localise(p["symbol"], locale), base_symbol)
             graph.unit_rows[pid] = {
                 "id": pid,
@@ -1193,10 +1189,7 @@ def _inject_si_prefix_nodes(graph, conn, quantity_id):
             exp = int(p["id"])
             pid = f"si_{p['id']}"
             factor = 10 ** (exp * compound_prefix_exp)
-            graph.edges[pid] = (
-                base["id"],
-                [{"op": "mul", "value": factor}],
-            )
+            graph.edges[pid] = (base["id"], factor, 0, None, "mul", 0.0)
             prefixed_sym_latex = _build_compound_sym_latex(
                 conn, localise(p["symbol"], locale), primary_part_uid, parts
             )
@@ -1572,11 +1565,21 @@ def _si_prefix_rows(conn, system, quantity_id):
         else:
             prefix_name_val = localise(p["name"], locale)
             prefix_sym = localise(p["symbol"], locale)
+            # The base's `unit` JSON carries no prefix, so the parser
+            # never invokes `prefix_name`. Inject the prefix onto the
+            # primary part so the name renders e.g. "Kilometre squared",
+            # "Mega joule per second" instead of losing the prefix.
+            prefixed_parts = [
+                {"unit": uid, "exponent": exp_val, "prefix": exp}
+                if uid == primary_part_uid
+                else {"unit": uid, "exponent": exp_val}
+                for uid, exp_val in parts
+            ]
             # Render with `prefix_name` so the prefix shows as plain
             # text and the unit name becomes a link (e.g. "Kilo[gram]"
             # rather than "[Kilogram]").
             pref_name_html = Markup(format_compound_unit_html(
-                base["unit"], locale=locale,
+                json.dumps(prefixed_parts), locale=locale,
                 unit_name=_unit_name_callback(locale),
                 prefix_name=lambda _exp: prefix_name_val,
                 unit_url=lambda uid: f"/unit/{uid}" if uid in _get_unit_name_map() else None,

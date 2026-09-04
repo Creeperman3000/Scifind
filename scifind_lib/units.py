@@ -59,13 +59,6 @@ def parse_compound_unit_parts(json_text):
     return out
 
 
-def part_prefix_factor(prefix):
-    """Numeric scale factor (10^prefix) for an SI prefix exponent, or 1 if None."""
-    if prefix is None:
-        return 1.0
-    return 10.0 ** prefix
-
-
 def split_numerator_denominator(items):
     return (
         [item for item in items if item[1] >= 0],
