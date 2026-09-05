@@ -374,6 +374,8 @@ def _pretty_factor(x):
             mant /= 10
             exp += 1
         mant_str = f"{mant:.6f}".rstrip("0").rstrip(".")
+        if abs(mant) == 1:
+            return f"{sign}10^{{{exp}}}"
         return f"{sign}{mant_str}\\times10^{{{exp}}}"
     if x == int(x) and abs(x) < 1e15:
         return str(int(x))
@@ -428,10 +430,10 @@ def _temp_var_fn(graph):
 
 
 def _render_sci(x):
-    """Exact scientific notation like `1\\times10^{-9}`.
+    """Exact scientific notation like `10^{-9}`.
 
     Avoids float-rounding noise, e.g. 1/1e-15 computes to
-    999999999999999.9 and must print as `1\\times10^{15}`.
+    999999999999999.9 and must print as `10^{15}`.
     """
     if x == 0:
         return "0"
@@ -440,9 +442,9 @@ def _render_sci(x):
     exp = int(math.floor(math.log10(ax)))
     mant = ax / (10.0 ** exp)
     if abs(mant - 1.0) <= 1e-6:
-        return f"{sign}1\\times10^{{{exp}}}"
+        return f"{sign}10^{{{exp}}}"
     if abs(mant - 10.0) <= 1e-6:
-        return f"{sign}1\\times10^{{{exp + 1}}}"
+        return f"{sign}10^{{{exp + 1}}}"
     mant = round(mant, 6)
     if mant >= 9.9999995:
         mant = 1.0

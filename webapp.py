@@ -839,16 +839,17 @@ def _quantity_units_table(conn, quantity_id, system, ref_unit_id=None):
     si_prefixes, _ = _si_prefix_rows(conn, "SI", quantity_id)
     if si_prefixes:
         base_entry_id = base["id"] if base else None
-        for r in si_prefixes:
-            if base_entry_id and r["payload_id"] == base_entry_id:
-                continue
-            entries.append({
-                "id": r["payload_id"],
-                "symbol_latex": Markup(r["symbol_latex"]),
-                "name_html": Markup(r["name"]),
-                "label": r["name"],
-                "system": _format_system_label(None, False, locale),
-            })
+        for section_key, section in si_prefixes.items():
+            for r in section["rows"]:
+                if base_entry_id and r["payload_id"] == base_entry_id:
+                    continue
+                entries.append({
+                    "id": r["payload_id"],
+                    "symbol_latex": Markup(r["symbol_latex"]),
+                    "name_html": Markup(r["name"]),
+                    "label": r["name"],
+                    "system": _format_system_label(None, False, locale),
+                })
 
     if base:
         label_json = (json.dumps([{"unit": base["id"], "exponent": 1}])
@@ -884,7 +885,9 @@ def _quantity_units_table(conn, quantity_id, system, ref_unit_id=None):
     # etc.) — they only belong in the prefix table.
     si_prefix_entry_ids = set()
     if si_prefixes:
-        si_prefix_entry_ids = {r["id"] for r in si_prefixes}
+        for section in si_prefixes.values():
+            for r in section["rows"]:
+                si_prefix_entry_ids.add(r["id"])
     for cu in conn.execute(
         "SELECT * FROM compound_unit WHERE quantity_id = ?", (quantity_id,)
     ).fetchall():
@@ -937,7 +940,11 @@ def _quantity_units_table(conn, quantity_id, system, ref_unit_id=None):
         "",
     )
 
-    si_payload_ids = {r["payload_id"] for r in (si_prefixes or [])}
+    si_payload_ids = set()
+    if si_prefixes:
+        for section in si_prefixes.values():
+            for r in section["rows"]:
+                si_payload_ids.add(r["payload_id"])
     units_rows = []
     for e in entries:
         if (e["id"] or "").startswith("si_"):
@@ -957,23 +964,30 @@ def _quantity_units_table(conn, quantity_id, system, ref_unit_id=None):
                              for rid in latex_map},
         })
 
-    si_payload = []
+    si_prefix_sections = []
     if si_prefixes:
-        for r in si_prefixes:
-            pid = r["payload_id"]
-            si_payload.append({
-                "id": pid,
-                "symbol_latex": Markup(r["symbol_latex"]),
-                "name": r["name"],
-                "system_key": r.get("system_key"),
-                "link_unit_id": r.get("link_unit_id"),
-                "value_latex": r.get("value_latex", ""),
-                "is_ref": pid == ref_id,
-                "collapsed": bool(r.get("collapsed")),
-                "latex_by_ref": {rid: latex_map.get(pid, {}).get(rid)
-                                 for rid in latex_map},
+        for section_key, section in si_prefixes.items():
+            section_payload = []
+            for r in section["rows"]:
+                pid = r["payload_id"]
+                section_payload.append({
+                    "id": pid,
+                    "symbol_latex": Markup(r["symbol_latex"]),
+                    "name": r["name"],
+                    "system_key": r.get("system_key"),
+                    "link_unit_id": r.get("link_unit_id"),
+                    "value_latex": r.get("value_latex", ""),
+                    "is_ref": pid == ref_id,
+                    "collapsed": bool(r.get("collapsed")),
+                    "latex_by_ref": {rid: latex_map.get(pid, {}).get(rid)
+                                     for rid in latex_map},
+                })
+            si_prefix_sections.append({
+                "component": section["component"],
+                "label": section["label"],
+                "payload": section_payload,
             })
-
+    si_payload = [row for section in si_prefix_sections for row in section["payload"]]
     payload = {
         "ref": ref_id or "",
         "ref_label": ref_label,
@@ -984,6 +998,7 @@ def _quantity_units_table(conn, quantity_id, system, ref_unit_id=None):
         "units": units_rows,
         "payload": payload,
         "si_prefixes": si_payload,
+        "si_prefix_sections": si_prefix_sections,
     }
 
 
@@ -1075,6 +1090,9 @@ def _build_compound_sym_latex(conn, prefix_sym, primary_uid, parts):
 def _inject_si_prefix_nodes(graph, conn, quantity_id):
     """Inject synthetic SI-prefixed nodes (si_kilo -> base) so the renderer
     can emit "1 km = 1000 m" for the prefix table.
+
+    For compound units with multiple prefixable components, inject separate
+    nodes for each component so that multiple tables can be generated.
     """
     locale = g.locale
     base = select_base_unit_with_fallback(conn, quantity_id, g.get("unit_system", "SI"))
@@ -1107,45 +1125,32 @@ def _inject_si_prefix_nodes(graph, conn, quantity_id):
             return
         prefixable = _get_prefixable_base_units(conn)
         prefixable_parts = []
-        compound_prefix_exp = 0
         for part_uid, part_exp in parts:
             pref_uid = prefixable.get(part_uid)
             if pref_uid:
                 prefixable_parts.append((part_uid, part_exp, pref_uid))
-                if part_exp > 0:
-                    compound_prefix_exp += part_exp
-        if compound_prefix_exp == 0 and prefixable_parts:
-            compound_prefix_exp = abs(prefixable_parts[0][1])
+
         if not prefixable_parts:
             return
 
-        primary_part_uid = None
-        for part_uid, part_exp in parts:
-            if part_exp > 0 and part_uid in prefixable:
-                primary_part_uid = part_uid
-                break
-        if primary_part_uid is None:
-            for part_uid, _ in parts:
-                if part_uid in prefixable:
-                    primary_part_uid = part_uid
-                    break
-
-        for p in fetch_si_prefixes(conn):
-            exp = int(p["id"])
-            pid = f"si_{p['id']}"
-            factor = 10 ** (exp * compound_prefix_exp)
-            graph.edges[pid] = (base["id"], factor, 0, None, "mul", 0.0)
-            prefixed_sym_latex = _build_compound_sym_latex(
-                conn, localise(p["symbol"], locale), primary_part_uid, parts
-            )
-            graph.compound_rows[pid] = {
-                "id": pid,
-                "unit": base["unit"],
-                "symbol_overwrite": prefixed_sym_latex,
-                "system": "SI",
-                "quantity_id": quantity_id,
-                "is_base": 0,
-            }
+        for part_uid, part_exp, _pref_uid in prefixable_parts:
+            part_symbol = _unit_symbol_for(conn, part_uid)
+            for p in fetch_si_prefixes(conn):
+                exp = int(p["id"])
+                pid = f"si_{p['id']}_{part_uid}"
+                factor = 10 ** (exp * part_exp)
+                graph.edges[pid] = (base["id"], factor, 0, None, "mul", 0.0)
+                prefixed_sym_latex = _build_compound_sym_latex(
+                    conn, localise(p["symbol"], locale), part_uid, parts
+                )
+                graph.compound_rows[pid] = {
+                    "id": pid,
+                    "unit": base["unit"],
+                    "symbol_overwrite": prefixed_sym_latex,
+                    "system": "SI",
+                    "quantity_id": quantity_id,
+                    "is_base": 0,
+                }
 
 
 def _get_prefixable_base_units(conn):
@@ -1246,251 +1251,163 @@ def _si_prefix_rows(conn, system, quantity_id):
             prefixed.sort(key=lambda x: x["exp"], reverse=True)
             return prefixed
 
-        return make_prefix_rows(base_id, base_name, base_symbol), cgs_unit_id
+        rows = make_prefix_rows(base_id, base_name, base_symbol)
+        sections = {base_id: {"component": base_id, "label": base_name, "rows": rows}}
+        return sections, cgs_unit_id
 
     parts_with_prefix = parse_compound_unit_parts(base["unit"])
-    # compound_unit base: compound-aware prefixing
     parts = [(uid, exp) for uid, exp, _prefix in parts_with_prefix]
     if not parts:
         return None, None
 
-    # The base itself can carry a built-in prefix (kilogram is gram with
-    # prefix 3), so the base row sits at that natural exp rather than exp=0.
-    primary_part_uid = None
-    primary_natural_exp = 0
-    for uid, exp, prefix in parts_with_prefix:
-        if exp > 0 and uid in prefixable:
-            primary_part_uid = uid
-            primary_natural_exp = prefix or 0
-            break
-    if primary_part_uid is None:
-        for uid, exp, prefix in parts_with_prefix:
-            if uid in prefixable:
-                primary_part_uid = uid
-                primary_natural_exp = prefix or 0
-                break
-
-    # Compound prefix exponent = sum of positive (numerator) part exponents.
+    prefixable = _get_prefixable_base_units(conn)
     prefixable_parts = []
-    compound_prefix_exp = 0
     for part_uid, part_exp in parts:
         pref_uid = prefixable.get(part_uid)
         if pref_uid:
             prefixable_parts.append((part_uid, part_exp, pref_uid))
-            if part_exp > 0:
-                compound_prefix_exp += part_exp
-    if compound_prefix_exp == 0 and prefixable_parts:
-        compound_prefix_exp = abs(prefixable_parts[0][1])
 
     if not prefixable_parts:
         return None, None
 
-    def make_prefixed_name_func(prefix_name, locale):
-        def name_func(unit_id):
-            if unit_id == primary_part_uid and unit_id in prefixable:
-                row = fetch_unit(conn, unit_id)
-                if row:
-                    full = localise(row["name"], locale) or localise(row["name"], "en-us")
-                    return prefix_name + full.lower()
-            row = fetch_unit(conn, unit_id)
-            if row:
-                return localise(row["name"], locale) or localise(row["name"], "en-us")
-            return unit_id.replace("_", " ").title()
-        return name_func
-
-    from scifind_lib.units import format_compound_unit_html, format_compound_unit_symbol
-    if base.get("name_overwrite") and primary_natural_exp == 0:
-        # Unprefixed bases (metre_squared) use the human-friendly override.
-        base_name = localise(base["name_overwrite"], locale) or localise(base["name_overwrite"], "en-us")
-        if not base_name:
-            base_name = base["id"].replace("_", " ").title()
-    else:
-        # Part-derived form keeps the prefix as plain text and each part a link.
-        base_name = format_compound_unit_html(
-            base["unit"], locale=locale,
-            prefix_name=_prefix_name_callback(locale),
-            unit_url=lambda uid: f"/unit/{uid}" if uid in _get_unit_name_map() else None,
-        )
-    if base.get("symbol_overwrite"):
-        base_symbol_latex = base["symbol_overwrite"]
-    else:
+    base_id = base.get("id")
+    base_symbol_latex = base.get("symbol_overwrite")
+    if not base_symbol_latex:
+        from scifind_lib.units import format_compound_unit_symbol
         base_symbol_latex = format_compound_unit_symbol(
             base["unit"],
             unit_symbol=lambda uid: _unit_symbol_for(conn, uid),
             prefix_symbol=lambda exp: _prefix_symbol_for(conn, exp),
         )
-    base_id = base.get("id")
 
-    def system_field(exp):
-        return (None, None)
+    def make_component_section(part_uid, part_exp):
+        from scifind_lib.units import format_compound_unit_html, format_compound_unit_symbol
+        prefixed = []
+        db_prefix_entries = {}
+        for row in conn.execute(
+            "SELECT id, unit, name_overwrite, symbol_overwrite FROM compound_unit WHERE quantity_id = ? AND is_base = 0",
+            (quantity_id,),
+        ).fetchall():
+            try:
+                units = json.loads(row["unit"])
+                if isinstance(units, list):
+                    for u in units:
+                        if isinstance(u, dict) and "prefix" in u and u.get("unit") == part_uid:
+                            pref_val = u["prefix"]
+                            if pref_val is not None:
+                                try:
+                                    pref_exp = int(pref_val)
+                                    db_prefix_entries[pref_exp] = row
+                                except (ValueError, TypeError):
+                                    pass
+            except (json.JSONDecodeError, TypeError):
+                pass
 
-    # DB entries with an applied prefix (hectare, are) replace synthetic rows.
-    import json
-    db_prefix_entries = {}  # prefix_exp -> db_entry
-    for row in conn.execute(
-        "SELECT id, unit, name_overwrite, symbol_overwrite FROM compound_unit WHERE quantity_id = ? AND is_base = 0",
-        (quantity_id,),
-    ).fetchall():
-        try:
-            units = json.loads(row["unit"])
-            if isinstance(units, list):
-                for u in units:
-                    if isinstance(u, dict) and "prefix" in u:
-                        pref_val = u["prefix"]
-                        if pref_val is not None:
-                            try:
-                                pref_exp = int(pref_val)
-                                db_prefix_entries[pref_exp] = row
-                            except (ValueError, TypeError):
-                                pass
-        except (json.JSONDecodeError, TypeError):
-            pass
-
-    prefixed = []
-    db_entry_exps = set(db_prefix_entries.keys())
-
-    # Base row sits at its natural exp (e.g. kilogram at exp=3).
-    if primary_natural_exp not in db_prefix_entries:
+        base_row_exp = 0
         prefixed.append({
-            "id": base_id,
-            "exp": primary_natural_exp,
+            "id": f"{base_id}_{part_uid}_base",
+            "exp": base_row_exp,
             "symbol_latex": base_symbol_latex,
-            "name": Markup(base_name),
-            "system_key": "detail.si_base",
-            # name already links its simple-unit parts; don't wrap it again.
-            "link_unit_id": None,
-            "value_latex": f"10^{{{primary_natural_exp * compound_prefix_exp}}}",
-        })
-
-    # A built-in prefixed base (kilogram, exp=3) also gets an exp=0 row for the unprefixed unit (gram).
-    if primary_natural_exp != 0 and 0 not in db_entry_exps:
-        unprefixed_json = json.dumps([
-            {"unit": uid, "exponent": exp_val}
-            for uid, exp_val in parts
-        ])
-        # The unprefixed name already links its parts; don't wrap it again.
-        unprefixed_name = format_compound_unit_html(
-            unprefixed_json, locale=locale,
-            unit_name=_unit_name_callback(locale),
-            unit_url=lambda uid: f"/unit/{uid}" if uid in _get_unit_name_map() else None,
-        )
-        unprefixed_sym = format_compound_unit_symbol(
-            unprefixed_json,
-            unit_symbol=lambda uid: _unit_symbol_for(conn, uid),
-        )
-        prefixed.append({
-            "id": f"si_0",
-            "exp": 0,
-            "symbol_latex": unprefixed_sym,
-            "name": Markup(unprefixed_name),
-            "system_key": None,
-            "link_unit_id": None,
-            "value_latex": f"10^{{0}}",
-        })
-
-    for p in fetch_si_prefixes(conn):
-        exp = int(p["id"])
-
-        if exp in db_prefix_entries:
-            db_entry = db_prefix_entries[exp]
-            from scifind_lib.units import format_compound_unit_html, format_compound_unit_symbol
-            name_json = db_entry["name_overwrite"]
-            if name_json:
-                db_entry_name = localise(name_json, locale)
-                if not db_entry_name:
-                    db_entry_name = localise(name_json, "en-us")
-            else:
-                db_entry_name = db_entry["id"].replace("_", " ").title()
-            db_parts = parse_compound_unit(db_entry["unit"])
-            sym_overwrite = db_entry["symbol_overwrite"]
-            if sym_overwrite:
-                db_sym_latex = sym_overwrite
-            elif db_parts and primary_part_uid:
-                prefix_sym = localise(p["symbol"], locale)
-                db_sym_latex = _build_compound_sym_latex(
-                    conn, prefix_sym, primary_part_uid, db_parts
-                )
-            else:
-                db_sym_latex = format_compound_unit_symbol(
-                    db_entry["unit"],
-                    unit_symbol=lambda uid: _unit_symbol_for(conn, uid),
-                    prefix_symbol=lambda exp: _prefix_symbol_for(conn, exp),
-                )
-            prefixed.append({
-                "id": db_entry["id"],
-                "exp": exp,
-                "symbol_latex": db_sym_latex,
-                "name": db_entry_name,
-                "system_key": None,
-                "link_unit_id": primary_part_uid,
-                "value_latex": f"10^{{{exp * compound_prefix_exp}}}",
-            })
-            continue
-
-        # Skip the base's natural exp — already added above as the base row.
-        if exp == primary_natural_exp:
-            continue
-
-        # exp=0 has no prefix, so render the unprefixed primary unit directly.
-        if exp == 0:
-            unprefixed_parts = [(uid, exp_val) for uid, exp_val in parts]
-            unprefixed_json = json.dumps([
-                {"unit": uid, "exponent": exp_val}
-                for uid, exp_val in unprefixed_parts
-            ])
-            # Template wraps the whole cell in its own <a> via `link_unit_id`.
-            pref_name_html = Markup(format_compound_unit_html(
-                unprefixed_json, locale=locale,
+            "name": format_compound_unit_html(
+                base["unit"], locale=locale,
                 unit_name=_unit_name_callback(locale),
-            ))
-            pref_sym_latex = format_compound_unit_symbol(
-                unprefixed_json,
-                unit_symbol=lambda uid: _unit_symbol_for(conn, uid),
-            )
-        else:
+                unit_url=lambda uid: f"/unit/{uid}" if uid in _get_unit_name_map() else None,
+            ),
+            "system_key": "detail.si_base",
+            "link_unit_id": None,
+            "value_latex": f"10^{{{base_row_exp * part_exp}}}",
+        })
+
+        for p in fetch_si_prefixes(conn):
+            exp = int(p["id"])
+            if exp == base_row_exp:
+                continue
+
+            if exp in db_prefix_entries:
+                db_entry = db_prefix_entries[exp]
+                name_json = db_entry["name_overwrite"]
+                if name_json:
+                    db_entry_name = localise(name_json, locale)
+                    if not db_entry_name:
+                        db_entry_name = localise(name_json, "en-us")
+                else:
+                    db_entry_name = db_entry["id"].replace("_", " ").title()
+                sym_overwrite = db_entry["symbol_overwrite"]
+                if sym_overwrite:
+                    db_sym_latex = sym_overwrite
+                else:
+                    db_parts = parse_compound_unit(db_entry["unit"])
+                    if db_parts and part_uid:
+                        prefix_sym = localise(p["symbol"], locale)
+                        db_sym_latex = _build_compound_sym_latex(
+                            conn, prefix_sym, part_uid, db_parts
+                        )
+                    else:
+                        db_sym_latex = format_compound_unit_symbol(
+                            db_entry["unit"],
+                            unit_symbol=lambda uid: _unit_symbol_for(conn, uid),
+                            prefix_symbol=lambda exp: _prefix_symbol_for(conn, exp),
+                        )
+                prefixed.append({
+                    "id": db_entry["id"],
+                    "exp": exp,
+                    "symbol_latex": db_sym_latex,
+                    "name": db_entry_name,
+                    "system_key": None,
+                    "link_unit_id": part_uid,
+                    "value_latex": f"10^{{{exp * part_exp}}}",
+                    "is_db_entry": True,
+                })
+                continue
+
             prefix_name_val = localise(p["name"], locale)
             prefix_sym = localise(p["symbol"], locale)
-            # base JSON carries no prefix, so inject it on the primary part
-            # to render "Kilometre squared" / "Mega joule per second".
             prefixed_parts = [
                 {"unit": uid, "exponent": exp_val, "prefix": exp}
-                if uid == primary_part_uid
+                if uid == part_uid
                 else {"unit": uid, "exponent": exp_val}
                 for uid, exp_val in parts
             ]
-            # Prefix as plain text, unit name as a link.
-            pref_name_html = Markup(format_compound_unit_html(
+            pref_name_html = format_compound_unit_html(
                 json.dumps(prefixed_parts), locale=locale,
                 unit_name=_unit_name_callback(locale),
                 prefix_name=lambda _exp: prefix_name_val,
                 unit_url=lambda uid: f"/unit/{uid}" if uid in _get_unit_name_map() else None,
-            ))
-            pref_sym_latex = _build_compound_sym_latex(
-                conn, prefix_sym, primary_part_uid, parts
             )
+            pref_sym_latex = _build_compound_sym_latex(
+                conn, prefix_sym, part_uid, parts
+            )
+            prefixed.append({
+                "id": f"si_{p['id']}_{part_uid}",
+                "exp": exp,
+                "symbol_latex": pref_sym_latex,
+                "name": pref_name_html,
+                "system_key": None,
+                "link_unit_id": None,
+                "value_latex": f"10^{{{exp * part_exp}}}",
+            })
 
-        sys_key, _ = system_field(exp)
-        # pref_name_html already links; don't let the template wrap it again.
-        link_unit_id = None
-        compound_value_exp = exp * compound_prefix_exp
-        prefixed.append({
-            "id": f"si_{p['id']}",
-            "exp": exp,
-            "symbol_latex": pref_sym_latex,
-            "name": Markup(pref_name_html),
-            "system_key": sys_key,
-            "link_unit_id": link_unit_id,
-            "value_latex": f"10^{{{compound_value_exp}}}",
-        })
+        for r in prefixed:
+            is_db_entry = r.get("is_db_entry", False)
+            r["collapsed"] = (not is_db_entry) and (r["exp"] not in DEFAULT_VISIBLE_EXPONENTS)
+            r["payload_id"] = r["id"] or f"{base_id}_{part_uid}" or "si_base"
+        prefixed.sort(key=lambda x: x["exp"], reverse=True)
+        return prefixed
 
-    for r in prefixed:
-        # DB entries (hectare, are) are always visible; synthetic ours follow
-        # DEFAULT_VISIBLE_EXPONENTS.
-        is_db_entry = r["exp"] in db_entry_exps
-        r["collapsed"] = (not is_db_entry) and (r["exp"] not in DEFAULT_VISIBLE_EXPONENTS)
-        r["payload_id"] = r["id"] or base_id or "si_base"
-    prefixed.sort(key=lambda x: x["exp"], reverse=True)
-    return prefixed, cgs_unit_id
+    sections = {}
+    for part_uid, part_exp, _pref_uid in prefixable_parts:
+        part_unit_row = fetch_unit(conn, part_uid)
+        if part_unit_row:
+            part_name = localise(part_unit_row["name"], locale) or localise(part_unit_row["name"], "en-us")
+        else:
+            part_name = part_uid.replace("_", " ").title()
+        sections[part_uid] = {
+            "component": part_uid,
+            "label": f"Prefixed on: {part_name}",
+            "rows": make_component_section(part_uid, part_exp),
+        }
+
+    return sections, cgs_unit_id
 
 
 
@@ -1975,6 +1892,7 @@ def quantity_detail(quantity_id):
         dim_latex=dim_latex,
         table_data=units_table["payload"],
         si_prefixes=units_table["si_prefixes"],
+        si_prefix_sections=units_table["si_prefix_sections"],
     )
 
 
@@ -2053,7 +1971,7 @@ def unit_detail(unit_id):
     qty = fetch_quantity(conn, unit["quantity_id"])
     unit["quantity_name_localized"] = localise(qty["name"], locale) if qty else unit.get("quantity_id", "")
     _attach_breadcrumbs(unit, locale)
-    units = table_data = si_prefixes = None
+    units = table_data = si_prefixes = si_prefix_sections = None
     if qty:
         # On a unit's own page the reference unit is that unit.
         units_table = _quantity_units_table(
@@ -2062,12 +1980,14 @@ def unit_detail(unit_id):
         units = units_table["units"]
         table_data = units_table["payload"]
         si_prefixes = units_table["si_prefixes"]
+        si_prefix_sections = units_table["si_prefix_sections"]
     return render_template(
         "unit.html",
         unit=unit,
         units=units,
         table_data=table_data,
         si_prefixes=si_prefixes,
+        si_prefix_sections=si_prefix_sections,
         fixed_ref=True,
     )
 
