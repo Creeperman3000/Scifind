@@ -56,12 +56,7 @@ CREATE TABLE IF NOT EXISTS unit (
     quantity_id  TEXT NOT NULL REFERENCES quantity(id),
     system       TEXT CHECK (system IN ('SI','CGS','Imperial') OR system IS NULL),
     is_base      INTEGER NOT NULL DEFAULT 0 CHECK (is_base IN (0,1)),
-    -- Reference graph (NULL = root). Conversion is
-    --   x_ref = F * (x_row + offset) + (add/sub constant),
-    --   where F = factor or 1/factor, combined with `constant_id`
-    --   by `constant_operator_id` (mul/div scale F; add/sub shift the
-    --   reference value by the constant).
-    -- may point to a unit row or a compound_unit row.
+    -- Reference graph (NULL = root). Points to unit rows or compound_unit rows.
     reference_unit_id    TEXT REFERENCES unit(id),
     factor               REAL NOT NULL DEFAULT 1,
     is_factor_reciprocal INTEGER NOT NULL DEFAULT 0 CHECK (is_factor_reciprocal IN (0,1)),

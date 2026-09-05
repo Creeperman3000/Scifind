@@ -150,14 +150,8 @@ def _render_unit_group(items, url_func, name_func=None, locale="en-us",
                        use_special_exponents=False, prefix_name=None, raw_3=False):
     """Render unit parts as HTML with natural-language exponents.
 
-    `items` may be (unit_id, exponent) pairs or, when `raw_3`, the
-    (unit_id, exponent, prefix) triples produced by the prefix-aware
-    parser. `prefix_name(prefix_exp)` supplies localized prefix names
-    (e.g. 'Centi').
-
-    When a prefix is present and the part is linked, the prefix is
-    rendered as plain text before the link so the link wraps only the
-    base unit name (e.g. "Kilo[gram]" instead of "[Kilogram]").
+    `items` are (unit_id, exponent) pairs or, with `raw_3`,
+    (unit_id, exponent, prefix) triples from the prefix-aware parser.
     """
     accusative = locale_accusative_names(locale) if use_special_exponents else {}
     out = []
@@ -171,16 +165,14 @@ def _render_unit_group(items, url_func, name_func=None, locale="en-us",
         pref_text = ""
         if prefix is not None and prefix_name:
             pref = prefix_name(prefix) or ""
-            # `name_func` capitalizes the first part of the compound; when a
-            # prefix prefixes that part we need the lowercase base so the
-            # prefix name joins the base word ("Centi"+"metre"="Centimetre").
+            # Lowercase the base so a leading prefix joins as one word
+            # ("Centi"+"metre"="Centimetre").
             if i == 0 and label:
                 label = label[0].lower() + label[1:]
             if i > 0 and pref:
                 pref = pref[0].lower() + pref[1:]
-            # When the part is linked, keep the prefix as plain text so
-            # the link wraps only the base unit name. Otherwise join the
-            # prefix and the base into a single word (e.g. "centimetre").
+            # Linked parts keep the prefix as plain text so only the base
+            # name links; otherwise join prefix+base into one word.
             link = url_func(unit_id) if url_func else None
             if link:
                 pref_text = pref

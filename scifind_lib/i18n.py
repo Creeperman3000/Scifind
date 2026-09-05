@@ -30,11 +30,7 @@ def load_locale_config(locale):
 
 
 def localise(value, locale, default="en-us"):
-    """Resolve a JSON i18n string, dict, or plain text to the active locale.
-
-    Returns "" for None / empty / missing locale. Plain strings without a
-    leading ``{`` are returned verbatim. Malformed JSON returns "".
-    """
+    """Resolve a JSON i18n string, dict, or plain text to the active locale."""
     if not value:
         return ""
     if isinstance(value, dict):

@@ -466,7 +466,6 @@ _RATE_LIMIT_BUCKETS = {}
 
 
 def _rate_limit(bucket, max_per_minute):
-    """Sliding 60-second counter in-process; returns a 429 response or None."""
     try:
         max_n = int(max_per_minute)
     except (TypeError, ValueError):
@@ -690,7 +689,6 @@ def _get_unit_symbol_map():
 
 
 def _get_prefix_name_map(locale=None):
-    """{prefix_exponent_int: localized prefix name}, e.g. {-2: 'Centi'}."""
     if 'prefix_name_map' not in g:
         loc = locale or g.get("locale", "en-us")
         g.prefix_name_map = {
@@ -701,7 +699,6 @@ def _get_prefix_name_map(locale=None):
 
 
 def _get_prefix_symbol_map(locale=None):
-    """{prefix_exponent_int: localized prefix symbol}, e.g. {-2: 'c'}."""
     if 'prefix_symbol_map' not in g:
         loc = locale or g.get("locale", "en-us")
         g.prefix_symbol_map = {
@@ -719,11 +716,6 @@ def _unit_name_link(unit_id):
 
 
 def _unit_name_callback(locale):
-    """Build a `unit_name` callback for format_compound_unit_html.
-
-    Localises each part's name (lowercase) and capitalises only the
-    first part, e.g. "Square metre" from metre_squared.
-    """
     names = _get_unit_name_map()
     first = [True]
 
@@ -738,13 +730,11 @@ def _unit_name_callback(locale):
 
 
 def _prefix_name_callback(locale):
-    """Return callable(prefix_exp) -> localized prefix name (e.g. 'Centi')."""
     pmap = _get_prefix_name_map(locale)
     return lambda exp: pmap.get(exp, "")
 
 
 def _prefix_symbol_callback(locale):
-    """Return callable(prefix_exp) -> localized prefix symbol (e.g. 'c')."""
     smap = _get_prefix_symbol_map(locale)
     return lambda exp: smap.get(exp, "")
 
@@ -793,13 +783,6 @@ def _render_compound_unit(cu_row, locale):
 
 
 def _format_system_label(system, is_base, locale):
-    """Return the localized system column label, prefixed with 'Base '
-    when the row is the canonical base for its system.
-
-    `system` is the raw column value ('SI', 'CGS', 'Imperial', or None
-    for non-system units). `is_base` is True when the row is the system
-    base for that quantity+system. `locale` is used to look up i18n.
-    """
     if not system:
         return _("unit.system_any")
     if is_base:
@@ -808,12 +791,10 @@ def _format_system_label(system, is_base, locale):
 
 
 def _row_is_base(conn, row_id, system, kind):
-    """Return True if `row_id` is the base row for its quantity.
+    """True if `row_id` is the base row for its quantity.
 
-    `kind` is 'unit' or 'compound_unit'. The is_base flag is checked
-    against the rows own table only; the current `system` filter is
-    intentionally not applied so a row that is a system base shows up
-    regardless of the display system.
+    The `system` filter is intentionally not applied so a system base
+    shows regardless of the display system.
     """
     if not row_id:
         return False
@@ -831,12 +812,10 @@ def _row_is_base(conn, row_id, system, kind):
 
 
 def _quantity_units_table(conn, quantity_id, system, ref_unit_id=None):
-    """Rows for the units table shared by /quantity/<id> and /unit/<id>.
+    """Unit-table rows shared by /quantity/<id> and /unit/<id>.
 
-    Each row carries its name/symbol/system metadata plus the conversion
-    LaTeX to *every* reachable unit (precomputed server-side), so the
-    client only needs to look up the cached string when the user picks
-    a different reference unit.
+    Conversion LaTeX to every reachable unit is precomputed server-side,
+    so the client only looks up the cached string on reference change.
     """
     locale = g.locale
     base = select_base_unit_with_fallback(conn, quantity_id, system)
@@ -901,10 +880,8 @@ def _quantity_units_table(conn, quantity_id, system, ref_unit_id=None):
             "system": _format_system_label(eu_system, eu_is_base, locale),
         })
 
-    # Compound_unit rows for this quantity (hectare, square_foot, etc.).
-    # Skip the rows that are already shown in the SI prefix table — they
-    # are essentially prefixed forms of the base unit (hectare = hm², etc.)
-    # and should only appear in the second table to avoid duplication.
+    # Skip compound rows already shown as SI prefix entries (hectare = hm²,
+    # etc.) — they only belong in the prefix table.
     si_prefix_entry_ids = set()
     if si_prefixes:
         si_prefix_entry_ids = {r["id"] for r in si_prefixes}
@@ -920,9 +897,7 @@ def _quantity_units_table(conn, quantity_id, system, ref_unit_id=None):
         unit_html, unit_sym = _render_compound_unit(cu_row, locale)
         cu_system = cu_row.get("system") or None
         cu_is_base = _row_is_base(conn, cu_row["id"], system, "compound_unit")
-        # If the compound has a name_overwrite, also show the parts-derived
-        # name in parens, e.g. "Litre (decimetre cubed)". If the parts
-        # name equals the override, dedupe.
+        # Show the parts-derived name in parens unless it duplicates the override.
         no_json = cu_row.get("name_overwrite")
         if no_json and localise(no_json, locale):
             parts_name = format_compound_unit_html(
@@ -967,9 +942,7 @@ def _quantity_units_table(conn, quantity_id, system, ref_unit_id=None):
     for e in entries:
         if (e["id"] or "").startswith("si_"):
             continue
-        # DB-overwritten SI prefix entries (hectare, are, etc.) are
-        # already shown in the SI prefix table; exclude from the main
-        # units table to avoid duplication.
+        # DB-overwritten SI prefix entries are already in the prefix table; skip.
         if e["id"] in si_payload_ids:
             continue
         plain_label = re.sub(r"<[^>]+>", "", e["label"]) if e.get("label") else (e["id"] or "").replace("_", " ")
@@ -1015,14 +988,8 @@ def _quantity_units_table(conn, quantity_id, system, ref_unit_id=None):
 
 
 def _normalise_prefix_symbol(prefix_sym, next_token):
-    """Return the prefix symbol adjusted so it doesn't merge with the
-    following token in LaTeX.
-
-    A backslash-command prefix like `\\mu` followed by a letter token
-    would parse as a single (undefined) command. We insert a single
-    space at the join whenever the prefix ends with a backslash command
-    (i.e. ends with a non-space letter that follows a backslash) and
-    the next token begins with a letter or digit.
+    """Add a separating space when a backslash-command prefix (e.g. `\\mu`)
+    is followed by a letter token, so they don't parse as one undefined command.
     """
     if not prefix_sym or not next_token:
         return prefix_sym
@@ -1030,13 +997,8 @@ def _normalise_prefix_symbol(prefix_sym, next_token):
         return prefix_sym
     if prefix_sym.endswith(" "):
         return prefix_sym
-    # Detect "ends with a backslash command": the last non-space char
-    # is a letter that is preceded (possibly with whitespace) by a
-    # backslash. This catches "\\mu", "\\hbar ", etc.
     stripped = prefix_sym.rstrip()
     if not stripped.endswith("\\") and "\\" in stripped:
-        # Find the last backslash; if everything after it is a letter
-        # sequence, treat as a command that needs spacing.
         last_bs = stripped.rfind("\\")
         tail = stripped[last_bs + 1:]
         if tail and tail.isalpha():
@@ -1047,14 +1009,11 @@ def _normalise_prefix_symbol(prefix_sym, next_token):
 
 
 def _unit_symbol_for(conn, uid):
-    """Look up a unit's raw symbol from the DB, or return the id as fallback."""
     row = fetch_unit(conn, uid)
     return row["symbol"] if row else uid
 
 
 def _prefix_symbol_for(conn, exp):
-    """Look up the localised SI prefix symbol for a given exponent, or
-    return the exp as a string fallback (e.g. 'k3' for unknown exp 3)."""
     row = conn.execute(
         "SELECT symbol FROM si_prefix WHERE id = ?", (str(exp),)
     ).fetchone()
@@ -1068,11 +1027,8 @@ def _prefix_symbol_for(conn, exp):
 
 
 def _build_compound_sym_latex(conn, prefix_sym, primary_uid, parts):
-    """Build a LaTeX symbol for a prefixed compound unit by prepending
-    the prefix symbol to the primary prefixable part. Other parts keep
-    their original symbol/exponent. The returned string uses LaTeX
-    mathrm-wrapped atoms and " / " for division, matching the shape of
-    ``format_compound_unit_symbol`` so the output looks uniform.
+    """Prefixed compound LaTeX: prefix prepended to the primary prefixable part,
+    otherwise matching `format_compound_unit_symbol`'s shape.
     """
     def _wrap(sym):
         return wrap_symbol_in_latex(sym)
@@ -1117,18 +1073,8 @@ def _build_compound_sym_latex(conn, prefix_sym, primary_uid, parts):
 
 
 def _inject_si_prefix_nodes(graph, conn, quantity_id):
-    """Inject synthetic SI-prefixed nodes into the graph so the existing
-    conversion-rendering machinery can produce LaTeX like "1 km = 1000 m"
-    for the prefix table. Each synthetic node has a single edge to its
-    base (e.g. si_kilo -> metre, factor 1000) and lives in either
-    unit_rows (simple bases) or compound_rows (compound bases) with a
-    pre-rendered symbol like "km" or "km^2".
-
-    For compound bases the factor accounts for the combined exponent of
-    the prefixable parts (e.g. 10^3 * 10^2 = 10^6 for si_kilo on
-    metre_squared). The display symbol is the prefix symbol prepended to
-    the primary prefixable part's symbol so that "_unit_symbol" can
-    resolve it without a graph walk.
+    """Inject synthetic SI-prefixed nodes (si_kilo -> base) so the renderer
+    can emit "1 km = 1000 m" for the prefix table.
     """
     locale = g.locale
     base = select_base_unit_with_fallback(conn, quantity_id, g.get("unit_system", "SI"))
@@ -1173,7 +1119,6 @@ def _inject_si_prefix_nodes(graph, conn, quantity_id):
         if not prefixable_parts:
             return
 
-        # Identify the primary part for symbol rendering.
         primary_part_uid = None
         for part_uid, part_exp in parts:
             if part_exp > 0 and part_uid in prefixable:
@@ -1204,12 +1149,7 @@ def _inject_si_prefix_nodes(graph, conn, quantity_id):
 
 
 def _get_prefixable_base_units(conn):
-    """Compute the dict of prefixable SI base units from the database.
-
-    Returns a dict mapping unit IDs to their prefixable base: for most SI
-    base units this is the unit itself; for ``kilogram`` it is ``gram``
-    since kilogram already carries the kilo prefix.
-    """
+    """SI base units to their prefixable base; kilogram maps to gram."""
     result = {}
     rows = conn.execute(
         "SELECT id FROM unit WHERE is_base = 1 AND system = 'SI'"
@@ -1220,33 +1160,17 @@ def _get_prefixable_base_units(conn):
     result["gram"] = "gram"
     return result
 
-# Exponent of the actual SI base relative to the prefixable base;
 # kilogram is the SI base of mass even though prefixes attach to gram.
 SI_BASE_EXPONENT = {"gram": 3}
 
-# Exponents shown before the user expands the full list: base SI unit
-# (exp 0), kilo (exp 3), and milli (exp -3). Deca (1) and hecto (2) are
-# only visible by default when they have a database entry (e.g. hectare,
-# are for area); synthetic deca/hecto rows are collapsed.
+# Visible before expansion: base, kilo, milli. Deca/hecto are only shown
+# by default when a DB entry (hectare, are) exists; synthetic rows collapse.
 DEFAULT_VISIBLE_EXPONENTS = {0, 3, -3}
 
 
 def _si_prefix_rows(conn, system, quantity_id):
-    """Rows for the SI-prefix table: every SI-prefixed form of the
-    quantity's base unit (km, kilometre, 10^3, etc.) plus the
-    unprefixed base at 10^0.
-
-    Always returns rows for any quantity with units, even if no unit
-    is formally marked `is_base=1`. We fall back to
-    `select_base_unit_with_fallback` and, if that also returns None,
-    to the first unit of the quantity.
-
-    For compound bases (e.g. `metre_squared`, `metre_per_second`)
-    the table shows fully prefixed compound names and scaled values:
-    e.g. area "Square kilometer" 10^6, velocity "Kilometer per second"
-    10^3, volume "Kilometer cubed" 10^9.
-
-    Returns (rows, cgs_unit_id).
+    """Rows for every SI-prefixed form of a quantity's base unit, plus its
+    unprefixed base at 10^0. Returns (rows, cgs_unit_id).
     """
     locale = g.locale
     base = select_base_unit_with_fallback(conn, quantity_id, system)
@@ -1283,7 +1207,6 @@ def _si_prefix_rows(conn, system, quantity_id):
                 return (None, None)
             prefixed = []
 
-            # Add base entry at exp=0 first
             prefixed.append({
                 "id": base_id,
                 "exp": 0,
@@ -1298,14 +1221,9 @@ def _si_prefix_rows(conn, system, quantity_id):
                 exp = int(p["id"])
                 combined = localise(p["name"], locale) + base_name.lower()
                 sys_key, _ = system_field(exp)
-                # For simple units, the link target is always the base
-                # unit (e.g. /unit/metre) so the link wraps only the
-                # unit part of the joined prefix+unit name.
                 link_unit_id = base_id_for_link
                 prefix_sym = localise(p["symbol"], locale)
                 normalised_prefix = _normalise_prefix_symbol(prefix_sym, base_symbol)
-                # Split the prefix from the unit name so the link
-                # wraps only the unit part (e.g. "Kilo[meter]").
                 prefix_word = localise(p["name"], locale)
                 name_html = (
                     html_module.escape(prefix_word)
@@ -1330,16 +1248,14 @@ def _si_prefix_rows(conn, system, quantity_id):
 
         return make_prefix_rows(base_id, base_name, base_symbol), cgs_unit_id
 
-    # --- compound_unit base: compound-aware prefixing ---
     parts_with_prefix = parse_compound_unit_parts(base["unit"])
+    # compound_unit base: compound-aware prefixing
     parts = [(uid, exp) for uid, exp, _prefix in parts_with_prefix]
     if not parts:
         return None, None
 
-    # Find the natural prefix exponent of the base itself (e.g. kilogram
-    # is gram with prefix 3, so its natural exp in the SI prefix table is
-    # 3, not 0). When the primary part has a built-in prefix, the base
-    # entry should sit at that exp rather than at exp=0.
+    # The base itself can carry a built-in prefix (kilogram is gram with
+    # prefix 3), so the base row sits at that natural exp rather than exp=0.
     primary_part_uid = None
     primary_natural_exp = 0
     for uid, exp, prefix in parts_with_prefix:
@@ -1354,10 +1270,7 @@ def _si_prefix_rows(conn, system, quantity_id):
                 primary_natural_exp = prefix or 0
                 break
 
-    # Find prefixable parts and compute compound prefix exponent.
-    # The exponent used for scaling is the sum of POSITIVE exponents
-    # of prefixable parts (numerator parts). This matches SI prefixing
-    # convention: prefix the numerator unit(s).
+    # Compound prefix exponent = sum of positive (numerator) part exponents.
     prefixable_parts = []
     compound_prefix_exp = 0
     for part_uid, part_exp in parts:
@@ -1366,47 +1279,33 @@ def _si_prefix_rows(conn, system, quantity_id):
             prefixable_parts.append((part_uid, part_exp, pref_uid))
             if part_exp > 0:
                 compound_prefix_exp += part_exp
-    # Fallback: if no positive prefixable parts, use absolute of first prefixable part
     if compound_prefix_exp == 0 and prefixable_parts:
         compound_prefix_exp = abs(prefixable_parts[0][1])
 
     if not prefixable_parts:
-        # No prefixable parts (e.g. compound contains only non-base units like
-        # second, kelvin). There is no meaningful SI prefix table for the
-        # unprefixed base; skip the table entirely.
         return None, None
 
     def make_prefixed_name_func(prefix_name, locale):
-        """Return a function mapping unit_id -> prefixed name (only for primary part)."""
         def name_func(unit_id):
             if unit_id == primary_part_uid and unit_id in prefixable:
                 row = fetch_unit(conn, unit_id)
                 if row:
                     full = localise(row["name"], locale) or localise(row["name"], "en-us")
                     return prefix_name + full.lower()
-            # Non-primary part: return its normal name
             row = fetch_unit(conn, unit_id)
             if row:
                 return localise(row["name"], locale) or localise(row["name"], "en-us")
             return unit_id.replace("_", " ").title()
         return name_func
 
-    # Get the base compound name and symbol (unprefixed)
-    # base["unit"] is already a JSON string from the database
     from scifind_lib.units import format_compound_unit_html, format_compound_unit_symbol
     if base.get("name_overwrite") and primary_natural_exp == 0:
-        # For bases without a built-in prefix (e.g. metre_squared), use
-        # the human-friendly override directly.
+        # Unprefixed bases (metre_squared) use the human-friendly override.
         base_name = localise(base["name_overwrite"], locale) or localise(base["name_overwrite"], "en-us")
         if not base_name:
             base_name = base["id"].replace("_", " ").title()
     else:
-        # Render the name with the part-derived form so the prefix
-        # shows as plain text and each simple-unit part is a link
-        # (e.g. "Kilo[gram]" for kilogram, or "[Metre] squared" for
-        # metre_squared). The `prefix_name` callback supplies the
-        # localised prefix name (e.g. "Kilo"); `unit_url` makes the
-        # simple-unit part a clickable link.
+        # Part-derived form keeps the prefix as plain text and each part a link.
         base_name = format_compound_unit_html(
             base["unit"], locale=locale,
             prefix_name=_prefix_name_callback(locale),
@@ -1425,8 +1324,7 @@ def _si_prefix_rows(conn, system, quantity_id):
     def system_field(exp):
         return (None, None)
 
-    # Check for existing database entries that have SI prefixes applied
-    # (e.g. hectare, are for area). These should replace synthetic entries.
+    # DB entries with an applied prefix (hectare, are) replace synthetic rows.
     import json
     db_prefix_entries = {}  # prefix_exp -> db_entry
     for row in conn.execute(
@@ -1451,9 +1349,7 @@ def _si_prefix_rows(conn, system, quantity_id):
     prefixed = []
     db_entry_exps = set(db_prefix_entries.keys())
 
-    # Add base entry at its natural exp (e.g. kilogram = gram with prefix
-    # 3, so the base sits at exp=3, not exp=0). The base's own unit_id
-    # is used to identify it; value_latex uses the proper power of 10.
+    # Base row sits at its natural exp (e.g. kilogram at exp=3).
     if primary_natural_exp not in db_prefix_entries:
         prefixed.append({
             "id": base_id,
@@ -1461,24 +1357,18 @@ def _si_prefix_rows(conn, system, quantity_id):
             "symbol_latex": base_symbol_latex,
             "name": Markup(base_name),
             "system_key": "detail.si_base",
-            # The base's `name` already has inline links on each
-            # simple-unit part (e.g. "[Metre] squared"); leave
-            # `link_unit_id` unset so the template doesn't wrap the
-            # whole name in another <a>.
+            # name already links its simple-unit parts; don't wrap it again.
             "link_unit_id": None,
             "value_latex": f"10^{{{primary_natural_exp * compound_prefix_exp}}}",
         })
 
-    # When the base has a built-in prefix (e.g. kilogram at exp=3), also
-    # add an exp=0 row for the unprefixed simple unit (e.g. gram).
+    # A built-in prefixed base (kilogram, exp=3) also gets an exp=0 row for the unprefixed unit (gram).
     if primary_natural_exp != 0 and 0 not in db_entry_exps:
         unprefixed_json = json.dumps([
             {"unit": uid, "exponent": exp_val}
             for uid, exp_val in parts
         ])
-        # Render the name with inline links on each simple-unit part
-        # (e.g. "[Gram]"); leave `link_unit_id` unset so the template
-        # doesn't wrap the whole name in another <a>.
+        # The unprefixed name already links its parts; don't wrap it again.
         unprefixed_name = format_compound_unit_html(
             unprefixed_json, locale=locale,
             unit_name=_unit_name_callback(locale),
@@ -1501,7 +1391,6 @@ def _si_prefix_rows(conn, system, quantity_id):
     for p in fetch_si_prefixes(conn):
         exp = int(p["id"])
 
-        # Use database entry if it exists for this prefix
         if exp in db_prefix_entries:
             db_entry = db_prefix_entries[exp]
             from scifind_lib.units import format_compound_unit_html, format_compound_unit_symbol
@@ -1538,22 +1427,18 @@ def _si_prefix_rows(conn, system, quantity_id):
             })
             continue
 
-        # Skip synthetic entry for the base's natural exp — it's already
-        # added above as the base row (e.g. kilogram at exp=3).
+        # Skip the base's natural exp — already added above as the base row.
         if exp == primary_natural_exp:
             continue
 
-        # At exp=0 there is no prefix, so render the unprefixed form
-        # of the primary unit (e.g. "gram" for kilogram) instead of
-        # reusing the prefixed name from `name_func`.
+        # exp=0 has no prefix, so render the unprefixed primary unit directly.
         if exp == 0:
             unprefixed_parts = [(uid, exp_val) for uid, exp_val in parts]
             unprefixed_json = json.dumps([
                 {"unit": uid, "exponent": exp_val}
                 for uid, exp_val in unprefixed_parts
             ])
-            # Render the name without an inline link — the template wraps
-            # the whole name cell in its own <a> using `link_unit_id`.
+            # Template wraps the whole cell in its own <a> via `link_unit_id`.
             pref_name_html = Markup(format_compound_unit_html(
                 unprefixed_json, locale=locale,
                 unit_name=_unit_name_callback(locale),
@@ -1565,19 +1450,15 @@ def _si_prefix_rows(conn, system, quantity_id):
         else:
             prefix_name_val = localise(p["name"], locale)
             prefix_sym = localise(p["symbol"], locale)
-            # The base's `unit` JSON carries no prefix, so the parser
-            # never invokes `prefix_name`. Inject the prefix onto the
-            # primary part so the name renders e.g. "Kilometre squared",
-            # "Mega joule per second" instead of losing the prefix.
+            # base JSON carries no prefix, so inject it on the primary part
+            # to render "Kilometre squared" / "Mega joule per second".
             prefixed_parts = [
                 {"unit": uid, "exponent": exp_val, "prefix": exp}
                 if uid == primary_part_uid
                 else {"unit": uid, "exponent": exp_val}
                 for uid, exp_val in parts
             ]
-            # Render with `prefix_name` so the prefix shows as plain
-            # text and the unit name becomes a link (e.g. "Kilo[gram]"
-            # rather than "[Kilogram]").
+            # Prefix as plain text, unit name as a link.
             pref_name_html = Markup(format_compound_unit_html(
                 json.dumps(prefixed_parts), locale=locale,
                 unit_name=_unit_name_callback(locale),
@@ -1589,9 +1470,7 @@ def _si_prefix_rows(conn, system, quantity_id):
             )
 
         sys_key, _ = system_field(exp)
-        # The inline link in `pref_name_html` (e.g. "Kilo<a>gram</a>")
-        # provides navigation; setting `link_unit_id` to None prevents
-        # the template from wrapping the entire name in another <a>.
+        # pref_name_html already links; don't let the template wrap it again.
         link_unit_id = None
         compound_value_exp = exp * compound_prefix_exp
         prefixed.append({
@@ -1605,8 +1484,8 @@ def _si_prefix_rows(conn, system, quantity_id):
         })
 
     for r in prefixed:
-        # DB-overwritten entries (hectare, are, etc.) are always visible.
-        # Synthetic prefixed entries follow DEFAULT_VISIBLE_EXPONENTS.
+        # DB entries (hectare, are) are always visible; synthetic ours follow
+        # DEFAULT_VISIBLE_EXPONENTS.
         is_db_entry = r["exp"] in db_entry_exps
         r["collapsed"] = (not is_db_entry) and (r["exp"] not in DEFAULT_VISIBLE_EXPONENTS)
         r["payload_id"] = r["id"] or base_id or "si_base"
@@ -1624,9 +1503,7 @@ def inject_globals():
         conn = get_db()
     except sqlite3.OperationalError as exc:
         logger.warning("Database unavailable: %s", exc)
-    # Validate the unit reference graph: any unit that has no path to a
-    # root (cycle or orphan) is a hard-stop error. The app refuses to
-    # serve pages until the seed is fixed.
+    # A unit with no path to a root (cycle or orphan) is a hard-stop error.
     if conn is not None:
         from scifind_lib.conversion import UnitGraphError, validate_graph
         try:
@@ -1801,7 +1678,6 @@ def _items_from_tokens(conn, tokens):
 
 
 def _format_constant_value(value):
-    """Compact LaTeX for a constant's numerical value (matches _constant_value_display)."""
     if value is None:
         return ""
     d = _constant_value_display(value)
@@ -1812,11 +1688,10 @@ def _format_constant_value(value):
 
 
 def _constant_value_display(value):
-    """Split a constant's value for the big display box.
+    """Split a value into {sign, int, dec, exp} for the big display box.
 
-    Returns {sign, int, dec, exp}: integer digits shown large, `dec`
-    digits shrink progressively, values too large or small are
-    normalised to a 10^exp factor (mantissa in [1, 10)).
+    Large/small magnitudes are normalised to a mantissa in [1, 10) plus
+    a 10^exp factor, so the integer digits stay readable.
     """
     v = float(value)
     sign = "-" if v < 0 else ""
@@ -1836,12 +1711,8 @@ def _constant_value_display(value):
 
 
 def _constant_value_latex(display):
-    """LaTeX for the big display box, rendered by KaTeX on the client.
-
-    Sign + integer part, the decimal mark and every decimal digit carry
-    \\htmlClass wrappers (.cv-int/.cv-dot/.cv-dec) so the client
-    fit/fade layout can measure them and anchor the fade at the end of
-    the mantissa.
+    """LaTeX for the big display box; `\\htmlClass` wrappers let the client
+    measure the mantissa and fade trailing digits.
     """
     parts = [
         "\\htmlClass{cv-int}{" + display["sign"] + (display["int"] or "0") + "}"
@@ -1859,12 +1730,7 @@ def _constant_value_latex(display):
 
 
 def _constant_units_table(conn, c, system):
-    """Rows for the constant's per-unit value table.
-
-    Each row holds the constant's value converted to a different unit,
-    computed by walking the unit reference graph (no fixed (factor,
-    offset) columns). The constant's preferred unit appears first.
-    """
+    """Per-unit value rows for a constant, converting via the unit graph; preferred unit first."""
     si_value = c.get("value")
     rq_id = c.get("quantity_id")
     if si_value is None or not rq_id:
@@ -1921,7 +1787,6 @@ def _constant_units_table(conn, c, system):
 
 
 def _constant_detail_item(conn, item, locale):
-    """Detail-table entry for one constant token."""
     cid = item.get("constant_id")
     if not cid:
         return None

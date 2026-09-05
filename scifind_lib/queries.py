@@ -89,10 +89,7 @@ def render_variable_symbol(item, locale="en-us"):
 
 
 def expand_quantity_markers(text):
-    """Replace [quantity_id] or [quantity_id|display_text] markers with <a> links.
-
-    Text outside markers is HTML-escaped; only marker positions become anchors.
-    """
+    """Replace [quantity_id] or [quantity_id|display_text] markers with <a> links."""
     placeholder_re = re.compile(r"\[\s*\S[^\]]*\]")
     segments = []
     last = 0
@@ -310,20 +307,14 @@ def fetch_unit(conn, unit_id):
 
 
 def fetch_si_prefixes(conn):
-    """All SI prefixes, largest exponent first. The id column carries
-    the exponent as a string (e.g. '3' for kilo, '-3' for milli); the
-    caller parses it to int when needed."""
+    """All SI prefixes, largest exponent first; id is the exponent as a string."""
     return conn.execute(
         "SELECT id, name, symbol FROM si_prefix ORDER BY CAST(id AS INTEGER) DESC"
     ).fetchall()
 
 
 def fetch_all_quantities(conn):
-    """All quantities with dimension columns, base dimensions first.
-
-    Hidden quantities (backing a constant's dim_* columns only) are
-    excluded via the `quantity.hidden` column.
-    """
+    """All quantities with dimension columns, base first; hidden backing rows excluded."""
     from scifind_lib.sorting import sort_quantities_base_first
     quantity_rows = conn.execute(
         f"""

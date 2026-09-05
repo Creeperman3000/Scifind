@@ -22,8 +22,6 @@
      keeps half-typed expressions like "-" from looking like a filter. */
   function dimResolved(v) { return evalDimExpr(v) !== null; }
 
-  /* Recursive-descent parser for integer arithmetic ("2+3*-4", "2^10",
-     "-(1+5)/2"). Returns the integer result or null on any error. */
   function evalDimExpr(raw) {
     var s = String(raw == null ? '' : raw).replace(/\s+/g, '');
     if (!s || !/^[-+*/%^().0-9]+$/.test(s)) return null;
@@ -216,7 +214,6 @@
     }
     try {
       var display = el.classList.contains('formula-eqn');
-      /* The big constant value embeds per-digit \htmlClass hooks. */
       var needsFitLayout = el.classList.contains('const-value');
       var opts = {
         displayMode: display,
@@ -770,12 +767,10 @@
         var curTxt = select.options[sel] ? select.options[sel].textContent.trim() : '';
         label.textContent = curTxt;
 
-        /* Size the trigger to the widest option's full layout (label +
-           chevron + padding + gap) so the menu (min-width: 100%) matches
-           exactly. The trigger's <i data-lucide> hasn't been swapped for
-           an <svg> yet at this point, so we build a probe with a real
-           chevron <svg> matching Lucide's output and let the browser
-           compute the width — no hardcoded constants. */
+        /* Size the trigger to the widest option (label + chevron + padding +
+           gap) so the menu's min-width:100% matches. The <i data-lucide>
+           isn't swapped for an <svg> yet, so probe with a real chevron
+           <svg> and let the browser compute the width. */
         var widestText = curTxt;
         for (var j = 0; j < select.options.length; j++) {
           var t = select.options[j].textContent.trim();
@@ -1197,10 +1192,8 @@
     }
   }
 
-/* ---------- Units table: switchable reference unit ----------
-     On /quantity/<id> and /unit/<id> the conversion cells are rendered
-     server-side; clicking a different reference unit row swaps each
-     cell's pre-computed LaTeX (no math runs on the client). */
+/* Conversion cells are rendered server-side; picking a different
+     reference row just swaps the pre-computed LaTeX (no client math). */
 
   function _setUnitsCell(td, latex) {
     if (latex === null || latex === undefined) { td.innerHTML = '&ndash;'; return; }
@@ -1231,8 +1224,6 @@
     });
   }
 
-  /* Mark the reference row and refresh every conversion cell in the
-     section's two tables (registered units + SI prefixes). */
   function _syncUnitsSection(sec) {
     var st = sec._unitsState;
     if (!st) return;
@@ -1259,8 +1250,7 @@
     var sec = table.closest('.detail-section');
     var dataEl = sec && sec.querySelector('script.units-table-data');
     if (!dataEl) return;
-    /* Both tables of a section (registered units + SI prefixes) share
-       one reference-unit state, so a pick in either header drives both. */
+    /* Both tables of a section share one reference-unit state, so a pick in either drives both. */
     if (!sec._unitsState) {
       var data;
       try { data = JSON.parse(dataEl.textContent); } catch (e) { return; }
@@ -1270,8 +1260,7 @@
       var entries = (data.entries || []).concat(data.si_entries || []);
       entries.forEach(function(e) {
         latex_by_ref[e.id] = e.latex_by_ref || {};
-        // Strip any HTML from the label so it can be safely inserted
-        // as text content in the "Conversion to: <unit>" header.
+        // Strip HTML from the label for the "Conversion to: <unit>" header.
         var raw = e.label || e.name || e.id;
         var tmp = document.createElement('div');
         tmp.innerHTML = raw;
@@ -1331,7 +1320,6 @@
     }
   }
 
-  /* Tables arrive via full page load or SPA content swaps */
   (function() {
     var mc = document.getElementById('main-content');
     if (!mc || typeof MutationObserver === 'undefined') return;
@@ -1977,13 +1965,10 @@
   window._initLatexObserver = function() {
     if (typeof katex !== 'undefined') observeLatexIn(document.querySelector('#main-content'));
   };
-  /* Big constant display: the whole value is KaTeX, with the integer
-     part, decimal mark and each decimal digit wrapped server-side in
-     \htmlClass (.cv-int/.cv-dot/.cv-dec). Hide trailing decimals until
-     the rectangle fits, then fade them out with a real gradient mask
-     anchored at the mantissa's right edge (the \times10^ factor stays
-     fully opaque). Fully recomputed on every call; hiding instead of
-     deleting lets resizes bring trimmed digits straight back. */
+  /* Big constant display: integer/dot/digits are \htmlClass-wrapped server-side.
+     Hide trailing decimals until the box fits, then fade them via a gradient
+     mask anchored at the mantissa's right edge so the \times10^ stays opaque.
+     Hiding (not deleting) lets resizes bring trimmed digits back. */
   function layoutConstantValues() {
     document.querySelectorAll('.constant-box').forEach(function(box) {
       var val = box.querySelector('.const-value');
@@ -1991,12 +1976,10 @@
       var decs = Array.prototype.slice.call(val.querySelectorAll('.cv-dec'));
       var dot = val.querySelector('.cv-dot');
       if (!decs.length && !dot) return;
-      /* Restore so resizes recover hidden digits. */
       decs.forEach(function(sp) { sp.style.display = ''; });
       if (dot) dot.style.display = '';
       val.style.maskImage = '';
       val.style.webkitMaskImage = '';
-      /* Hide trailing decimals while the box overflows. */
       var guard = decs.length + 1;
       while (box.scrollWidth > box.clientWidth && guard-- > 0) {
         var last = null;
@@ -2008,8 +1991,6 @@
       }
       var visible = decs.filter(function(sp) { return sp.style.display !== 'none'; });
       if (dot) dot.style.display = visible.length ? '' : 'none';
-      /* Anchor the fade at the end of the mantissa so the \times10^ factor
-         stays outside the gradient band. */
       var anchor = null;
       if (visible.length) {
         anchor = visible[visible.length - 1];
@@ -2024,8 +2005,7 @@
       if (!vRect.width || mantEnd <= 0) return;
       var fadeW = Math.max(40, Math.min(mantEnd * 0.25, 160));
       var solid = Math.max(mantEnd - fadeW, 0);
-      /* Fade to nothing at the mantissa edge, then back to opaque just
-         before the exponent so only digits ever dissolve. */
+      /* Digits dissolve; the exponent restores to opaque after the band. */
       var grad = 'linear-gradient(90deg, #000 0, #000 ' + solid.toFixed(1) +
                  'px, transparent ' + (mantEnd + 1).toFixed(1) + 'px';
       var timesEl = val.querySelector('.cv-times');
@@ -2038,7 +2018,7 @@
     });
   }
   function recheckConstantValues() {
-    /* Defer two RAFs so layout settles after KaTeX writes new DOM. */
+    /* Two RAFs so layout settles after KaTeX writes new DOM. */
     requestAnimationFrame(function() {
       requestAnimationFrame(function() { layoutConstantValues(); });
     });
@@ -2274,8 +2254,7 @@
         if (!newContent) { window.location.href = url; return; }
         document.getElementById('main-content').innerHTML = newContent.innerHTML;
         Array.from(document.getElementById('main-content').querySelectorAll('script')).forEach(function(oldScript) {
-          /* Only re-execute real JS; leave data blocks (e.g. the units
-             table payload) untouched so their type/class survive. */
+          /* Re-execute real JS only; leave data blocks (units table payload) untouched. */
           var t = (oldScript.getAttribute('type') || '').toLowerCase();
           if (t && t !== 'text/javascript' && t !== 'application/javascript' && t !== 'module') return;
           var newScript = document.createElement('script');

@@ -96,10 +96,8 @@ def _collect_qid_dimensions(conn):
         r["id"]: [r[c] for c in dimension_columns()]
         for r in conn.execute(f"SELECT id, {', '.join(dimension_columns())} FROM quantity")
     }
-    # Constants whose quantity_id resolves a known quantity inherit that
-    # quantity's dimensions in the dim walker. e.g. `standard_gravity` is a
-    # constant referencing the `acceleration` quantity, so it contributes
-    # acceleration's dims rather than zero.
+    # Constants whose quantity_id resolves a known quantity inherit its
+    # dimensions (standard_gravity -> acceleration) instead of contributing zero.
     for r in conn.execute(
         "SELECT id, quantity_id FROM constant WHERE quantity_id IS NOT NULL"
     ):
@@ -113,12 +111,10 @@ class DimensionMismatchError(ValueError):
 
 
 def _walk_dimensions(node, qid_to_dims, dims):
-    """Sum the dimensional exponents of every quantity under `node` into `dims`.
+    """Sum the dimensional exponents of every quantity under `node`.
 
-    Performs an explicit-stack iterative walk so deeply nested formulas
-    cannot blow Python's recursion limit. Raises ``DimensionMismatchError`` for
-    structurally invalid forms (e.g. a non-numeric exponent, mismatched
-    ``+``/``-`` operand dimensions, trig on a dimensional argument).
+    Explicit-stack iterative walk so deep formulas can't blow the recursion
+    limit; raises `DimensionMismatchError` on structurally invalid forms.
     """
     stack = [(node, False)]
     while stack:
@@ -253,10 +249,7 @@ def compute_rpn_dimensions(conn, tokens):
 
 
 def compute_compound_unit_dimensions(conn, compound_unit_json):
-    """Base-dimension exponents for a `compound_unit.unit` JSON string.
-
-    Zeros for absent/unparseable input; each unit contributes its
-    quantity's exponents scaled by the JSON exponent."""
+    """Base-dimension exponents for a `compound_unit.unit` JSON string (zeros unparseable)."""
     total = [0] * len(dimension_columns())
     unit_qty = {r["id"]: r["quantity_id"]
                 for r in conn.execute("SELECT id, quantity_id FROM unit")}
@@ -288,9 +281,8 @@ def format_dimension_number(n):
 def build_dimension_symbol_triplet(conn):
     """(variable_map, unit_map, dim_map) for the dimension display.
 
-    `unit_map` is the SI base symbol of each base dimension (e.g. `kg` for
-    mass, `m²` for area) — whichever `unit` or `compound_unit` row carries
-    `is_base=1` for the base quantity in the SI system.
+    `unit_map` uses the SI base symbol for each base dimension (kg, m², …),
+    i.e. the row carrying `is_base=1` for the base quantity in the SI system.
     """
     from scifind_lib.units import format_compound_unit_symbol, select_base_unit
     qty_rows = conn.execute(
