@@ -2,7 +2,6 @@
 
 import json
 import logging
-import re
 
 from scifind_lib.constants import _LOCALE_DIR
 
@@ -109,3 +108,10 @@ def wrap_symbol_in_latex(symbol):
     if s.startswith("\\mathrm{") and s.endswith("}"):
         return s + trailing
     return f"\\mathrm{{{s}}}" + trailing
+
+
+def with_subscript(sym, label):
+    """Append a `_{label}` subscript unless the symbol already carries one."""
+    if label and "_" not in sym:
+        return sym + "_{" + label + "}"
+    return sym

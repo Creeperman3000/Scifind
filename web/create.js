@@ -4,8 +4,6 @@
   'use strict';
 
   const $ = (id) => document.getElementById(id);
-  const esc = (s) => String(s == null ? '' : s)
-    .replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const csrfHeader = window._csrfToken ? { 'X-CSRF-Token': window._csrfToken } : {};
   function postForm(url, fd) {
     if (window._csrfToken && !fd.has('_csrf_token')) fd.set('_csrf_token', window._csrfToken);
@@ -20,7 +18,6 @@
   };
 
   const renderMathIn = (el) => { try { renderMathInElement(el,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],macros:window._KATEX_MACROS||{}}); } catch(e) {} };
-  const refreshIcons = () => { if (typeof lucide !== 'undefined') lucide.createIcons(); };
   const refreshMath = () => { if (typeof renderMathInContent === 'function') renderMathInContent(); };
   const copyText = (text, label) => {
     if (!(navigator.clipboard && navigator.clipboard.writeText)) return;
@@ -40,10 +37,9 @@
   }
   const varTableHead = () => '<thead><tr>' +
     [t('detail.quantity'), t('create.column_symbol_override'), t('create.column_name_override')]
-      .map((h) => '<th>' + esc(h) + '</th>').join('') + '</tr></thead>';
+      .map((h) => '<th>' + escapeHtml(h) + '</th>').join('') + '</tr></thead>';
   function setHTML(el, html) {
     el.innerHTML = typeof html === 'string' ? html : '';
-    refreshMath();
     if (el) renderMathIn(el);
     refreshIcons();
   }
@@ -86,15 +82,15 @@
   function overrideRow(key, symbol, displayName, alias, form, namePrefix, opts, occ) {
     const symCell = symbol ? '<span class="qty-symbol"></span>' : '';
     const occTag = occ ? ' <span class="qty-occ">#' + occ + '</span>' : '';
-    const cellBody = symCell + ' ' + esc(displayName) + (alias ? '[' + esc(alias) + ']' : '') + occTag;
+    const cellBody = symCell + ' ' + escapeHtml(displayName) + (alias ? '[' + escapeHtml(alias) + ']' : '') + occTag;
     const input = (field) => {
       const seed = (opts && opts[field]) || {};
-      return '<input data-field="' + field + '" form="' + form + '" name="' + namePrefix + '[' + esc(key) + '][' + field + ']"'
-        + ' placeholder="' + esc(seed.placeholder || '') + '"'
-        + (seed.value ? ' value="' + esc(seed.value) + '"' : '')
+      return '<input data-field="' + field + '" form="' + form + '" name="' + namePrefix + '[' + escapeHtml(key) + '][' + field + ']"'
+        + ' placeholder="' + escapeHtml(seed.placeholder || '') + '"'
+        + (seed.value ? ' value="' + escapeHtml(seed.value) + '"' : '')
         + ' class="text-field">';
     };
-    return '<tr data-symbol="' + esc(symbol) + '" data-key="' + esc(key) + '">'
+    return '<tr data-symbol="' + escapeHtml(symbol) + '" data-key="' + escapeHtml(key) + '">'
       + '<td class="qty-sym-cell">' + cellBody + '</td>'
       + '<td>' + input('symbol') + '</td>'
       + '<td>' + input('name') + '</td>'
@@ -180,14 +176,14 @@
         .then((data) => {
           if (seq !== previewSeq) return;
           if (data.error) {
-            $('formula-math').innerHTML = '<span class="formula-error">' + esc(data.error) + '</span>';
+            $('formula-math').innerHTML = '<span class="formula-error">' + escapeHtml(data.error) + '</span>';
             $('formula-tex').textContent = '';
-            dimEl.innerHTML = esc(t('detail.dimensions')) + ': <span class="dim-latex">$\\varnothing$</span>';
+            dimEl.innerHTML = escapeHtml(t('detail.dimensions')) + ': <span class="dim-latex">$\\varnothing$</span>';
           } else if (data.latex) {
             renderPreviewLaTeX(data.latex);
             const dimLatex = data.dim_latex || '\\varnothing';
             const muted = !eq.trim() || dimLatex === '\\varnothing';
-            dimEl.innerHTML = esc(t('detail.dimensions')) + ': <span class="dim-latex"></span>';
+            dimEl.innerHTML = escapeHtml(t('detail.dimensions')) + ': <span class="dim-latex"></span>';
             dimEl.style.opacity = muted ? '0.6' : '';
             if (typeof katex !== 'undefined') katex.render(dimLatex, dimEl.querySelector('.dim-latex'), { displayMode: false, throwOnError: false });
           } else {
@@ -202,7 +198,6 @@
         })
         .catch((err) => {
           if (seq !== previewSeq) return;
-          console.error('preview failed:', err);
           showToast(t('create.preview_failed', 'Preview failed') + ': ' + err.message, 'error');
         });
     }, 200);
@@ -275,10 +270,6 @@
     const e = flow.availableLanguages.find((l) => l.code === code);
     return e ? e.name : code;
   }
-  function substituteTemplate(str, replacements) {
-    return String(str).replace(/\{(\w+)\}/g, (m, k) => (k in replacements ? replacements[k] : m));
-  }
-
   function validateEnglishFields() {
     const fields = [
       ['name_en', 'create.name'],
@@ -305,7 +296,7 @@
   function setActions(html) { $('modal-actions').innerHTML = html; }
   function backButtonHtml() {
     return '<button class="btn-ghost btn-sm" type="button" data-action="flow-back">' +
-      esc(t('create.back', 'Back')) + '</button>';
+      escapeHtml(t('create.back', 'Back')) + '</button>';
   }
 
   function renderPickPage(page) {
@@ -315,34 +306,32 @@
     let rows = '';
     for (const lang of flow.availableLanguages) {
       const isEn = lang.code === 'en-us';
-      const id = 'lang-' + esc(lang.code);
+      const id = 'lang-' + escapeHtml(lang.code);
       const checked = (isEn || selected.has(lang.code)) ? ' checked' : '';
       const disabled = isEn ? ' disabled' : '';
       rows +=
         '<label class="lang-row" for="' + id + '">' +
-        '<input type="checkbox" id="' + id + '" data-lang-code="' + esc(lang.code) + '"' + checked + disabled + '>' +
+        '<input type="checkbox" id="' + id + '" data-lang-code="' + escapeHtml(lang.code) + '"' + checked + disabled + '>' +
         '<span class="lang-cb"></span>' +
-        '<span class="lang-name">' + esc(lang.name) + '</span>' +
-        '<span class="lang-code">(' + esc(lang.code) + ')</span>' +
+        '<span class="lang-name">' + escapeHtml(lang.name) + '</span>' +
+        '<span class="lang-code">(' + escapeHtml(lang.code) + ')</span>' +
         '</label>';
     }
     setStep(
-      '<p class="detail-desc">' + esc(hint) + '</p>' +
+      '<p class="detail-desc">' + escapeHtml(hint) + '</p>' +
       '<div class="lang-picker" id="lang-picker">' + rows + '</div>'
     );
     setActions(
       '<button class="btn-primary btn-sm" type="button" data-action="flow-pick-langs-continue">' +
-        esc(t('create.continue', 'Continue')) +
+        escapeHtml(t('create.continue', 'Continue')) +
       '</button>'
     );
   }
 
   function renderTranslatePage(page) {
     const code = page.code;
-    setTitle(substituteTemplate(
-      t('create.translate_heading', 'Translate to {lang}'),
-      { lang: langName(code) + ' (' + code + ')' }
-    ));
+    setTitle(t('create.translate_heading', 'Translate to {lang}')
+      .replace('{lang}', langName(code) + ' (' + code + ')'));
     const prior = flow.translations[code] || {};
     const occ = occurrenceIndices(flow.variables);
     let qtyRows = '';
@@ -369,15 +358,15 @@
     const enName = ($('name_en').value || '').trim();
     const enDesc = ($('description').value || '').trim();
     const copyBtn = (field) =>
-      '<button class="filter-btn" type="button" data-tr-copy="' + field + '" data-tr-copy-label="' + esc(t('create.' + field, field)) + '" title="' + esc(t('create.copy_from_english', 'Copy from English')) + '">' +
+      '<button class="filter-btn" type="button" data-tr-copy="' + field + '" data-tr-copy-label="' + escapeHtml(t('create.' + field, field)) + '" title="' + escapeHtml(t('create.copy_from_english', 'Copy from English')) + '">' +
       '<i data-lucide="copy" width="16" height="16"></i></button>';
     setStep(
       '<div class="translate-form">' +
-        '<div class="detail-desc"><div class="tr-label-row"><span>' + esc(t('create.name')) + '</span>' + copyBtn('name') + '</div>' +
-        '<input data-tr-field="name" name="tr[' + code + '][name]" class="text-field" autocomplete="off" placeholder="' + esc(enName) + '" value="' + esc(prior.name || '') + '">' +
+        '<div class="detail-desc"><div class="tr-label-row"><span>' + escapeHtml(t('create.name')) + '</span>' + copyBtn('name') + '</div>' +
+        '<input data-tr-field="name" name="tr[' + code + '][name]" class="text-field" autocomplete="off" placeholder="' + escapeHtml(enName) + '" value="' + escapeHtml(prior.name || '') + '">' +
         '</div>' +
-        '<div class="detail-desc"><div class="tr-label-row"><span>' + esc(t('create.description')) + '</span>' + copyBtn('description') + '</div>' +
-        '<textarea data-tr-field="description" name="tr[' + code + '][description]" class="text-field auto-grow" rows="2" spellcheck="false" placeholder="' + esc(enDesc) + '">' + esc(prior.description || '') + '</textarea>' +
+        '<div class="detail-desc"><div class="tr-label-row"><span>' + escapeHtml(t('create.description')) + '</span>' + copyBtn('description') + '</div>' +
+        '<textarea data-tr-field="description" name="tr[' + code + '][description]" class="text-field auto-grow" rows="2" spellcheck="false" placeholder="' + escapeHtml(enDesc) + '">' + escapeHtml(prior.description || '') + '</textarea>' +
         '</div>' +
         qtyTable +
       '</div>'
@@ -385,7 +374,7 @@
     setActions(
       backButtonHtml() +
       '<button class="btn-primary btn-sm" type="button" data-action="flow-translate-continue">' +
-        esc(t('create.continue', 'Continue')) +
+        escapeHtml(t('create.continue', 'Continue')) +
       '</button>'
     );
 
@@ -396,7 +385,7 @@
 
   function renderSqlPage(page) {
     setTitle('');
-    setStep('<h3>' + esc(t('create.formula_insert')) + '</h3><div id="sql-formula-wrap"></div><h3>' + esc(t('create.token_inserts')) + '</h3><div id="sql-token-wrap"></div>');
+    setStep('<h3>' + escapeHtml(t('create.formula_insert')) + '</h3><div id="sql-formula-wrap"></div><h3>' + escapeHtml(t('create.token_inserts')) + '</h3><div id="sql-token-wrap"></div>');
 
     const fd = buildFinalFormData();
     postForm('/create/build-sql', fd)
@@ -420,8 +409,8 @@
         flow.issueUrl = buildIssueUrl();
         setActions(
           backButtonHtml() +
-          '<a class="btn-primary btn-sm" id="open-issue-link" target="_blank" rel="noopener noreferrer" href="' + esc(flow.issueUrl) + '" data-action="open-issue">' +
-            esc(t('create.translate_open_issue', 'Open GitHub issue')) +
+          '<a class="btn-primary btn-sm" id="open-issue-link" target="_blank" rel="noopener noreferrer" href="' + escapeHtml(flow.issueUrl) + '">' +
+            escapeHtml(t('create.translate_open_issue', 'Open GitHub issue')) +
           '</a>'
         );
       })
@@ -544,14 +533,6 @@
   }
 
   document.addEventListener('click', (e) => {
-    const toggleEl = e.target.closest('[data-action="toggle-sidebar-left"], [data-action="toggle-sidebar-right"]');
-    if (!toggleEl) return;
-    e.stopImmediatePropagation();
-    const side = toggleEl.dataset.action === 'toggle-sidebar-left' ? 'left' : 'right';
-    if (typeof window.toggleSidebar === 'function') window.toggleSidebar(side);
-  }, true);
-
-  document.addEventListener('click', (e) => {
     const tokenItem = e.target.closest('.qty-result[data-insert]');
     if (tokenItem) { insertAtCursor(tokenItem.dataset.insert); return; }
 
@@ -602,10 +583,6 @@
         const page = currentPage();
         if (page && page.kind === 'translate') captureTranslationForm(page.code);
         popPage();
-        break;
-      }
-      case 'open-issue': {
-        if (flow.issueUrl) window.open(flow.issueUrl, '_blank', 'noopener,noreferrer');
         break;
       }
       case 'copy-formula-sql':

@@ -1,5 +1,6 @@
 """Shared paths, base-dimension order, superscript digit map."""
 
+import re
 from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
@@ -18,3 +19,10 @@ _BASE_DIMENSION_QTY_IDS = {
 }
 
 SUPERSCRIPT_DIGITS = str.maketrans("0123456789-", "⁰¹²³⁴⁵⁶⁷⁸⁹⁻")
+
+SLUG_RE = r"[a-z0-9]+(?:_[a-z0-9]+)*"
+
+
+def is_slug(value):
+    """True if `value` is a lowercase snake_case identifier."""
+    return isinstance(value, str) and re.fullmatch(SLUG_RE, value) is not None

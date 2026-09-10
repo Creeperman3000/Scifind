@@ -110,15 +110,12 @@ exponents in fixed order M, L, T, I, Θ, N, J.
 | `quantity_id` | TEXT | FK → quantity.id |
 | `system` | TEXT | `SI`, `CGS`, `Imperial`, or NULL (= any) |
 | `is_base` | INTEGER | 1 marks the quantity's primary unit (or one of them per system) |
-| `reference_unit_id` | TEXT | FK → unit / compound_unit.id, NULL = root |
+| `reference_unit_id` | TEXT | ID into `unit`, or a `compound_unit` slug (no DB-level constraint; `validate_graph` in `conversion.py` checks reachability at runtime), NULL = root |
 | `factor` | REAL | Multiplicative scaling |
 | `is_factor_reciprocal` | INTEGER | 1 means the row's relation is `x_ref = x_row / factor` (e.g. `1 inch = 1/12 ft`); 0 means the factor is direct |
 | `constant_id` | TEXT | FK → constant.id; the constant scales `factor` (`mul`/`div`) or offsets the reference value (`add`/`sub`) |
 | `constant_operator_id` | TEXT | `mul` (default), `div`, `add`, or `sub` — how `constant_id` combines with the factor (`add`/`sub` used for temperature absolute zero) |
 | `offset` | REAL | Additive offset (default 0) |
-
-`compound_unit` shares these factor/constant/offset columns (plus its
-`unit`, `name_overwrite`, `symbol_overwrite` columns).
 
 The reference graph is affine:
 
@@ -131,14 +128,29 @@ where `mul`/`div` scale F by the constant value and `add`/`sub` shift the
 reference value by it (its sign positive for `add`, negative for `sub`),
 e.g. `1 °F`: F=5/9 sub 273.15 offset 459.67 → `x_C = (5/9)(x_F − 32)`.
 
+## `compound_unit`
+
+Some values like `id` and `name` of `compound_unit` values are derived from `unit`.
+
+| Column             | Type    | Description                                                                                      |
+| ------------------ | ------- | ------------------------------------------------------------------------------------------------ |
+| `quantity_id`      | TEXT    | FK → quantity.id; first half of the primary key                                                  |
+| `name_overwrite`   | TEXT    | JSON i18n override of the auto-derived name                                                      |
+| `symbol_overwrite` | TEXT    | LaTeX override; NULL means derive from the `unit` parts                                          |
+| `unit`             | TEXT    | JSON array `[{"unit":"<id>","prefix":<int>,"exponent":<n>},...]`; second half of the primary key |
+| `system`           | TEXT    | `SI`, `CGS`, `Imperial`, or NULL (= any)                                                         |
+| `is_base`          | INTEGER | 1 marks the quantity's primary compound (or one of them per system)                              |
+
+A compound's value derives from its `unit` parts.
+
 ## `si_prefix`
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | TEXT | Primary key (`k`, `M`, `\mu`, ...) |
-| `symbol` | TEXT | LaTeX display prefix, prepended to the unit symbol |
-| `name` | TEXT | JSON i18n prefix name, prepended to the unit name |
-| `exponent` | INTEGER | Power of ten: kilo=3, centi=-2 |
+| Column     | Type    | Description                                        |
+| ---------- | ------- | -------------------------------------------------- |
+| `id`       | TEXT    | Primary key (`k`, `M`, `\mu`, ...)                 |
+| `symbol`   | TEXT    | LaTeX display prefix, prepended to the unit symbol |
+| `name`     | TEXT    | JSON i18n prefix name, prepended to the unit name  |
+| `exponent` | INTEGER | Power of ten: kilo=3, centi=-2                     |
 
 ## Seed Data
 

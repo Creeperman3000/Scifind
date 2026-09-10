@@ -2,7 +2,6 @@
 
 (function() {
   'use strict';
-
   function showToast(message, type) {
     var container = document.getElementById('toast-container');
     var t = document.createElement('div');
@@ -199,7 +198,6 @@
     _dimNameState.hidden = shouldHide;
     rows.forEach(function(row) { row.classList.toggle('no-dim-name', shouldHide); });
   }
-  window.updateDimNameFits = updateDimNameFits;
 
   var _latexObserver = null;
   var _latexObserved = new WeakSet();
@@ -228,7 +226,6 @@
       if (needsFitLayout) recheckConstantValues();
     } catch (e) { /* leave for retry */ }
   }
-  window.renderLatexEl = renderLatexEl;
 
   function renderLatexIn(el) {
     if (!el || typeof katex === 'undefined') return;
@@ -277,787 +274,352 @@
       try { renderMathInElement(root, {
         delimiters: [{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],
         macros: window._KATEX_MACROS || {}
-      }); } catch(e) { console.warn('renderMathInElement error', e); }
+      });       } catch(e) { /* best-effort: KaTeX auto-render may retry later */ }
     }
   }
   window.renderMathInContent = renderMathInContent;
 
-  /* ---------- Topic tree (infinite-tree) ---------- */
-
-  var _treeEl = document.getElementById('science-tree');
-  var _topicTree = null;
-  var _topicTreeMode = null;
-
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, function(c) {
-      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
-    });
-  }
-
-  /* Fully checked = checked and not indeterminate (partial subtree) */
-  function isNodeChecked(node) {
-    return !!node.state.checked && !node.state.indeterminate;
-  }
-
-  /* Recursively true when any ancestor is indeterminate. Used so that
-     the whole partial-checked subtree keeps its checkboxes visible,
-     matching the old jstree "undetermined-parent" behaviour. */
-  function isUnderIndet(node) {
-    for (var p = node.parent; p && p.state.depth >= 0; p = p.parent) {
-      if (p.state.indeterminate) return true;
+  /* Run fn now if KaTeX already loaded, else once .katex-ready lands. */
+  function onKatexReady(fn) {
+    if (typeof katex !== 'undefined' || document.documentElement.classList.contains('katex-ready')) {
+      fn();
+      return;
     }
-    return false;
-  }
-
-  function topicTreeRow(node) {
-    var s = node.state;
-    var branch = node.hasChildren();
-    var cls = 'tree-row ' + (branch ? (s.open ? 'open' : 'closed') : 'leaf');
-    if (s.indeterminate) cls += ' indeterminate';
-    else if (s.checked) cls += ' checked';
-    if (s.selected) cls += ' selected';
-    /* Root-level rows, indeterminate rows and their descendants always
-       show their control (matches the old jstree behaviour where root
-       boxes and undetermined-ancestor subtrees never faded out). */
-    if (s.depth === 0 || s.indeterminate || isUnderIndet(node)) cls += ' always-visible';
-    var html = '<div class="' + cls + '" data-id="' + escapeHtml(node.id) + '"' +
-      ' data-depth="' + s.depth + '" style="padding-left:' + (s.depth * 24) + 'px">';
-    html += branch ? '<span class="tree-toggler"></span>' : '<span class="tree-leaf-spacer"></span>';
-    html += '<span class="tree-label">';
-    html += _topicTreeMode === 'radio'
-      ? '<span class="tree-radio"></span>'
-      : '<span class="tree-checkbox"></span>';
-    html += escapeHtml(node.name) + '</span></div>';
-    return html;
-  }
-
-  function buildTopicTree(mode) {
-    if (_topicTree) _topicTree.destroy();
-    _topicTreeMode = mode;
-    var sidebarRight = document.getElementById('sidebar-right');
-    if (sidebarRight) sidebarRight.classList.toggle('tree-radio-mode', mode === 'radio');
-    _topicTree = new InfiniteTree(_treeEl, {
-      data: window._topicTreeData || [],
-      autoOpen: true,
-      selectable: mode === 'radio',
-      /* Radio mode: clicking a node selects it; clicking the selected
-         node again deselects it (the lib emits selectNode(null)). */
-      shouldSelectNode: function(node) {
-        return _topicTree._programmatic || !!node;
-      },
-      /* Render every row: the outer sidebar scrolls, and wrapped labels
-         have varying heights that the virtualizer cannot handle. */
-      rowsInBlock: Infinity,
-      togglerClass: 'tree-toggler',
-      rowRenderer: topicTreeRow,
-    });
-    if (mode === 'checkbox') {
-      _topicTree.on('click', function(event) {
-        var box = event.target.closest ? event.target.closest('.tree-checkbox') : null;
-        if (!box) return;
-        var row = box.closest('[data-id]');
-        var node = row && _topicTree.getNodeById(row.getAttribute('data-id'));
-        if (node) _topicTree.checkNode(node); /* toggles, cascades up+down */
-      });
-      _topicTree.on('checkNode', function() {
-        if (!window._restoringFilters) applyFilters();
-        setTimeout(syncFilterStates, 0);
-      });
-    } else {
-      _topicTree.on('selectNode', function(node) {
-        if (_topicTree._programmatic) return;
-        if (typeof window._treeSelectionChanged === 'function') {
-          window._treeSelectionChanged(node ? node.id : null);
-        }
-      });
-    }
-  }
-
-  /* Rebuild the tree when the page kind changed (e.g. SPA navigation
-     between the filter views and /create). */
-  function ensureTopicTree() {
-    if (!_treeEl || typeof window.InfiniteTree === 'undefined') return;
-    var mode = document.getElementById('create-form') ? 'radio' : 'checkbox';
-    if (_topicTree && mode === _topicTreeMode) return;
-    buildTopicTree(mode);
-  }
-
-  function treeRootNodes() {
-    return _topicTree ? _topicTree.getRootNode().children : [];
-  }
-
-  /* Ids of the roots of checked subtrees (what the server treats as the selection) */
-  function topCheckedIds() {
-    var ids = [];
-    (function walk(nodes) {
-      nodes.forEach(function(node) {
-        if (isNodeChecked(node)) ids.push(node.id);
-        else walk(node.children || []);
-      });
-    })(treeRootNodes());
-    return ids;
-  }
-
-  function allRootNodesChecked() {
-    var roots = treeRootNodes();
-    return roots.length > 0 && roots.every(isNodeChecked);
-  }
-
-  window._setTreeSelection = function(id) {
-    if (!_topicTree || _topicTreeMode !== 'radio') return;
-    var current = _topicTree.getSelectedNode();
-    var currentId = current ? current.id : null;
-    if ((id || null) === currentId) return;
-    _topicTree._programmatic = true;
-    try {
-      _topicTree.selectNode(id ? _topicTree.getNodeById(id) : null);
-    } finally {
-      _topicTree._programmatic = false;
-    }
-  };
-
-  document.getElementById('tree-select-all').addEventListener('click', function() {
-    if (_topicTree && _topicTreeMode === 'checkbox') {
-      window._restoringFilters = true;
-      try {
-        treeRootNodes().forEach(function(node) { _topicTree.checkNode(node, true); });
-      } finally {
-        window._restoringFilters = false;
-      }
-      applyFilters();
-    }
-  });
-  document.getElementById('tree-deselect-all').addEventListener('click', function() {
-    if (_topicTree && _topicTreeMode === 'checkbox') {
-      window._restoringFilters = true;
-      try {
-        treeRootNodes().forEach(function(node) { _topicTree.checkNode(node, false); });
-      } finally {
-        window._restoringFilters = false;
-      }
-      applyFilters();
-    }
-  });
-  if (_treeEl) _treeEl.addEventListener('dblclick', function(e) { e.stopPropagation(); });
-
-  function dimFilterChange() { applyFilters(); setTimeout(syncFilterStates, 0); }
-
-  document.getElementById('dim-reset').addEventListener('click', function() {
-    document.querySelectorAll('.filter-dim-row').forEach(function(row) {
-      row.querySelector('.dim-val').value = '';
-      row.querySelector('.dim-op').value = 'eq';
-    });
-    applyFilters();
-  });
-
-  document.getElementById('dim-fill-zeros').addEventListener('click', function() {
-    var vals = dimVals();
-    var allFilled = vals.every(dimResolved), hasZero = vals.indexOf('0') !== -1;
-    if (allFilled && hasZero) {
-      dimValInputs().forEach(function(input) {
-        if (String(evalDimExpr(input.value)) === '0') input.value = '';
-      });
-    } else {
-      document.querySelectorAll('.filter-dim-row').forEach(function(row) {
-        var input = row.querySelector('.dim-val');
-        if (!dimResolved(input.value)) input.value = '0';
-      });
-    }
-    applyFilters();
-  });
-
-  document.getElementById('dim-mode-toggle').addEventListener('click', function() { toggleModeSwitched('dim'); });
-
-  document.getElementById('dim-base-qty').addEventListener('click', function() {
-    var url = new URL(window.location);
-    if (url.searchParams.get('is_dim') === '1') {
-      url.searchParams.delete('is_dim');
-    } else {
-      url.searchParams.set('is_dim', '1');
-    }
-    fetchContent(url.pathname + url.search, true);
-  });
-
-  function getSwitched(url) {
-    return (url.searchParams.get('mode_switched') || '').split(',').filter(Boolean);
-  }
-
-  function toggleModeSwitched(key) {
-    var url = new URL(window.location);
-    var switched = getSwitched(url);
-    var idx = switched.indexOf(key);
-    if (idx !== -1) switched.splice(idx, 1);
-    else switched.push(key);
-    if (switched.length) url.searchParams.set('mode_switched', switched.join(','));
-    else url.searchParams.delete('mode_switched');
-    fetchContent(url.pathname + url.search, true);
-  }
-
-  function setModeBtn(btn, active, title) {
-    btn.classList.toggle('active', active);
-    btn.title = title;
-    btn.innerHTML = '<i data-lucide="' + (active ? 'squares-unite' : 'squares-intersect') + '" width="16" height="16"></i>';
-    refreshIcons();
-  }
-
-  function syncFilterStates() {
-    var url = new URL(window.location);
-
-    cleanModeSwitched(url);
-
-    var vals = dimVals();
-
-    var modeBtn = document.getElementById('dim-mode-toggle');
-    if (modeBtn) {
-      if (vals.filter(dimResolved).length >= 2) {
-        modeBtn.classList.remove('hidden');
-        var isOr = getSwitched(url).indexOf('dim') !== -1;
-        setModeBtn(modeBtn, isOr, isOr ? window._localeUI.filter.dim_mode_or : window._localeUI.filter.dim_mode_and);
-      } else {
-        modeBtn.classList.add('hidden');
-      }
-    }
-
-    var baseQtyBtn = document.getElementById('dim-base-qty');
-    if (baseQtyBtn) {
-      baseQtyBtn.classList.toggle('active', url.searchParams.get('is_dim') === '1');
-      baseQtyBtn.classList.toggle('disabled', isFormulasView());
-    }
-
-    var fillBtn = document.getElementById('dim-fill-zeros');
-    if (fillBtn) {
-      var allFilled = vals.every(dimResolved), hasZero = vals.indexOf('0') !== -1;
-      fillBtn.classList.toggle('active', allFilled && hasZero);
-      fillBtn.classList.toggle('disabled', allFilled && !hasZero);
-    }
-
-    var dimReset = document.getElementById('dim-reset');
-    if (dimReset) dimReset.classList.toggle('disabled', !vals.some(dimResolved));
-
-    var deselectBtn = document.getElementById('tree-deselect-all');
-    if (deselectBtn && _topicTree && _topicTreeMode === 'checkbox') {
-      deselectBtn.classList.toggle('disabled', topCheckedIds().length === 0);
-    }
-
-    var treeSelectAll = document.getElementById('tree-select-all');
-    if (treeSelectAll && _topicTree && _topicTreeMode === 'checkbox') {
-      treeSelectAll.classList.toggle('disabled', allRootNodesChecked());
-    }
-
-    var qtyModeBtn = document.getElementById('qty-mode-toggle');
-    if (qtyModeBtn) {
-      if (!isFormulasView()) {
-        qtyModeBtn.classList.add('hidden');
-      } else if ((window._qtySelected || []).length >= 2) {
-        qtyModeBtn.classList.remove('hidden');
-        var isSwitched = getSwitched(url).indexOf('fml') !== -1;
-        setModeBtn(qtyModeBtn, isSwitched, isSwitched ? window._localeUI.filter.qty_mode_or : window._localeUI.filter.qty_mode_and);
-      } else {
-        qtyModeBtn.classList.add('hidden');
-      }
-    }
-
-    var qtyReset = document.getElementById('qty-reset');
-    if (qtyReset) {
-      qtyReset.classList.toggle('disabled', !window._qtySelected || window._qtySelected.length === 0);
-    }
-
-    var diffReset = document.getElementById('diff-reset');
-    if (diffReset) {
-      var dMin = document.getElementById('diff-min');
-      var dMax = document.getElementById('diff-max');
-      var isDefault = dMin && dMax && parseInt(dMin.value) === 1 && parseInt(dMax.value) === 10;
-      diffReset.classList.toggle('disabled', isDefault);
-    }
-
-    var sortMenu = document.getElementById('sort-menu');
-    var allowed = window._availableSorts || [];
-    var defaultSort = window._defaultSort || null;
-    if (sortMenu && allowed.length) {
-      var wantValue = url.searchParams.get('sort');
-      if (wantValue === null || allowed.indexOf(wantValue) === -1) {
-        wantValue = defaultSort;
-      }
-      window._renderSortMenu(sortMenu, wantValue);
-    }
-  }
-
-  function cleanModeSwitched(url) {
-    var raw = url.searchParams.get('mode_switched');
-    if (!raw) return;
-    var parts = raw.split(',').filter(Boolean);
-    var changed = false;
-
-    var dimCount = window._dimensionSymbols.filter(function(d) {
-      return ['eq', 'geq', 'leq'].some(function(op) { return url.searchParams.get(d + '_' + op) !== null; });
-    }).length;
-    if (dimCount < 2) { var idx = parts.indexOf('dim'); if (idx !== -1) { parts.splice(idx, 1); changed = true; } }
-
-    var qtyParam = url.searchParams.get('qty');
-    var qtyCount = qtyParam ? qtyParam.split(',').length : 0;
-    if (qtyCount < 2) { var qidx = parts.indexOf('fml'); if (qidx !== -1) { parts.splice(qidx, 1); changed = true; } }
-
-    if (changed) {
-      if (parts.length) url.searchParams.set('mode_switched', parts.join(','));
-      else url.searchParams.delete('mode_switched');
-      history.replaceState(null, '', url.toString());
-    }
-  }
-
-  function syncViewTabLinks() {
-    document.querySelectorAll('.view-tab').forEach(function(t) {
-      var href = t.getAttribute('href');
-      if (!href) return;
-      var base = href.split('?')[0];
-      var qs = window.location.search;
-      t.setAttribute('href', base + qs);
-    });
-  }
-
-  function isFormulasView() {
-    var p = window.location.pathname;
-    return p.indexOf('/quantities') === -1 && p.indexOf('/quantity/') === -1 && p.indexOf('/unit/') === -1;
-  }
-
-  document.getElementById('qty-mode-toggle').addEventListener('click', function() {
-    if (!isFormulasView()) return;
-    toggleModeSwitched('fml');
-  });
-
-  document.getElementById('qty-reset').addEventListener('click', function() {
-    window._qtySelected = [];
-    var input = document.getElementById('qty-search');
-    if (input) input.value = '';
-    if (typeof window.renderQtyChips === 'function') window.renderQtyChips();
-    if (typeof window.renderQtyResults === 'function') window.renderQtyResults('');
-    applyFilters();
-  });
-
-  document.getElementById('diff-reset').addEventListener('click', function() {
-    document.getElementById('diff-min').value = 1;
-    document.getElementById('diff-max').value = 10;
-    syncDiff();
-    applyFilters();
-  });
-
-  (function() {
-    var allQuantities = window._allQuantities || [];
-    window._qtySelected = [];
-
-    window._renderLatex = function(text) {
-      if (typeof katex === 'undefined') return escapeHtml(text);
-      try { return katex.renderToString(text, {displayMode: false, throwOnError: false}); }
-      catch(e) { return escapeHtml(text); }
-    };
-
-    /* Restarts the .label-in animation on an element */
-    window._bumpLabel = function(el) { replayClass(el, 'label-in'); };
-
-    window._renderSortMenu = function(sortMenu, value) {
-      var allowed = window._availableSorts || [];
-      var labels = (window._localeUI && window._localeUI.sort) || {};
-      sortMenu.dataset.value = value || '';
-      /* Selected value lives in the trigger, not repeated as a row */
-      sortMenu.innerHTML = allowed.filter(function(key) { return key !== value; }).map(function(key) {
-        return '<button type="button" class="sort-option"' +
-          ' role="option" aria-selected="false"' +
-          ' data-action="sort-pick" data-sort="' + key + '">' +
-          '<span>' + (labels[key] || key) + '</span>' +
-          '</button>';
-      }).join('');
-      var labelEl = document.getElementById('sort-trigger-label');
-      if (labelEl) labelEl.textContent = labels[value] || value || '';
-      refreshIcons();
-    };
-
-    /* Morphing select controller: opening morphs the trigger into the
-       head of the list (see CSS); the selected value stays in the
-       trigger instead of repeating as a row. */
-    window._morphSelects = [];
-
-    window._morphSelect = function(trigger, menu) {
-      for (var i = 0; i < window._morphSelects.length; i++) {
-        if (window._morphSelects[i].menu === menu) return window._morphSelects[i];
-      }
-      var ctrl = {
-        trigger: trigger,
-        menu: menu,
-        sync: function() {},
-        isOpen: function() { return menu.classList.contains('open'); },
-        open: function() {
-          window._morphSelects.forEach(function(other) {
-            if (other !== ctrl && other.isOpen()) other.close();
-          });
-          menu.classList.remove('closing');
-          this.sync();
-          menu.classList.add('open');
-          trigger.classList.add('open');
-          trigger.setAttribute('aria-expanded', 'true');
-        },
-        close: function() {
-          if (!this.isOpen()) return;
-          menu.classList.remove('open');
-          trigger.classList.remove('open');
-          trigger.setAttribute('aria-expanded', 'false');
-          replayClass(menu, 'closing');
-        },
-        toggle: function() {
-          if (this.isOpen()) this.close();
-          else this.open();
-        }
-      };
-      window._morphSelects.push(ctrl);
-      menu._morphCtrl = ctrl;
-      return ctrl;
-    };
-
-    document.addEventListener('keydown', function(e) {
-      if (e.key !== 'Escape') return;
-      window._morphSelects.forEach(function(ctrl) {
-        if (ctrl.isOpen()) {
-          ctrl.close();
-          ctrl.trigger.focus();
-        }
-      });
-    });
-
-    /* Wraps a native <select> in a custom dropdown; the hidden native
-       element stays the source of truth and dispatches 'change', so
-       existing handlers keep working untouched. */
-    function initCSelect(select) {
-      if (!select || select.dataset.cselectBound || !select.options.length) return;
-      select.dataset.cselectBound = '1';
-      var compact = select.classList.contains('dim-op');
-      /* Operator picks get no chevron */
-      var wrap = document.createElement('div');
-      wrap.className = 'cselect';
-      wrap.innerHTML =
-        '<button type="button" class="sort-trigger cselect-trigger' + (compact ? ' compact' : '') + '"' +
-        ' aria-haspopup="listbox" aria-expanded="false"><span class="cselect-label"></span>' +
-        (compact ? '' : '<i data-lucide="chevron-down" width="14" height="14"></i>') + '</button>' +
-        '<div class="dropdown-menu sort-menu cselect-menu' + (compact ? ' compact' : '') + '" role="listbox"></div>';
-      var trigger = wrap.children[0];
-      var label = trigger.children[0];
-      var menu = wrap.children[1];
-      select.parentNode.insertBefore(wrap, select);
-      select.style.display = 'none';
-
-      var ctrl = window._morphSelect(trigger, menu);
-      /* Re-sync rows from native state before showing */
-      ctrl.sync = render;
-
-      function render() {
-        menu.innerHTML = '';
-        var sel = select.selectedIndex;
-        for (var i = 0; i < select.options.length; i++) {
-          if (i === sel) continue; /* shown in the trigger, not the list */
-          var option = select.options[i];
-          var btn = document.createElement('button');
-          btn.type = 'button';
-          btn.className = 'sort-option';
-          btn.setAttribute('role', 'option');
-          btn.setAttribute('aria-selected', 'false');
-          btn.setAttribute('data-cselect-index', i);
-          var sp = document.createElement('span');
-          var txt = option.textContent.trim();
-          sp.textContent = txt;
-          btn.appendChild(sp);
-          menu.appendChild(btn);
-        }
-        var curTxt = select.options[sel] ? select.options[sel].textContent.trim() : '';
-        label.textContent = curTxt;
-
-        /* Size the trigger to the widest option (label + chevron + padding +
-           gap) so the menu's min-width:100% matches. The <i data-lucide>
-           isn't swapped for an <svg> yet, so probe with a real chevron
-           <svg> and let the browser compute the width. */
-        var widestText = curTxt;
-        for (var j = 0; j < select.options.length; j++) {
-          var t = select.options[j].textContent.trim();
-          if (t.length > widestText.length) widestText = t;
-        }
-        var probe = document.createElement('button');
-        probe.className = trigger.className;
-        probe.style.cssText = 'position:absolute;visibility:hidden;left:-9999px;top:-9999px;width:auto;min-width:0;';
-        var probeLbl = document.createElement('span');
-        probeLbl.className = 'cselect-label';
-        probeLbl.textContent = widestText;
-        probe.appendChild(probeLbl);
-        if (!compact) {
-          var ns = 'http://www.w3.org/2000/svg';
-          var svg = document.createElementNS(ns, 'svg');
-          svg.setAttribute('width', '14');
-          svg.setAttribute('height', '14');
-          svg.setAttribute('viewBox', '0 0 24 24');
-          svg.setAttribute('fill', 'none');
-          svg.setAttribute('stroke', 'currentColor');
-          svg.setAttribute('stroke-width', '2');
-          svg.setAttribute('stroke-linecap', 'round');
-          svg.setAttribute('stroke-linejoin', 'round');
-          var path = document.createElementNS(ns, 'path');
-          path.setAttribute('d', 'm6 9 6 6 6-6');
-          svg.appendChild(path);
-          probe.appendChild(svg);
-        }
-        document.body.appendChild(probe);
-        trigger.style.minWidth = probe.offsetWidth + 'px';
-        document.body.removeChild(probe);
-      }
-
-      function commit(idx) {
-        if (idx === select.selectedIndex) { ctrl.close(); return; }
-        select.selectedIndex = idx;
-        ctrl.close();
-        render();
-        window._bumpLabel(label);
-        select.dispatchEvent(new Event('change', { bubbles: true }));
-      }
-
-      trigger.addEventListener('click', function(e) {
-        e.stopPropagation();
-        e.preventDefault();
-        ctrl.toggle();
-      });
-
-      menu.addEventListener('click', function(e) {
-        var btn = e.target.closest('.sort-option');
-        if (!btn || !menu.contains(btn)) return;
-        e.stopPropagation();
-        commit(parseInt(btn.getAttribute('data-cselect-index'), 10));
-      });
-
-      render();
-      refreshIcons();
-    }
-
-    window.initCSelects = function(root) {
-      var scope = root || document;
-      scope.querySelectorAll('.settings-item select, .filter-dim-row select.dim-op').forEach(initCSelect);
-    };
-
-    window.renderQtyChips = function() {
-      var chipsEl = document.getElementById('qty-chips');
-      if (!chipsEl) return;
-      chipsEl.innerHTML = window._qtySelected.map(function(qid) {
-        var q = allQuantities.find(function(x) { return x.id === qid; });
-        var label = q ? (q.symbol || q.name || q.id) : qid;
-        return '<span class="qty-chip" data-qty="' + escapeHtml(qid) + '">' + window._renderLatex(label) + '<span class="qty-chip-x" data-action="remove-qty-chip" data-qty="' + escapeHtml(qid) + '"><i data-lucide="x" width="12" height="12"></i></span></span>';
-      }).join('');
-      refreshIcons();
-    };
-
-    window.renderQtyResults = function(query) {
-      var resultsEl = document.getElementById('qty-results');
-      if (!resultsEl) return;
-      var q = (query || '').toLowerCase().trim();
-      var matches = allQuantities.filter(function(item) {
-        if (!q) return true;
-        return ['name', 'symbol', 'id'].some(function(k) {
-          return String(item[k] || '').toLowerCase().indexOf(q) !== -1;
-        });
-      });
-      if (matches.length === 0) {
-        resultsEl.classList.remove('open');
-        resultsEl.innerHTML = '';
-        return;
-      }
-      resultsEl.classList.add('open');
-      var html = '';
-      matches.slice(0, 30).forEach(function(item) {
-        var isSel = window._qtySelected.indexOf(item.id) !== -1;
-        var symRaw = item.symbol || '';
-        var nameRaw = item.name || item.id;
-        var symDisplay = symRaw ? window._renderLatex(symRaw) : '';
-        html += '<div class="qty-result' + (isSel ? ' selected' : '') + '" data-action="add-qty-chip" data-qty="' + escapeHtml(item.id) + '" tabindex="0">';
-        html += '<span class="qty-result-sym">' + symDisplay + '</span>';
-        html += '<span class="qty-result-name">' + escapeHtml(nameRaw) + '</span>';
-        html += '</div>';
-      });
-      resultsEl.innerHTML = html;
-    };
-
-    window.addQtyChip = function(qid) {
-      if (window._qtySelected.indexOf(qid) !== -1) return;
-      window._qtySelected.push(qid);
-      window.renderQtyChips();
-      var input = document.getElementById('qty-search');
-      if (input) input.value = '';
-      window.renderQtyResults('');
-      dimFilterChange();
-    };
-
-    window.removeQtyChip = function(qid) {
-      window._qtySelected = window._qtySelected.filter(function(x) { return x !== qid; });
-      window.renderQtyChips();
-      var input = document.getElementById('qty-search');
-      var query = input ? input.value : '';
-      window.renderQtyResults(query);
-      dimFilterChange();
-    };
-
-    function resetQtySearch() {
-      var el = document.getElementById('qty-results');
-      if (el) el.classList.remove('open');
-      var inp = document.getElementById('qty-search');
-      if (inp) inp._userInteracted = false;
-    }
-    window.addEventListener('pageshow', resetQtySearch);
-    resetQtySearch();
-    var qtyInput = document.getElementById('qty-search');
-    if (qtyInput) {
-      qtyInput.addEventListener('input', function() {
-        window.renderQtyResults(qtyInput.value);
-      });
-      qtyInput.addEventListener('focus', function() {
-        if (qtyInput.value.trim() || qtyInput._userInteracted) {
-          window.renderQtyResults(qtyInput.value);
-        }
-      });
-      qtyInput.addEventListener('click', function() {
-        qtyInput._userInteracted = true;
-        window.renderQtyResults(qtyInput.value);
-      });
-      qtyInput.addEventListener('blur', function() {
-        setTimeout(function() {
-          var active = document.activeElement;
-          if (active && active.classList && active.classList.contains('qty-result')) return;
-          var el = document.getElementById('qty-results');
-          if (el) el.classList.remove('open');
-        }, 200);
-      });
-    }
-    document.addEventListener('keydown', function(e) {
-      var el = document.getElementById('qty-results');
-      if (!el || !el.classList.contains('open')) return;
-      var items = el.querySelectorAll('.qty-result');
-      if (items.length === 0) return;
-      if (!qtyInput || (!qtyInput.contains(document.activeElement) && !el.contains(document.activeElement))) return;
-      var idx = Array.prototype.indexOf.call(items, document.activeElement);
-      if (idx < 0 && document.activeElement === qtyInput) idx = -1;
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        if (idx < items.length - 1) items[idx + 1].focus();
-        else items[0].focus();
-      } else if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        if (idx > 0) items[idx - 1].focus();
-        else if (idx === 0) { if (qtyInput) qtyInput.focus(); }
-        else items[items.length - 1].focus();
-      } else if (e.key === 'Enter' && idx >= 0) {
-        e.preventDefault();
-        items[idx].click();
+    var mo = new MutationObserver(function() {
+      if (document.documentElement.classList.contains('katex-ready')) {
+        mo.disconnect();
+        fn();
       }
     });
-    document.addEventListener('click', function(e) {
-      var wrap = document.querySelector('.filter-qty-search-wrap');
-      if (wrap && !wrap.contains(e.target)) {
-        var el = document.getElementById('qty-results');
-        if (el) el.classList.remove('open');
-      }
-    });
-  })();
-
-  function applyFilters() {
-    if (window._restoringFilters) return;
-    var url = buildFilterUrl();
-    fetchContent(url, true);
-  }
-
-  function buildFilterUrl() {
-    var allIds = [];
-    var allRootSelected = false;
-    if (_topicTree && _topicTreeMode === 'checkbox') {
-      allIds = topCheckedIds();
-      allRootSelected = allRootNodesChecked();
-    }
-
-    var url = new URL(window.location);
-    url.searchParams.delete('subbranch');
-    url.searchParams.delete('topic');
-    url.searchParams.delete('id');
-    url.searchParams.delete('exclude_all');
-    /* `q` belongs to /search; never let a stray value leak into the
-       filters of other pages (e.g. after cancelling a search). */
-    if (url.pathname !== '/search') url.searchParams.delete('q');
-
-    if (allRootSelected) {
-      url.searchParams.delete('ids');
-    } else if (allIds.length === 0) {
-      url.searchParams.set('ids', '');
-    } else {
-      url.searchParams.set('ids', allIds.join(','));
-    }
-
-    var min = Math.round(parseFloat(document.getElementById('diff-min').value));
-    var max = Math.round(parseFloat(document.getElementById('diff-max').value));
-    if (min > 1) url.searchParams.set('diff_min', min);
-    else url.searchParams.delete('diff_min');
-    if (max < 10) url.searchParams.set('diff_max', max);
-    else url.searchParams.delete('diff_max');
-
-    window._dimensionSymbols.forEach(function(d) {
-      var rows = document.querySelectorAll('.filter-dim-row[data-dim="' + d + '"]');
-      if (rows.length === 0) return;
-      var row = rows[0];
-      ['_eq','_geq','_leq'].forEach(function(s) { url.searchParams.delete(d + s); });
-      var op = row.querySelector('.dim-op').value;
-      var parsed = evalDimExpr(row.querySelector('.dim-val').value);
-      if (parsed !== null) url.searchParams.set(d + '_' + op, parsed);
-    });
-
-    var qtySelected = window._qtySelected || [];
-    if (qtySelected.length > 0) url.searchParams.set('qty', qtySelected.join(','));
-    else url.searchParams.delete('qty');
-
-    var sortMenu = document.getElementById('sort-menu');
-    var sortAllowed = window._availableSorts || [];
-    var sortVal = sortMenu && sortAllowed.length ? (sortMenu.dataset.value || '') : '';
-    if (!sortVal || sortAllowed.indexOf(sortVal) === -1 || sortVal === (window._defaultSort || null)) {
-      url.searchParams.delete('sort');
-    } else {
-      url.searchParams.set('sort', sortVal);
-    }
-
-    var path = url.pathname;
-    if (path !== '/formulas' && path !== '/quantities' && path !== '/search') {
-      url.pathname = '/formulas';
-    }
-    return url.pathname + url.search;
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
   }
 
   var _pendingFetch = null;
 
-  function fetchContent(url, pushState) {
+  /* Post-swap UI sync shared by every SPA navigation (filters, links,
+     search): re-render math, restore filter widgets from the URL and
+     re-sync pills/tabs/overflow. Also used by initPage() on first load,
+     so boot and post-swap stay in step (merged from boot.js). */
+  function syncContent(url) {
+    renderMathInContent();
+    refreshIcons();
+    restoreAllFromUrl();
+    updateOverflowPadding();
+    updateDimNameFits();
+    syncDockPills();
+    syncViewTabLinks();
+  }
+  function afterPageSwap(url) {
+    syncContent(url);
+    var isSearch = url.indexOf('/search') !== -1;
+    var isFormulas = isFormulasView();
+    document.querySelectorAll('.view-tab').forEach(function(t) {
+      if (isSearch) {
+        t.classList.remove('active');
+      } else {
+        t.classList.toggle('active', isFormulas ? t.getAttribute('href').indexOf('formulas') !== -1 : t.getAttribute('href').indexOf('quantities') !== -1);
+      }
+    });
+  }
+
+  /* Keep <head> stylesheets in step with the target page so SPA
+     navigation renders identically to a full load (single base.css
+     since create.css was merged; kept for forward-compat). */
+  function syncPageStyles(doc) {
+    var want = {};
+    Array.prototype.forEach.call(doc.head.querySelectorAll('link[rel="stylesheet"]'), function(l) {
+      want[l.getAttribute('href')] = true;
+    });
+    Array.prototype.forEach.call(document.head.querySelectorAll('link[rel="stylesheet"]'), function(l) {
+      var href = l.getAttribute('href');
+      if (href in want) delete want[href];
+      else l.remove();
+    });
+    Object.keys(want).forEach(function(href) {
+      var l = document.createElement('link');
+      l.rel = 'stylesheet';
+      l.href = href;
+      document.head.appendChild(l);
+    });
+  }
+
+  /* Single SPA page loader: fetches the target, swaps #main-content and
+     re-runs UI sync. Replaces the old filter-only fetchContent and the
+     link-only navigateTo body, which duplicated each other. Aborts an
+     in-flight load so rapid filter drags can't race. */
+  function loadPage(url, push) {
     if (_pendingFetch) _pendingFetch.abort();
     var controller = new AbortController();
-    var opts = { signal: controller.signal };
     _pendingFetch = controller;
-    fetch(url, opts)
-      .then(function(r) { return r.text(); })
-      .then(function(html) {
-        var parser = new DOMParser();
-        var doc = parser.parseFromString(html, 'text/html');
-        var newTitle = doc.querySelector('title');
-        if (newTitle) document.title = newTitle.textContent;
-        var newContent = doc.querySelector('#main-content .main-inner');
-        if (newContent) {
-          document.querySelector('#main-content .main-inner').innerHTML = newContent.innerHTML;
-          document.getElementById('main-content').scrollTop = 0;
-        }
-        if (pushState) {
-          history.pushState({url: url}, '', url);
-        }
-        renderMathInContent();
-        restoreAllFromUrl();
-        updateOverflowPadding();
-        updateDimNameFits();
-        syncDockPills();
-        syncViewTabLinks();
-      })
-      .catch(function(err) { if (err.name !== 'AbortError') console.warn('fetchContent error', err); })
-      .then(function() { if (_pendingFetch === controller) _pendingFetch = null; });
+    fetch(url, { signal: controller.signal }).then(function(r) {
+      if (!r.ok) { window.location.href = url; return null; }
+      return r.text();
+    }).then(function(html) {
+      if (!html) return;
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      syncPageStyles(doc);
+      var newTitle = doc.querySelector('title');
+      if (newTitle) document.title = newTitle.textContent;
+      var newContent = doc.getElementById('main-content');
+      if (!newContent) { window.location.href = url; return; }
+      var dst = document.getElementById('main-content');
+      dst.innerHTML = newContent.innerHTML;
+      Array.from(dst.querySelectorAll('script')).forEach(function(oldScript) {
+        /* Re-execute real JS only; leave data blocks (units table payload) untouched. */
+        var t = (oldScript.getAttribute('type') || '').toLowerCase();
+        if (t && t !== 'text/javascript' && t !== 'application/javascript' && t !== 'module') return;
+        var newScript = document.createElement('script');
+        if (oldScript.src) newScript.src = oldScript.src;
+        else newScript.textContent = oldScript.textContent;
+        oldScript.parentNode.replaceChild(newScript, oldScript);
+      });
+      dst.scrollTop = 0;
+      if (push && !(window.history.state && window.history.state.url === url)) history.pushState({url: url}, '', url);
+      afterPageSwap(url);
+    }).catch(function(err) {
+      if (err && err.name === 'AbortError') return;
+      window.location.href = url;
+    }).then(function() { if (_pendingFetch === controller) _pendingFetch = null; });
   }
-  window.fetchContent = fetchContent;
+  (function() {
+    var searchForm = document.querySelector('.topbar-search form');
+    var searchInput = searchForm ? searchForm.querySelector('input[name="q"]') : null;
+    var suggestionsEl = document.getElementById('search-suggestions');
+    var suggestDebounce = null;
+    var suggestHighlight = -1;
+
+    function fetchSuggestions(q) {
+      if (!q) { suggestionsEl.classList.remove('open'); suggestionsEl.innerHTML = ''; return; }
+      fetch('/api/search-suggestions?q=' + encodeURIComponent(q))
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          suggestionsEl.innerHTML = '';
+          suggestHighlight = -1;
+          if (!data.suggestions || data.suggestions.length === 0) {
+            suggestionsEl.classList.remove('open');
+            return;
+          }
+          data.suggestions.forEach(function(s) {
+            var div = document.createElement('div');
+            div.className = 'search-suggestion';
+            div.tabIndex = -1;
+            var headingSpan = document.createElement('span');
+            headingSpan.textContent = s.heading;
+            var kindSpan = document.createElement('span');
+            kindSpan.className = 'ss-kind';
+            kindSpan.textContent = s.kind;
+            div.appendChild(headingSpan);
+            div.appendChild(kindSpan);
+            div.addEventListener('click', function() {
+              suggestionsEl.classList.remove('open');
+              searchInput.value = s.heading;
+              navigateTo('/' + s.kind + '/' + s.id);
+            });
+            suggestionsEl.appendChild(div);
+          });
+          suggestionsEl.classList.add('open');
+        })
+        .catch(function() { suggestionsEl.classList.remove('open'); });
+    }
+
+    if (searchInput && suggestionsEl) {
+      searchInput.addEventListener('input', function() {
+        syncSearchCancel();
+        /* The URL is only updated on submit (Enter / submit button); the
+           box updates the URL via history on /search only on submit. */
+        clearTimeout(suggestDebounce);
+        suggestDebounce = setTimeout(function() {
+          fetchSuggestions(searchInput.value.trim());
+        }, 150);
+      });
+      searchInput.addEventListener('keydown', function(e) {
+        var items = suggestionsEl.querySelectorAll('.search-suggestion');
+        if (!suggestionsEl.classList.contains('open') || items.length === 0) return;
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          suggestHighlight = Math.min(suggestHighlight + 1, items.length - 1);
+          items.forEach(function(el, i) { el.classList.toggle('highlighted', i === suggestHighlight); });
+          items[suggestHighlight].scrollIntoView({ block: 'nearest' });
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          suggestHighlight = Math.max(suggestHighlight - 1, -1);
+          items.forEach(function(el, i) { el.classList.toggle('highlighted', i === suggestHighlight); });
+          if (suggestHighlight >= 0) items[suggestHighlight].scrollIntoView({ block: 'nearest' });
+        } else if (e.key === 'Enter' && suggestHighlight >= 0) {
+          e.preventDefault();
+          items[suggestHighlight].click();
+        }
+      });
+      searchInput.addEventListener('blur', function() {
+        setTimeout(function() { suggestionsEl.classList.remove('open'); }, 200);
+      });
+      searchInput.addEventListener('focus', function() {
+        if (searchInput.value.trim()) fetchSuggestions(searchInput.value.trim());
+      });
+    }
+
+    if (searchForm) {
+      searchForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        suggestionsEl.classList.remove('open');
+        if (searchInput) searchInput.blur();
+        var q = searchInput ? encodeURIComponent(searchInput.value.trim()) : '';
+        var url = q ? '/search?q=' + q : '/search';
+        navigateTo(url);
+      });
+    }
+
+    function navigateTo(url, isPop) {
+      if (!isPop && window.location.pathname + window.location.search === url) return;
+      var si = document.querySelector('.topbar-search input[name="q"]');
+      /* Keep the query visible while on the search results; clear it as
+         soon as the user navigates away from them. */
+      var target = new URL(url, window.location.origin);
+      if (si) {
+        si.value = target.pathname === '/search' ? (target.searchParams.get('q') || '') : '';
+        syncSearchCancel();
+      }
+      var qs = document.getElementById('qty-search');
+      if (qs) qs.value = '';
+      loadPage(url, !isPop);
+    }
+    document.body.addEventListener('click', function(e) {
+      var link = e.target.closest('a');
+      if (!link) return;
+      var href = link.getAttribute('href');
+      /* data-spa-full opts the link out of SPA navigation (full reload) */
+      if (!href || href.startsWith('http') || href.startsWith('//') || href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('javascript:') || link.hasAttribute('download') || link.getAttribute('target') === '_blank' || link.hasAttribute('data-spa-full')) return;
+      if (e.button === 1 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+      if (href === '/') { e.preventDefault(); navigateTo('/formulas'); return; }
+      e.preventDefault();
+      var parts = href.split('?');
+      var base = parts[0];
+      var params = new URLSearchParams(window.location.search);
+      params.delete('q');
+      if (parts[1]) {
+        var linkParams = new URLSearchParams(parts[1]);
+        linkParams.forEach(function(value, key) { params.set(key, value); });
+      }
+      href = base + (params.toString() ? '?' + params.toString() : '');
+      navigateTo(href);
+    });
+    window.addEventListener('popstate', function() { navigateTo(window.location.href, true); });
+
+    window._navigateTo = navigateTo;
+  })();
+
+  /* ---- First-load boot (merged from boot.js; runs once) ----
+     One-time widget init + restore-from-URL + observers. Post-swap
+     sync reuses syncContent()/afterPageSwap() above. */
+  function initPage() {
+    refreshIcons();
+    initCSelects();
+    initUnitsTables();
+    syncSearchCancel();
+    (function() {
+      var sortMenu = document.getElementById('sort-menu');
+      var sortTrigger = document.getElementById('sort-trigger');
+      if (!sortMenu || !sortTrigger) return;
+      var ctrl = window._morphSelect(sortTrigger, sortMenu);
+      ctrl.sync = function() { window._renderSortMenu(sortMenu, sortMenu.dataset.value); };
+    })();
+    syncSidebarIcon('left');
+    syncSidebarIcon('right');
+    document.documentElement.classList.remove('suppress-transitions');
+
+    function restoreTreeFromUrl() {
+      ensureTopicTree();
+      if (!_topicTree || _topicTreeMode !== 'checkbox') return;
+      var url = new URL(window.location);
+      var idsParam = url.searchParams.get('ids');
+      var excludeAll = url.searchParams.get('exclude_all') === '1';
+      window._restoringFilters = true;
+      try {
+        var roots = treeRootNodes();
+        roots.forEach(function(node) { _topicTree.checkNode(node, false); });
+        if (!excludeAll) {
+          if (idsParam === null) {
+            roots.forEach(function(node) { _topicTree.checkNode(node, true); });
+          } else if (idsParam !== '') {
+            idsParam.split(',').forEach(function(id) {
+              var node = _topicTree.getNodeById(id);
+              if (node) _topicTree.checkNode(node, true);
+            });
+          }
+        }
+      } finally {
+        window._restoringFilters = false;
+      }
+    }
+
+    function restoreFiltersFromUrl() {
+      var url = new URL(window.location);
+
+      window._dimensionSymbols.forEach(function(d) {
+        var rows = document.querySelectorAll('.filter-dim-row[data-dim="' + d + '"]');
+        if (rows.length === 0) return;
+        var row = rows[0];
+        var foundOp = 'eq', foundVal = null;
+        ['eq','geq','leq'].forEach(function(op) {
+          var v = url.searchParams.get(d + '_' + op);
+          if (v !== null) { foundOp = op; foundVal = v; }
+        });
+        row.querySelector('.dim-op').value = foundOp;
+        row.querySelector('.dim-val').value = (foundVal !== null ? foundVal : '');
+      });
+
+      var qtyParam = url.searchParams.get('qty');
+      window._qtySelected = qtyParam ? qtyParam.split(',') : [];
+      window.renderQtyChips();
+      var qr = document.getElementById('qty-results');
+      if (qr) qr.classList.remove('open');
+
+      var diffMin = parseInt(url.searchParams.get('diff_min'));
+      var diffMax = parseInt(url.searchParams.get('diff_max'));
+      var dMinEl = document.getElementById('diff-min');
+      var dMaxEl = document.getElementById('diff-max');
+      if (!isNaN(diffMin)) dMinEl.value = diffMin;
+      if (!isNaN(diffMax)) dMaxEl.value = diffMax;
+      syncDiff();
+    }
+
+    function restoreAllFromUrl() {
+      restoreFiltersFromUrl();
+      restoreTreeFromUrl();
+      syncFilterStates();
+    }
+    restoreFiltersFromUrl();
+    restoreTreeFromUrl();
+    syncFilterStates();
+    syncViewTabLinks();
+    window._initLatexObserver = function() {
+      if (typeof katex !== 'undefined') observeLatexIn(document.querySelector('#main-content'));
+    };
+    syncDockPills();
+    updateOverflowPadding();
+    updateDimNameFits();
+    layoutConstantValues();
+    var mainContentEl = document.getElementById('main-content');
+    if (mainContentEl) {
+      new MutationObserver(function() { recheckConstantValues(); })
+        .observe(mainContentEl, { childList: true });
+    }
+    /* KaTeX re-flows the dim-symbol after auto-render; re-measure once it
+       has finished so the names show/hide correctly. */
+    function recheckAfterKatex() {
+      recheckConstantValues();
+      requestAnimationFrame(function() {
+        requestAnimationFrame(function() { updateDimNameFits(); });
+      });
+    }
+    onKatexReady(recheckAfterKatex);
+    window.addEventListener('resize', function() {
+      updateOverflowPadding();
+      updateDimNameFits();
+      layoutConstantValues();
+    });
+  }
+  initPage();
 
   function currentBreakpoint() {
     var w = window.innerWidth;
@@ -1140,7 +702,6 @@
       (window._qtySelected && window._qtySelected.length > 0) ||
       diffMin > 1 || diffMax < 10;
   }
-  window.hasActiveFilters = hasActiveFilters;
 
   function hasTreeFilter() {
     return !!(_topicTree && _topicTreeMode === 'checkbox' && !allRootNodesChecked());
@@ -1191,154 +752,6 @@
       enterSearch();
     }
   }
-
-/* Conversion cells are rendered server-side; picking a different
-     reference row just swaps the pre-computed LaTeX (no client math). */
-
-  function _setUnitsCell(td, latex) {
-    if (latex === null || latex === undefined) { td.innerHTML = '&ndash;'; return; }
-    td.innerHTML = '';
-    var span = document.createElement('span');
-    span.className = 'latex-observe';
-    span.setAttribute('data-latex', latex);
-    td.appendChild(span);
-    if (typeof window.renderLatexEl === 'function') window.renderLatexEl(span);
-  }
-
-  function _fillUnitsTable(table) {
-    var st = table._unitsData;
-    if (!st) return;
-    table.querySelectorAll('tbody tr[data-unit-id]').forEach(function(tr) {
-      var id = tr.getAttribute('data-unit-id');
-      var td = tr.querySelector('td.uv-conv');
-      if (!td) return;
-      if (id === st.ref) {
-        _setUnitsCell(td, null);
-      } else {
-        var latex = (st.latex_by_ref[id] || {})[st.ref];
-        if (latex == null && st.value_latex && st.value_latex[id]) {
-          latex = st.value_latex[id];
-        }
-        _setUnitsCell(td, latex);
-      }
-    });
-  }
-
-  function _syncUnitsSection(sec) {
-    var st = sec._unitsState;
-    if (!st) return;
-    sec.querySelectorAll('.units-ref-name').forEach(function(span) {
-      span.textContent = (st.ref_labels || {})[st.ref] || '';
-    });
-    sec.querySelectorAll('table[data-units-dynamic]').forEach(function(table) {
-      table.querySelectorAll('tbody tr[data-unit-id]').forEach(function(tr) {
-        var id = tr.getAttribute('data-unit-id');
-        var isRef = id === st.ref;
-        tr.classList.toggle('is-ref', isRef);
-        var btn = tr.querySelector('.units-ref-btn');
-        if (btn) {
-          btn.disabled = isRef;
-          btn.setAttribute('aria-pressed', isRef ? 'true' : 'false');
-        }
-      });
-      if (table._unitsData) _fillUnitsTable(table);
-    });
-    if (typeof renderMathInContent === 'function') renderMathInContent();
-  }
-
-  function _setupUnitsTable(table) {
-    var sec = table.closest('.detail-section');
-    var dataEl = sec && sec.querySelector('script.units-table-data');
-    if (!dataEl) return;
-    /* Both tables of a section share one reference-unit state, so a pick in either drives both. */
-    if (!sec._unitsState) {
-      var data;
-      try { data = JSON.parse(dataEl.textContent); } catch (e) { return; }
-      var latex_by_ref = {};
-      var ref_labels = {};
-      var value_latex = {};
-      var entries = (data.entries || []).concat(data.si_entries || []);
-      entries.forEach(function(e) {
-        latex_by_ref[e.id] = e.latex_by_ref || {};
-        // Strip HTML from the label for the "Conversion to: <unit>" header.
-        var raw = e.label || e.name || e.id;
-        var tmp = document.createElement('div');
-        tmp.innerHTML = raw;
-        ref_labels[e.id] = (tmp.textContent || tmp.innerText || '').trim();
-        if (e.value_latex) value_latex[e.id] = e.value_latex;
-      });
-      sec._unitsState = {
-        ref: data.ref,
-        latex_by_ref: latex_by_ref,
-        ref_labels: ref_labels,
-        value_latex: value_latex,
-      };
-    }
-    table._unitsData = sec._unitsState;
-    _syncUnitsSection(sec);
-  }
-
-  function initUnitsTables(scope) {
-    var root = scope || document;
-    root.querySelectorAll('table[data-units-dynamic]').forEach(_setupUnitsTable);
-    var doRender = function() {
-      renderLatexIn(root);
-      renderMathInContent();
-    };
-    if (typeof katex !== 'undefined') {
-      doRender();
-    } else {
-      var mo = new MutationObserver(function() {
-        if (document.documentElement.classList.contains('katex-ready')) {
-          mo.disconnect();
-          doRender();
-        }
-      });
-      mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
-    }
-  }
-
-  function pickUnitsRef(btn) {
-    var sec = btn.closest('.detail-section');
-    if (!sec || !sec._unitsState) return;
-    var id = btn.getAttribute('data-unit-id');
-    if (id == null) return;
-    if (sec._unitsState.latex_by_ref[id]) sec._unitsState.ref = id;
-    _syncUnitsSection(sec);
-  }
-
-  function toggleSiPrefixes(el) {
-    var sec = el.closest('.detail-section');
-    var table = sec && sec.querySelector('.si-prefix-table');
-    if (!table) return;
-    var open = table.classList.toggle('si-expanded');
-    var row = table.querySelector('.si-toggle-row');
-    if (row) {
-      row.setAttribute('aria-expanded', open ? 'true' : 'false');
-      row.setAttribute('title', open ? row.getAttribute('data-less') || '' :
-                                      row.getAttribute('data-more') || '');
-    }
-  }
-
-  (function() {
-    var mc = document.getElementById('main-content');
-    if (!mc || typeof MutationObserver === 'undefined') return;
-    new MutationObserver(function(muts) {
-      for (var i = 0; i < muts.length; i++) {
-        var added = muts[i].addedNodes;
-        for (var j = 0; j < added.length; j++) {
-          var n = added[j];
-          if (n.nodeType !== 1) continue;
-          if ((n.matches && n.matches('table[data-units-dynamic]')) ||
-              (n.querySelector && n.querySelector('table[data-units-dynamic]'))) {
-            initUnitsTables(mc);
-            return;
-          }
-        }
-      }
-    }).observe(mc, { childList: true, subtree: true });
-  })();
-
   (function() {
     var timer = null;
     var pressedEl = null;
@@ -1364,7 +777,7 @@
             var url = new URL(window.location);
             url.searchParams.delete('q');
             var target = (isFormulasView() ? '/formulas' : '/quantities') + url.search;
-            fetchContent(target, true);
+            loadPage(target, true);
             exitSearch();
             break;
         }
@@ -1424,7 +837,6 @@
       if (e.target.closest('button, a, input, select')) e.preventDefault();
     });
   })();
-
   function toggleSortMenu(e) {
     e.stopPropagation();
     var menu = document.getElementById('sort-menu');
@@ -1594,80 +1006,6 @@
     setCookie('sf_unit_system', system);
     window.location.reload();
   }
-
-  function syncDiff() {
-    var min = document.getElementById('diff-min');
-    var max = document.getElementById('diff-max');
-    var fill = document.getElementById('diff-fill');
-    /* No step on the inputs → they move smoothly under the mouse. Round
-       only when applying the filter (server expects ints). */
-    var raw1 = parseFloat(min.value), raw2 = parseFloat(max.value);
-    if (raw1 > raw2) { var tmp = raw1; raw1 = raw2; raw2 = tmp; min.value = raw1; max.value = raw2; }
-    var v1 = Math.round(raw1), v2 = Math.round(raw2);
-    document.getElementById('diff-min-val').textContent = v1;
-    document.getElementById('diff-max-val').textContent = v2;
-    var p1 = (raw1 - 1) / 9, p2 = (raw2 - 1) / 9;
-    /* Fill edges sit on the thumb centers, whose travel stops half a
-       thumb short of each end of the track. */
-    var travel = '(100% - var(--thumb-size))';
-    fill.style.left = 'calc(' + travel + ' * ' + p1 + ' + var(--thumb-size) / 2)';
-    fill.style.width = 'calc(' + travel + ' * ' + (p2 - p1) + ')';
-  }
-  window.syncDiff = syncDiff;
-  syncDiff();
-
-  document.getElementById('diff-min').addEventListener('change', applyFilters);
-  document.getElementById('diff-max').addEventListener('change', applyFilters);
-
-  /* Native click-to-position only works when the click hits an input.
-     Both inputs have pointer-events:none so the visible track catches
-     the click; we then dispatch the click onto the nearer thumb. The
-     native browser behavior would otherwise route everything to the
-     topmost input (diff-max). */
-  (function() {
-    var wrap = document.querySelector('.diff-sliders');
-    if (!wrap) return;
-    wrap.addEventListener('pointerdown', function(e) {
-      if (e.button !== 0) return;
-      var rect = wrap.getBoundingClientRect();
-      var x = e.clientX - rect.left;
-      var min = document.getElementById('diff-min');
-      var max = document.getElementById('diff-max');
-      /* Thumb centers travel across [size/2, width - size/2]; mapping
-         clicks through that same space keeps the same spot of the knob
-         under the cursor for the whole drag. */
-      var range = 9;
-      var thumb = parseFloat(getComputedStyle(wrap).getPropertyValue('--thumb-size')) || 20;
-      function toValue(px) {
-        var usable = Math.max(rect.width - thumb, 1);
-        var t = Math.max(0, Math.min(usable, px - thumb / 2)) / usable;
-        return 1 + t * range;
-      }
-      var value = toValue(x);
-      var distMin = Math.abs(value - parseFloat(min.value));
-      var distMax = Math.abs(value - parseFloat(max.value));
-      var target = distMin <= distMax ? min : max;
-      target.value = value;
-      target.dispatchEvent(new Event('input', { bubbles: true }));
-      target.focus();
-      /* Forward subsequent pointermoves until pointerup to that input
-         so the drag continues smoothly. */
-      function onMove(ev) {
-        var px = ev.clientX - rect.left;
-        target.value = toValue(px);
-        target.dispatchEvent(new Event('input', { bubbles: true }));
-      }
-      function onUp() {
-        window.removeEventListener('pointermove', onMove);
-        window.removeEventListener('pointerup', onUp);
-        target.dispatchEvent(new Event('change', { bubbles: true }));
-      }
-      window.addEventListener('pointermove', onMove);
-      window.addEventListener('pointerup', onUp);
-      e.preventDefault();
-    });
-  })();
-
   (function() {
     var isResizing = false;
     var currentSide = null;
@@ -1878,431 +1216,5 @@
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', function(e) { onUp(false, e); });
     window.addEventListener('pointercancel', function(e) { onUp(true, e); });
-  })();
-
-  refreshIcons();
-  initCSelects();
-  initUnitsTables();
-  syncSearchCancel();
-  (function() {
-    var sortMenu = document.getElementById('sort-menu');
-    var sortTrigger = document.getElementById('sort-trigger');
-    if (!sortMenu || !sortTrigger) return;
-    var ctrl = window._morphSelect(sortTrigger, sortMenu);
-    ctrl.sync = function() { window._renderSortMenu(sortMenu, sortMenu.dataset.value); };
-  })();
-  syncSidebarIcon('left');
-  syncSidebarIcon('right');
-  document.documentElement.classList.remove('suppress-transitions');
-
-  function restoreTreeFromUrl() {
-    ensureTopicTree();
-    if (!_topicTree || _topicTreeMode !== 'checkbox') return;
-    var url = new URL(window.location);
-    var idsParam = url.searchParams.get('ids');
-    var excludeAll = url.searchParams.get('exclude_all') === '1';
-    window._restoringFilters = true;
-    try {
-      var roots = treeRootNodes();
-      roots.forEach(function(node) { _topicTree.checkNode(node, false); });
-      if (!excludeAll) {
-        if (idsParam === null) {
-          roots.forEach(function(node) { _topicTree.checkNode(node, true); });
-        } else if (idsParam !== '') {
-          idsParam.split(',').forEach(function(id) {
-            var node = _topicTree.getNodeById(id);
-            if (node) _topicTree.checkNode(node, true);
-    });
-    if (typeof renderMathInContent === 'function') renderMathInContent();
-  }
-      }
-    } finally {
-      window._restoringFilters = false;
-    }
-  }
-
-  function restoreFiltersFromUrl() {
-    var url = new URL(window.location);
-
-    window._dimensionSymbols.forEach(function(d) {
-      var rows = document.querySelectorAll('.filter-dim-row[data-dim="' + d + '"]');
-      if (rows.length === 0) return;
-      var row = rows[0];
-      var foundOp = 'eq', foundVal = null;
-      ['eq','geq','leq'].forEach(function(op) {
-        var v = url.searchParams.get(d + '_' + op);
-        if (v !== null) { foundOp = op; foundVal = v; }
-      });
-      row.querySelector('.dim-op').value = foundOp;
-      row.querySelector('.dim-val').value = (foundVal !== null ? foundVal : '');
-    });
-
-    var qtyParam = url.searchParams.get('qty');
-    window._qtySelected = qtyParam ? qtyParam.split(',') : [];
-    window.renderQtyChips();
-    var qr = document.getElementById('qty-results');
-    if (qr) qr.classList.remove('open');
-
-    var diffMin = parseInt(url.searchParams.get('diff_min'));
-    var diffMax = parseInt(url.searchParams.get('diff_max'));
-    var dMinEl = document.getElementById('diff-min');
-    var dMaxEl = document.getElementById('diff-max');
-    if (!isNaN(diffMin)) dMinEl.value = diffMin;
-    if (!isNaN(diffMax)) dMaxEl.value = diffMax;
-    syncDiff();
-  }
-
-  function restoreAllFromUrl() {
-    restoreFiltersFromUrl();
-    restoreTreeFromUrl();
-    syncFilterStates();
-  }
-  window.restoreAllFromUrl = restoreAllFromUrl;
-  restoreFiltersFromUrl();
-  restoreTreeFromUrl();
-  syncFilterStates();
-  syncViewTabLinks();
-  window._initLatexObserver = function() {
-    if (typeof katex !== 'undefined') observeLatexIn(document.querySelector('#main-content'));
-  };
-  /* Big constant display: integer/dot/digits are \htmlClass-wrapped server-side.
-     Hide trailing decimals until the box fits, then fade them via a gradient
-     mask anchored at the mantissa's right edge so the \times10^ stays opaque.
-     Hiding (not deleting) lets resizes bring trimmed digits back. */
-  function layoutConstantValues() {
-    document.querySelectorAll('.constant-box').forEach(function(box) {
-      var val = box.querySelector('.const-value');
-      if (!val) return;
-      var decs = Array.prototype.slice.call(val.querySelectorAll('.cv-dec'));
-      var dot = val.querySelector('.cv-dot');
-      if (!decs.length && !dot) return;
-      decs.forEach(function(sp) { sp.style.display = ''; });
-      if (dot) dot.style.display = '';
-      val.style.maskImage = '';
-      val.style.webkitMaskImage = '';
-      var guard = decs.length + 1;
-      while (box.scrollWidth > box.clientWidth && guard-- > 0) {
-        var last = null;
-        for (var i = decs.length - 1; i >= 0; i--) {
-          if (decs[i].style.display !== 'none') { last = decs[i]; break; }
-        }
-        if (!last) break;
-        last.style.display = 'none';
-      }
-      var visible = decs.filter(function(sp) { return sp.style.display !== 'none'; });
-      if (dot) dot.style.display = visible.length ? '' : 'none';
-      var anchor = null;
-      if (visible.length) {
-        anchor = visible[visible.length - 1];
-      } else if (dot && dot.style.display !== 'none') {
-        anchor = dot;
-      } else {
-        anchor = val.querySelector('.cv-int');
-      }
-      if (!anchor) return;
-      var vRect = val.getBoundingClientRect();
-      var mantEnd = anchor.getBoundingClientRect().right - vRect.left;
-      if (!vRect.width || mantEnd <= 0) return;
-      var fadeW = Math.max(40, Math.min(mantEnd * 0.25, 160));
-      var solid = Math.max(mantEnd - fadeW, 0);
-      /* Digits dissolve; the exponent restores to opaque after the band. */
-      var grad = 'linear-gradient(90deg, #000 0, #000 ' + solid.toFixed(1) +
-                 'px, transparent ' + (mantEnd + 1).toFixed(1) + 'px';
-      var timesEl = val.querySelector('.cv-times');
-      if (timesEl) {
-        var tStart = timesEl.getBoundingClientRect().left - vRect.left;
-        grad += ', #000 ' + Math.max(tStart - 1, mantEnd + 1).toFixed(1) + 'px';
-      }
-      val.style.webkitMaskImage = grad + ')';
-      val.style.maskImage = grad + ')';
-    });
-  }
-  function recheckConstantValues() {
-    /* Two RAFs so layout settles after KaTeX writes new DOM. */
-    requestAnimationFrame(function() {
-      requestAnimationFrame(function() { layoutConstantValues(); });
-    });
-  }
-  syncDockPills();
-  updateOverflowPadding();
-  updateDimNameFits();
-  layoutConstantValues();
-  var mainContentEl = document.getElementById('main-content');
-  if (mainContentEl) {
-    new MutationObserver(function() { recheckConstantValues(); })
-      .observe(mainContentEl, { childList: true });
-  }
-  /* KaTeX re-flows the dim-symbol after auto-render; re-measure once it
-     has finished so the names show/hide correctly. */
-  function recheckAfterKatex() {
-    recheckConstantValues();
-    requestAnimationFrame(function() {
-      requestAnimationFrame(function() { updateDimNameFits(); });
-    });
-  }
-  if (document.documentElement.classList.contains('katex-ready')) {
-    recheckAfterKatex();
-  } else {
-    var obs2 = new MutationObserver(function() {
-      if (document.documentElement.classList.contains('katex-ready')) {
-        obs2.disconnect();
-        recheckAfterKatex();
-      }
-    });
-    obs2.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
-  }
-  window.addEventListener('resize', function() {
-    updateOverflowPadding();
-    updateDimNameFits();
-    layoutConstantValues();
-  });
-
-  function copyFormula(fmt) {
-    var el = document.getElementById('formula-math');
-    var latex = document.getElementById('formula-tex');
-    if (!latex) return;
-    var tex = latex.textContent;
-    var doCopy = null;
-
-    if (fmt === 'latex') {
-      doCopy = navigator.clipboard.writeText(tex);
-    } else if (fmt === 'unicode') {
-      doCopy = import('https://cdn.jsdelivr.net/npm/unicodeit@0.7.5/+esm').then(function(mod) {
-        return navigator.clipboard.writeText(mod.replace(tex));
-      });
-    } else if (fmt === 'png' || fmt === 'svg') {
-      var url = 'https://latex.codecogs.com/' + fmt + '.latex?' + encodeURIComponent((fmt === 'png' ? '\\dpi{3000}' : '') + tex);
-      doCopy = fetch(url).then(function(r) { return r.blob(); }).then(function(blob) {
-        var item = {};
-        item['image/' + fmt] = blob;
-        return navigator.clipboard.write([new ClipboardItem(item)]);
-      });
-    }
-
-    if (doCopy) {
-      var labelMap = { latex: 'LaTeX', unicode: 'Unicode', png: 'PNG', svg: 'SVG' };
-      var label = labelMap[fmt] || fmt;
-      doCopy.then(function() { showToast(window._localeUI.toast.copied + ' ' + label, 'success'); })
-            .catch(function(e) { showToast(window._localeUI.toast.copy_failed + ': ' + e.message, 'error'); });
-    }
-  }
-  window.copyFormula = copyFormula;
-
-  function copySqlBlock(btn) {
-    var block = btn.closest('.sql-block');
-    var pre = block ? block.querySelector('pre') : null;
-    if (!pre || !pre.textContent.trim()) return;
-    navigator.clipboard.writeText(pre.textContent)
-      .then(function() { showToast(window._localeUI.toast.copied + ' SQL', 'success'); })
-      .catch(function(e) { showToast(window._localeUI.toast.copy_failed + ': ' + e.message, 'error'); });
-  }
-
-  function openFormulaSqlModal() {
-    var menu = document.getElementById('formula-copy-menu');
-    if (menu) menu.classList.remove('open');
-    var modal = document.getElementById('formula-sql-modal');
-    if (modal) modal.classList.add('open');
-  }
-  function closeFormulaSqlModal() {
-    var modal = document.getElementById('formula-sql-modal');
-    if (modal) modal.classList.remove('open');
-  }
-  window.openFormulaSqlModal = openFormulaSqlModal;
-  window.closeFormulaSqlModal = closeFormulaSqlModal;
-
-  document.addEventListener('keydown', function(e) {
-    if (e.key !== 'Escape') return;
-    var modal = document.getElementById('formula-sql-modal');
-    if (modal && modal.classList.contains('open')) modal.classList.remove('open');
-  });
-
-  function toggleCopyMenu(e) {
-    e.stopPropagation();
-    var menu = document.getElementById('formula-copy-menu');
-    if (menu) menu.classList.toggle('open');
-  }
-  window.toggleCopyMenu = toggleCopyMenu;
-
-  (function() {
-    var searchForm = document.querySelector('.topbar-search form');
-    var searchInput = searchForm ? searchForm.querySelector('input[name="q"]') : null;
-    var suggestionsEl = document.getElementById('search-suggestions');
-    var suggestDebounce = null;
-    var suggestHighlight = -1;
-
-    function fetchSuggestions(q) {
-      if (!q) { suggestionsEl.classList.remove('open'); suggestionsEl.innerHTML = ''; return; }
-      fetch('/api/search-suggestions?q=' + encodeURIComponent(q))
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-          suggestionsEl.innerHTML = '';
-          suggestHighlight = -1;
-          if (!data.suggestions || data.suggestions.length === 0) {
-            suggestionsEl.classList.remove('open');
-            return;
-          }
-          data.suggestions.forEach(function(s) {
-            var div = document.createElement('div');
-            div.className = 'search-suggestion';
-            div.tabIndex = -1;
-            var headingSpan = document.createElement('span');
-            headingSpan.textContent = s.heading;
-            var kindSpan = document.createElement('span');
-            kindSpan.className = 'ss-kind';
-            kindSpan.textContent = s.kind;
-            div.appendChild(headingSpan);
-            div.appendChild(kindSpan);
-            div.addEventListener('click', function() {
-              suggestionsEl.classList.remove('open');
-              searchInput.value = s.heading;
-              navigateTo('/' + s.kind + '/' + s.id);
-            });
-            suggestionsEl.appendChild(div);
-          });
-          suggestionsEl.classList.add('open');
-        })
-        .catch(function() { suggestionsEl.classList.remove('open'); });
-    }
-
-    if (searchInput && suggestionsEl) {
-      searchInput.addEventListener('input', function() {
-        syncSearchCancel();
-        /* The URL is only updated on submit (Enter / submit button); the
-           box updates the URL via history on /search only on submit. */
-        clearTimeout(suggestDebounce);
-        suggestDebounce = setTimeout(function() {
-          fetchSuggestions(searchInput.value.trim());
-        }, 150);
-      });
-      searchInput.addEventListener('keydown', function(e) {
-        var items = suggestionsEl.querySelectorAll('.search-suggestion');
-        if (!suggestionsEl.classList.contains('open') || items.length === 0) return;
-        if (e.key === 'ArrowDown') {
-          e.preventDefault();
-          suggestHighlight = Math.min(suggestHighlight + 1, items.length - 1);
-          items.forEach(function(el, i) { el.classList.toggle('highlighted', i === suggestHighlight); });
-          items[suggestHighlight].scrollIntoView({ block: 'nearest' });
-        } else if (e.key === 'ArrowUp') {
-          e.preventDefault();
-          suggestHighlight = Math.max(suggestHighlight - 1, -1);
-          items.forEach(function(el, i) { el.classList.toggle('highlighted', i === suggestHighlight); });
-          if (suggestHighlight >= 0) items[suggestHighlight].scrollIntoView({ block: 'nearest' });
-        } else if (e.key === 'Enter' && suggestHighlight >= 0) {
-          e.preventDefault();
-          items[suggestHighlight].click();
-        }
-      });
-      searchInput.addEventListener('blur', function() {
-        setTimeout(function() { suggestionsEl.classList.remove('open'); }, 200);
-      });
-      searchInput.addEventListener('focus', function() {
-        if (searchInput.value.trim()) fetchSuggestions(searchInput.value.trim());
-      });
-    }
-
-    if (searchForm) {
-      searchForm.addEventListener('submit', function(e) {
-        e.preventDefault();
-        suggestionsEl.classList.remove('open');
-        if (searchInput) searchInput.blur();
-        var q = searchInput ? encodeURIComponent(searchInput.value.trim()) : '';
-        var url = q ? '/search?q=' + q : '/search';
-        navigateTo(url);
-      });
-    }
-
-    /* Keep <head> stylesheets in step with the target page so SPA
-       navigation renders identically to a full load (e.g. create.css,
-       which only /create declares). */
-    function syncPageStyles(doc) {
-      var want = {};
-      Array.prototype.forEach.call(doc.head.querySelectorAll('link[rel="stylesheet"]'), function(l) {
-        want[l.getAttribute('href')] = true;
-      });
-      Array.prototype.forEach.call(document.head.querySelectorAll('link[rel="stylesheet"]'), function(l) {
-        var href = l.getAttribute('href');
-        if (href in want) delete want[href];
-        else l.remove();
-      });
-      Object.keys(want).forEach(function(href) {
-        var l = document.createElement('link');
-        l.rel = 'stylesheet';
-        l.href = href;
-        document.head.appendChild(l);
-      });
-    }
-
-    function navigateTo(url, isPop) {
-      if (!isPop && window.location.pathname + window.location.search === url) return;
-      var si = document.querySelector('.topbar-search input[name="q"]');
-      /* Keep the query visible while on the search results; clear it as
-         soon as the user navigates away from them. */
-      var target = new URL(url, window.location.origin);
-      if (si) {
-        si.value = target.pathname === '/search' ? (target.searchParams.get('q') || '') : '';
-        syncSearchCancel();
-      }
-      var qs = document.getElementById('qty-search');
-      if (qs) qs.value = '';
-      fetch(url).then(function(r) { if (!r.ok) { window.location.href = url; return null; } return r.text(); }).then(function(html) {
-        if (!html) return;
-        var doc = new DOMParser().parseFromString(html, 'text/html');
-        syncPageStyles(doc);
-        var newTitle = doc.querySelector('title');
-        if (newTitle) document.title = newTitle.textContent;
-        var newContent = doc.getElementById('main-content');
-        if (!newContent) { window.location.href = url; return; }
-        document.getElementById('main-content').innerHTML = newContent.innerHTML;
-        Array.from(document.getElementById('main-content').querySelectorAll('script')).forEach(function(oldScript) {
-          /* Re-execute real JS only; leave data blocks (units table payload) untouched. */
-          var t = (oldScript.getAttribute('type') || '').toLowerCase();
-          if (t && t !== 'text/javascript' && t !== 'application/javascript' && t !== 'module') return;
-          var newScript = document.createElement('script');
-          if (oldScript.src) newScript.src = oldScript.src;
-          else newScript.textContent = oldScript.textContent;
-          oldScript.parentNode.replaceChild(newScript, oldScript);
-        });
-        document.getElementById('main-content').scrollTop = 0;
-        if (!isPop && !(window.history.state && window.history.state.url === url)) history.pushState({url: url}, '', url);
-        var isFormulas = isFormulasView();
-        var isSearch = url.indexOf('/search') !== -1;
-        document.querySelectorAll('.view-tab').forEach(function(t) {
-          if (isSearch) {
-            t.classList.remove('active');
-          } else {
-            t.classList.toggle('active', isFormulas ? t.getAttribute('href').indexOf('formulas') !== -1 : t.getAttribute('href').indexOf('quantities') !== -1);
-          }
-        });
-        renderMathInContent();
-        refreshIcons();
-        restoreAllFromUrl();
-        updateOverflowPadding();
-        updateDimNameFits();
-        syncDockPills();
-      }).catch(function() { window.location.href = url; });
-    }
-    document.body.addEventListener('click', function(e) {
-      var link = e.target.closest('a');
-      if (!link) return;
-      var href = link.getAttribute('href');
-      /* data-spa-full opts the link out of SPA navigation (full reload) */
-      if (!href || href.startsWith('http') || href.startsWith('//') || href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('javascript:') || link.hasAttribute('download') || link.getAttribute('target') === '_blank' || link.hasAttribute('data-spa-full')) return;
-      if (e.button === 1 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
-      if (href === '/') { e.preventDefault(); navigateTo('/formulas'); return; }
-      e.preventDefault();
-      var parts = href.split('?');
-      var base = parts[0];
-      var params = new URLSearchParams(window.location.search);
-      params.delete('q');
-      if (parts[1]) {
-        var linkParams = new URLSearchParams(parts[1]);
-        linkParams.forEach(function(value, key) { params.set(key, value); });
-      }
-      href = base + (params.toString() ? '?' + params.toString() : '');
-      navigateTo(href);
-    });
-    window.addEventListener('popstate', function() { navigateTo(window.location.href, true); });
-
-    window._navigateTo = navigateTo;
   })();
 })();

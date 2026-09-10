@@ -56,8 +56,11 @@ CREATE TABLE IF NOT EXISTS unit (
     quantity_id  TEXT NOT NULL REFERENCES quantity(id),
     system       TEXT CHECK (system IN ('SI','CGS','Imperial') OR system IS NULL),
     is_base      INTEGER NOT NULL DEFAULT 0 CHECK (is_base IN (0,1)),
-    -- Reference graph (NULL = root). Points to unit rows or compound_unit rows.
-    reference_unit_id    TEXT REFERENCES unit(id),
+    -- Reference graph (NULL = root). Points to unit rows or compound_unit rows
+    -- (no FK declared: SQLite can't model a union; the wiki documents the
+    -- cross-table semantics and `validate_graph` in conversion.py checks it
+    -- at runtime).
+    reference_unit_id    TEXT,
     factor               REAL NOT NULL DEFAULT 1,
     is_factor_reciprocal INTEGER NOT NULL DEFAULT 0 CHECK (is_factor_reciprocal IN (0,1)),
     constant_id          TEXT REFERENCES constant(id),
@@ -67,20 +70,16 @@ CREATE TABLE IF NOT EXISTS unit (
 );
 
 CREATE TABLE IF NOT EXISTS compound_unit (
-    id               TEXT PRIMARY KEY,
     quantity_id      TEXT NOT NULL REFERENCES quantity(id),
-    name_overwrite   TEXT,               -- JSON i18n override
-    symbol_overwrite TEXT,               -- LaTeX override; NULL means derive from `unit` parts
+    name_overwrite   TEXT,
+    symbol_overwrite TEXT,
     unit             TEXT NOT NULL,      -- JSON array [{"unit":"<id>","exponent":<n>},...]
     system           TEXT CHECK (system IN ('SI','CGS','Imperial') OR system IS NULL),
     is_base          INTEGER NOT NULL DEFAULT 0 CHECK (is_base IN (0,1)),
-    -- Same affine conversion as `unit`. NULL = root.
-    reference_unit_id    TEXT,
-    factor               REAL NOT NULL DEFAULT 1,
-    is_factor_reciprocal INTEGER NOT NULL DEFAULT 0 CHECK (is_factor_reciprocal IN (0,1)),
-    constant_id          TEXT REFERENCES constant(id),
-    constant_operator_id TEXT NOT NULL DEFAULT 'mul' CHECK (constant_operator_id IN ('mul', 'div', 'add', 'sub')),
-    offset               REAL NOT NULL DEFAULT 0,
+    -- No stored id: the row's slug is computed on the fly via
+    -- scifind_lib.units.compound_unit_slug(quantity_id, unit).
+    -- Value derives from the `unit` parts (see compound_parts_value).
+    PRIMARY KEY (quantity_id, unit),
     CHECK (json_valid(unit))
 );
 
@@ -94,7 +93,7 @@ CREATE TABLE IF NOT EXISTS constant (
     value        REAL,               -- numerical value; NULL for symbolic constants
     quantity_id  TEXT REFERENCES quantity(id),       -- quantity whose name applies
     unit_id      TEXT REFERENCES unit(id),           -- constant's preferred unit (a named unit row), or NULL
-    compound_unit_id TEXT REFERENCES compound_unit(id), -- ...or a multi-part compound_unit, or NULL
+    compound_unit_id TEXT, -- slug into compound_unit, computed via compound_unit_slug (no FK: id is not stored; resolved at runtime), or NULL
     CHECK (json_valid(name)),
     CHECK (description IS NULL OR json_valid(description)),
     CHECK (links IS NULL OR json_valid(links))

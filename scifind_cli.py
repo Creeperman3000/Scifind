@@ -14,6 +14,7 @@ Usage:
 """
 
 import argparse
+import json
 import os
 import sqlite3
 import sys
@@ -25,8 +26,8 @@ if str(_PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(_PROJECT_DIR))
 
 from scifind_lib import (
+    database_connection,
     database_path,
-    open_database,
     database_has_formula_table,
     initialize_database,
     render_formula_latex,
@@ -42,6 +43,8 @@ from scifind_lib import (
     fetch_quantity_units,
     fetch_quantity_formulas,
     fetch_all_quantities,
+    fetch_formulas_filtered,
+    fetch_units_with_quantity,
     export_to_csv,
     export_to_csv_directory,
     export_to_xlsx,
@@ -71,26 +74,23 @@ def _wrap(text):
     return textwrap.fill(text, width=72, initial_indent="  ", subsequent_indent="  ")
 
 
-def _print_unit_row(u):
-    mark = "\u2713" if u["is_base"] else " "
+def _print_unit_row(unit):
+    mark = "\u2713" if unit["is_base"] else " "
     print(
-        f"  [{mark}] ${u['symbol']}$  {_styled("bold", u['id'])}  "
-        f"[{u['system'] or 'any'}]"
+        f"  [{mark}] ${unit['symbol']}$  {_styled("bold", unit['id'])}  "
+        f"[{unit['system'] or 'any'}]"
     )
 
 
 def command_init(args):
     if not args.force:
-        existing = open_database()
-        try:
+        with database_connection() as existing:
             if database_has_formula_table(existing):
                 _exit_with_error(
                     "database already initialised. Pass --force to re-initialise "
                     "(this will wipe existing data).",
                     code=2,
                 )
-        finally:
-            existing.close()
 
     try:
         if args.force:
@@ -104,41 +104,29 @@ def command_init(args):
 
 
 def _parse_difficulty_range(raw):
-    range_parts = raw.split("-")
     try:
-        if len(range_parts) == 1:
-            value = int(range_parts[0])
-            return value, value
-        if len(range_parts) == 2:
-            return int(range_parts[0]), int(range_parts[1])
+        parts = [int(p) for p in raw.split("-")]
+        if len(parts) == 1:
+            return parts[0], parts[0]
+        if len(parts) == 2:
+            return parts[0], parts[1]
     except ValueError:
         pass
     _exit_with_error(f"invalid difficulty range {raw!r} (expected N or N-M)")
 
 
 def _query_formulas(conn, topic=None, difficulty=None):
-    where_clauses, params = [], []
-    if topic:
-        where_clauses.append("f.topic = ?")
-        params.append(topic)
+    diff_min = diff_max = None
     if difficulty:
         diff_min, diff_max = _parse_difficulty_range(difficulty)
-        if diff_min == diff_max:
-            where_clauses.append("f.difficulty = ?")
-            params.append(diff_min)
-        else:
-            where_clauses.append("f.difficulty BETWEEN ? AND ?")
-            params.extend([diff_min, diff_max])
+    return fetch_formulas_filtered(conn, topic=topic, diff_min=diff_min, diff_max=diff_max)
 
-    sql = """
-        SELECT f.id, json_extract(f.name, '$.en-us') AS name_en,
-               f.topic AS topic_id, f.difficulty
-        FROM formula f
-    """
-    if where_clauses:
-        sql += " WHERE " + " AND ".join(where_clauses)
-    sql += " ORDER BY f.topic, f.difficulty, f.id"
-    return conn.execute(sql, params).fetchall()
+
+def _print_section_header(title, qualifier=None):
+    header = f"\n  {_styled("bold", title)}"
+    if qualifier:
+        header += f" for {_styled("yellow", qualifier)}"
+    print(header + "\n")
 
 
 def _print_formulas(rows, id_width=40, row_indent="    ", topic_suffix=":"):
@@ -150,26 +138,27 @@ def _print_formulas(rows, id_width=40, row_indent="    ", topic_suffix=":"):
     print()
 
 
-def command_list(args):
-    conn = open_database()
-    rows = _query_formulas(conn, topic=args.topic, difficulty=args.difficulty)
-    conn.close()
+def _list_formulas(topic=None, difficulty=None, **print_kw):
+    with database_connection() as conn:
+        rows = _query_formulas(conn, topic=topic, difficulty=difficulty)
     if not rows:
         print("No formulas found.")
         return
-    _print_formulas(rows)
+    _print_formulas(rows, **print_kw)
+
+
+def command_list(args):
+    _list_formulas(topic=args.topic, difficulty=args.difficulty)
 
 
 def command_show(args):
-    conn = open_database()
-    row = fetch_formula(conn, args.id)
-    if not row:
-        print(f"Formula '{args.id}' not found.")
-        sys.exit(1)
-    related = fetch_formula_relations(conn, args.id)
-    quantities = fetch_formula_quantities(conn, args.id)
-    latex = render_formula_latex(conn, args.id, locale="en-us")
-    conn.close()
+    with database_connection() as conn:
+        row = fetch_formula(conn, args.id)
+        if not row:
+            _exit_with_error(f"Formula '{args.id}' not found.")
+        related = fetch_formula_relations(conn, args.id)
+        quantities = fetch_formula_quantities(conn, args.id)
+        latex = render_formula_latex(conn, args.id, locale="en-us")
 
     name = localise_english(row["name"])
     description = localise_english(row["description"])
@@ -202,9 +191,8 @@ def command_show(args):
 
 
 def command_search(args):
-    conn = open_database()
-    rows = search_entities(conn, args.query, args.limit)
-    conn.close()
+    with database_connection() as conn:
+        rows = search_entities(conn, args.query, args.limit)
     if not rows:
         print("No results.")
         return
@@ -222,55 +210,46 @@ def _unit_str_for_quantity(conn, qid, system="SI"):
     if base["kind"] == "compound_unit":
         unit_json = base["unit"]
     else:
-        unit_json = f'[{{"unit": "{base["id"]}", "exponent": 1}}]'
+        unit_json = json.dumps([{"unit": base["id"], "exponent": 1}])
     return format_unit_symbol_plain(unit_json)
 
 
 def command_quantities(args):
-    conn = open_database()
-    if args.formula:
-        rows = fetch_formula_quantities(conn, args.formula)
-    else:
-        rows = fetch_all_quantities(conn)
-    if not rows:
-        conn.close()
-        print("No quantities found.")
-        return
-
-    header = f"\n  {_styled("bold", 'Quantities')}"
-    if args.formula:
-        header += f" for {_styled("yellow", args.formula)}"
-    print(header + "\n")
-
-    for qty in rows:
-        dimensions = format_dimensions_plain(*dimensions_from_row(qty))
-        unit_str = _unit_str_for_quantity(conn, qty["id"])
-        print(f"  ${qty['symbol']}$  {_styled("bold", qty['name_en'])}  ({_styled("dim", qty['id'])})")
-        if unit_str:
-            print(f"      Dimensions: {_styled("dim", dimensions)}  default unit: {unit_str}")
+    with database_connection() as conn:
+        if args.formula:
+            rows = fetch_formula_quantities(conn, args.formula)
         else:
-            print(f"      Dimensions: {_styled("dim", dimensions)}")
-    conn.close()
+            rows = fetch_all_quantities(conn)
+        if not rows:
+            print("No quantities found.")
+            return
+
+        _print_section_header("Quantities", args.formula)
+
+        for qty in rows:
+            dimensions = format_dimensions_plain(*dimensions_from_row(qty))
+            unit_str = _unit_str_for_quantity(conn, qty["id"])
+            print(f"  ${qty['symbol']}$  {_styled("bold", qty['name_en'])}  ({_styled("dim", qty['id'])})")
+            suffix = f"  default unit: {unit_str}" if unit_str else ""
+            print(f"      Dimensions: {_styled("dim", dimensions)}{suffix}")
     print()
 
 
 def command_quantity(args):
-    conn = open_database()
-    q = fetch_quantity(conn, args.id)
-    if not q:
-        print(f"Quantity '{args.id}' not found.")
-        sys.exit(1)
-    units = fetch_quantity_units(conn, args.id)
-    formulas = fetch_quantity_formulas(conn, args.id)
+    with database_connection() as conn:
+        quantity = fetch_quantity(conn, args.id)
+        if not quantity:
+            _exit_with_error(f"Quantity '{args.id}' not found.")
+        units = fetch_quantity_units(conn, args.id)
+        formulas = fetch_quantity_formulas(conn, args.id)
 
-    name = localise_english(q["name"])
-    description = localise_english(q["description"])
-    dimensions = format_dimensions_plain(*dimensions_from_row(q))
-    unit_str = _unit_str_for_quantity(conn, args.id)
-    conn.close()
+        name = localise_english(quantity["name"])
+        description = localise_english(quantity["description"])
+        dimensions = format_dimensions_plain(*dimensions_from_row(quantity))
+        unit_str = _unit_str_for_quantity(conn, args.id)
 
-    label = f"${q['symbol']}$ \u2014 {name}"
-    print(f"\n  {_styled("bold", label)}  ({_styled("dim", q['id'])})")
+    label = f"${quantity['symbol']}$ \u2014 {name}"
+    print(f"\n  {_styled("bold", label)}  ({_styled("dim", quantity['id'])})")
     if dimensions:
         print(f"  Dimensions: {_styled("dim", dimensions)}")
     if unit_str:
@@ -293,29 +272,13 @@ def command_quantity(args):
 
 
 def command_units(args):
-    conn = open_database()
-    base_query = """
-        SELECT u.*, json_extract(q.name, '$.en-us') AS quantity_name
-        FROM unit u JOIN quantity q ON q.id = u.quantity_id
-    """
-    if args.quantity:
-        rows = conn.execute(
-            base_query + " WHERE u.quantity_id = ? ORDER BY u.is_base DESC, u.system, u.id",
-            (args.quantity,),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            base_query + " ORDER BY q.id, u.is_base DESC, u.system, u.id"
-        ).fetchall()
-    conn.close()
+    with database_connection() as conn:
+        rows = fetch_units_with_quantity(conn, args.quantity)
     if not rows:
         print("No units found.")
         return
 
-    header = f"\n  {_styled("bold", 'Units')}"
-    if args.quantity:
-        header += f" for {_styled("yellow", args.quantity)}"
-    print(header + "\n")
+    _print_section_header("Units", args.quantity)
 
     if args.quantity:
         for unit in rows:
@@ -331,42 +294,30 @@ def command_units(args):
 
 
 def command_browse(args):
-    conn = open_database()
-    rows = _query_formulas(conn)
-    conn.close()
-    if not rows:
-        print("No formulas found.")
-        return
-    _print_formulas(rows, id_width=38, row_indent="      ", topic_suffix="")
+    _list_formulas(id_width=38, row_indent="      ", topic_suffix="")
 
 
 def command_export(args):
-    conn = open_database()
     fmt = (args.format or "csv").lower()
 
-    if fmt == "csvdir":
-        target = args.output or "."
-        export_to_csv_directory(conn, target)
-        print(f"Exported per-table CSV files to {target}/")
-    elif fmt == "sql":
-        output = args.output or "scifind.sql"
-        Path(output).write_text(export_to_sql(conn), encoding="utf-8")
-        print(f"Exported to {output}")
-    elif fmt in ("xlsx", "ods"):
-        output = args.output or f"scifind.{fmt}"
-        if fmt == "xlsx":
-            export_to_xlsx(conn, output)
-        else:
-            export_to_ods(conn, output)
-        print(f"Exported to {output}")
-    else:
-        data = export_to_csv(conn)
-        if args.output:
-            Path(args.output).write_text(data, encoding="utf-8")
-            print(f"Exported to {args.output}")
+    with database_connection() as conn:
+        if fmt == "csvdir":
+            target = args.output or "."
+            export_to_csv_directory(conn, target)
+            print(f"Exported per-table CSV files to {target}/")
+            return
+        if fmt in ("xlsx", "ods"):
+            output = args.output or f"scifind.{fmt}"
+            {"xlsx": export_to_xlsx, "ods": export_to_ods}[fmt](conn, output)
+            print(f"Exported to {output}")
+            return
+        data = export_to_sql(conn) if fmt == "sql" else export_to_csv(conn)
+        output = args.output or ("scifind.sql" if fmt == "sql" else None)
+        if output:
+            Path(output).write_text(data, encoding="utf-8")
+            print(f"Exported to {output}")
         else:
             sys.stdout.write(data)
-    conn.close()
 
 
 def main():

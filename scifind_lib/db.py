@@ -3,6 +3,7 @@
 import logging
 import os
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 
 logger = logging.getLogger("scifind.db")
@@ -15,7 +16,7 @@ def database_path():
 
 
 def sql_literal(value):
-    """Render a Python value as a SQL literal string (single quotes doubled)."""
+    """Render a Python value as a SQL literal string; for SQL *files* only, never live queries."""
     if value is None:
         return "NULL"
     if isinstance(value, bool):
@@ -27,9 +28,18 @@ def sql_literal(value):
     return "'" + str(value).replace("'", "''") + "'"
 
 
+def insert_statement(table, columns, values):
+    """One INSERT OR IGNORE statement for `values` (a parallel list to `columns`)."""
+    vals = ", ".join(sql_literal(v) for v in values)
+    return f"INSERT OR IGNORE INTO {table} ({', '.join(columns)}) VALUES ({vals});"
+
+
 def in_clause(ids):
-    """Build a `(?, ?, …)` placeholder list for an IN clause + the tuple of values."""
-    return ",".join("?" for _ in ids), tuple(ids)
+    """Build a `(?, ?, …)` placeholder list + values; empty input yields ``("NULL", ())``."""
+    items = list(ids)
+    if not items:
+        return "NULL", ()
+    return ",".join("?" for _ in items), tuple(items)
 
 
 def open_database():
@@ -46,6 +56,16 @@ def open_database():
     return conn
 
 
+@contextmanager
+def database_connection():
+    """Yield an open DB connection, always closing it afterwards."""
+    conn = open_database()
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
 def database_has_formula_table(conn):
     return bool(conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='formula'"
@@ -53,14 +73,7 @@ def database_has_formula_table(conn):
 
 
 def initialize_database(force=False, schema_path=None, seed_path=None):
-    """Create (or recreate) the schema and seed data.
-
-    Foreign keys are disabled during the seed load so the seed file
-    doesn't have to be ordered around referential integrity.
-
-    ``force=True`` drops every table and reloads schema + seed. It requires
-    ``SCIFIND_ALLOW_FORCE_INIT=1`` so a stray web request can't wipe the DB.
-    """
+    """Create (or recreate) the schema and seed data; ``force`` requires SCIFIND_ALLOW_FORCE_INIT=1."""
     if force and os.environ.get("SCIFIND_ALLOW_FORCE_INIT", "").lower() not in (
         "1", "true", "yes",
     ):
@@ -88,7 +101,10 @@ def initialize_database(force=False, schema_path=None, seed_path=None):
             conn.commit()
         except Exception as exc:
             logger.error("initialize_database failed; rolling back: %s", exc)
-            conn.execute("ROLLBACK")
+            try:
+                conn.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
             raise
         return conn.total_changes
     finally:
