@@ -111,7 +111,15 @@ def wrap_symbol_in_latex(symbol):
 
 
 def with_subscript(sym, label):
-    """Append a `_{label}` subscript unless the symbol already carries one."""
+    """Append a subscript unless the symbol already carries one.
+
+    Single-character labels use the bare ``sym_x`` form (valid LaTeX
+    without braces); longer labels are wrapped as ``sym_{label}`` so
+    the whole label is subscripted.
+    """
     if label and "_" not in sym:
+        label = str(label)
+        if len(label) == 1:
+            return sym + "_" + label
         return sym + "_{" + label + "}"
     return sym

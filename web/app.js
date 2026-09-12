@@ -11,8 +11,8 @@
     setTimeout(function() { t.style.opacity = '0'; t.style.transition = 'opacity var(--dur-slow)'; setTimeout(function() { t.remove(); }, 300); }, 4000);
   }
   window.showToast = showToast;
-
   function refreshIcons() { if (typeof lucide !== 'undefined') lucide.createIcons(); }
+  window.refreshIcons = refreshIcons;
   function setCookie(name, value) { document.cookie = name + '=' + value + '; path=/; max-age=31536000'; }
 
   function dimValInputs() { return Array.prototype.slice.call(document.querySelectorAll('.filter-dim-row .dim-val')); }
@@ -20,6 +20,11 @@
   /* A dim field counts as set only if it resolves to an integer — this
      keeps half-typed expressions like "-" from looking like a filter. */
   function dimResolved(v) { return evalDimExpr(v) !== null; }
+  /* Shared with filters.js / detail.js (split from single-file app.js):
+     keep local bindings and mirror onto window. */
+  window.dimValInputs = dimValInputs;
+  window.dimVals = dimVals;
+  window.dimResolved = dimResolved;
 
   function evalDimExpr(raw) {
     var s = String(raw == null ? '' : raw).replace(/\s+/g, '');
@@ -80,6 +85,7 @@
     }
     return Math.round(result);
   }
+  window.evalDimExpr = evalDimExpr;
 
   /* Commit evaluated results into the fields on blur/Enter so the user
      sees what the filter actually applied. */
@@ -90,6 +96,7 @@
     });
   }
   function replayClass(el, cls) { el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); }
+  window.replayClass = replayClass;
 
   function syncSearchCancel() {
     var wrap = document.querySelector('.search-input-wrap');
@@ -232,6 +239,8 @@
     var nodes = el.querySelectorAll('.latex-observe');
     for (var i = 0; i < nodes.length; i++) renderLatexEl(nodes[i]);
   }
+  window.renderLatexEl = renderLatexEl;
+  window.renderLatexIn = renderLatexIn;
 
   function ensureLatexObserver() {
     if (_latexObserver) return _latexObserver;
@@ -293,6 +302,7 @@
     });
     mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
   }
+  window.onKatexReady = onKatexReady;
 
   var _pendingFetch = null;
 
@@ -381,6 +391,7 @@
       window.location.href = url;
     }).then(function() { if (_pendingFetch === controller) _pendingFetch = null; });
   }
+  window.loadPage = loadPage;
   (function() {
     var searchForm = document.querySelector('.topbar-search form');
     var searchInput = searchForm ? searchForm.querySelector('input[name="q"]') : null;
@@ -511,6 +522,70 @@
   /* ---- First-load boot (merged from boot.js; runs once) ----
      One-time widget init + restore-from-URL + observers. Post-swap
      sync reuses syncContent()/afterPageSwap() above. */
+  /* Restore helpers live at IIFE top level (not nested in initPage) so
+     syncContent()/afterPageSwap() can reuse them on every SPA swap. */
+  function restoreTreeFromUrl() {
+    ensureTopicTree();
+    if (!_topicTree || _topicTreeMode !== 'checkbox') return;
+    var url = new URL(window.location);
+    var idsParam = url.searchParams.get('ids');
+    var excludeAll = url.searchParams.get('exclude_all') === '1';
+    window._restoringFilters = true;
+    try {
+      var roots = treeRootNodes();
+      roots.forEach(function(node) { _topicTree.checkNode(node, false); });
+      if (!excludeAll) {
+        if (idsParam === null) {
+          roots.forEach(function(node) { _topicTree.checkNode(node, true); });
+        } else if (idsParam !== '') {
+          idsParam.split(',').forEach(function(id) {
+            var node = _topicTree.getNodeById(id);
+            if (node) _topicTree.checkNode(node, true);
+          });
+        }
+      }
+    } finally {
+      window._restoringFilters = false;
+    }
+  }
+
+  function restoreFiltersFromUrl() {
+    var url = new URL(window.location);
+
+    window._dimensionSymbols.forEach(function(d) {
+      var rows = document.querySelectorAll('.filter-dim-row[data-dim="' + d + '"]');
+      if (rows.length === 0) return;
+      var row = rows[0];
+      var foundOp = 'eq', foundVal = null;
+      ['eq','geq','leq'].forEach(function(op) {
+        var v = url.searchParams.get(d + '_' + op);
+        if (v !== null) { foundOp = op; foundVal = v; }
+      });
+      row.querySelector('.dim-op').value = foundOp;
+      row.querySelector('.dim-val').value = (foundVal !== null ? foundVal : '');
+    });
+
+    var qtyParam = url.searchParams.get('qty');
+    window._qtySelected = qtyParam ? qtyParam.split(',') : [];
+    window.renderQtyChips();
+    var qr = document.getElementById('qty-results');
+    if (qr) qr.classList.remove('open');
+
+    var diffMin = parseInt(url.searchParams.get('diff_min'));
+    var diffMax = parseInt(url.searchParams.get('diff_max'));
+    var dMinEl = document.getElementById('diff-min');
+    var dMaxEl = document.getElementById('diff-max');
+    if (!isNaN(diffMin)) dMinEl.value = diffMin;
+    if (!isNaN(diffMax)) dMaxEl.value = diffMax;
+    syncDiff();
+  }
+
+  function restoreAllFromUrl() {
+    restoreFiltersFromUrl();
+    restoreTreeFromUrl();
+    syncFilterStates();
+  }
+
   function initPage() {
     refreshIcons();
     initCSelects();
@@ -526,68 +601,8 @@
     syncSidebarIcon('left');
     syncSidebarIcon('right');
     document.documentElement.classList.remove('suppress-transitions');
+    syncContent(window.location.href);
 
-    function restoreTreeFromUrl() {
-      ensureTopicTree();
-      if (!_topicTree || _topicTreeMode !== 'checkbox') return;
-      var url = new URL(window.location);
-      var idsParam = url.searchParams.get('ids');
-      var excludeAll = url.searchParams.get('exclude_all') === '1';
-      window._restoringFilters = true;
-      try {
-        var roots = treeRootNodes();
-        roots.forEach(function(node) { _topicTree.checkNode(node, false); });
-        if (!excludeAll) {
-          if (idsParam === null) {
-            roots.forEach(function(node) { _topicTree.checkNode(node, true); });
-          } else if (idsParam !== '') {
-            idsParam.split(',').forEach(function(id) {
-              var node = _topicTree.getNodeById(id);
-              if (node) _topicTree.checkNode(node, true);
-            });
-          }
-        }
-      } finally {
-        window._restoringFilters = false;
-      }
-    }
-
-    function restoreFiltersFromUrl() {
-      var url = new URL(window.location);
-
-      window._dimensionSymbols.forEach(function(d) {
-        var rows = document.querySelectorAll('.filter-dim-row[data-dim="' + d + '"]');
-        if (rows.length === 0) return;
-        var row = rows[0];
-        var foundOp = 'eq', foundVal = null;
-        ['eq','geq','leq'].forEach(function(op) {
-          var v = url.searchParams.get(d + '_' + op);
-          if (v !== null) { foundOp = op; foundVal = v; }
-        });
-        row.querySelector('.dim-op').value = foundOp;
-        row.querySelector('.dim-val').value = (foundVal !== null ? foundVal : '');
-      });
-
-      var qtyParam = url.searchParams.get('qty');
-      window._qtySelected = qtyParam ? qtyParam.split(',') : [];
-      window.renderQtyChips();
-      var qr = document.getElementById('qty-results');
-      if (qr) qr.classList.remove('open');
-
-      var diffMin = parseInt(url.searchParams.get('diff_min'));
-      var diffMax = parseInt(url.searchParams.get('diff_max'));
-      var dMinEl = document.getElementById('diff-min');
-      var dMaxEl = document.getElementById('diff-max');
-      if (!isNaN(diffMin)) dMinEl.value = diffMin;
-      if (!isNaN(diffMax)) dMaxEl.value = diffMax;
-      syncDiff();
-    }
-
-    function restoreAllFromUrl() {
-      restoreFiltersFromUrl();
-      restoreTreeFromUrl();
-      syncFilterStates();
-    }
     restoreFiltersFromUrl();
     restoreTreeFromUrl();
     syncFilterStates();
@@ -607,6 +622,9 @@
     /* KaTeX re-flows the dim-symbol after auto-render; re-measure once it
        has finished so the names show/hide correctly. */
     function recheckAfterKatex() {
+      /* KaTeX (defer) may land after initPage ran renderMathInContent()
+         as a no-op; re-render listing/detail math now that it is ready. */
+      renderMathInContent();
       recheckConstantValues();
       requestAnimationFrame(function() {
         requestAnimationFrame(function() { updateDimNameFits(); });
