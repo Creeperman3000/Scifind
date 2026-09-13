@@ -11,17 +11,7 @@
   {% if r.kind == 'formula' %}
     {{ formula_card(r.href, r.latex, r.name, r.relation) }}
   {% else %}
-  <div class="formula-card">
-    <a href="{{ r.href }}">
-      <div class="formula-eqn">
-        {% if r.symbol %}<span class="latex-observe" data-latex="{{ r.symbol }}"></span>{% else %}{{ r.name }}{% endif %}
-      </div>
-      <div class="formula-name">{{ r.name }}</div>
-      {%- if r.relation %}
-      <div class="formula-relation-label">{{ r.relation }}</div>
-      {%- endif %}
-    </a>
-  </div>
+    {{ entity_card(r.href, r.symbol, r.name, r.relation) }}
   {% endif %}
 {% endfor %}
 </div>

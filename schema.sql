@@ -1,9 +1,19 @@
 PRAGMA journal_mode = WAL;
 
+CREATE TABLE IF NOT EXISTS topic (
+    id            TEXT PRIMARY KEY,
+    parent_id     TEXT REFERENCES topic(id),
+    name          TEXT NOT NULL,       -- JSON i18n: {"en-us":"...","cs-cz":"..."}
+    name_genative TEXT,                -- JSON i18n: {"cs-cz":"..."}
+    position      INTEGER NOT NULL DEFAULT 0,  -- depth-first order over the tree
+    CHECK (json_valid(name)),
+    CHECK (name_genative IS NULL OR json_valid(name_genative))
+);
+
 CREATE TABLE IF NOT EXISTS formula (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL,       -- JSON i18n: {"en-us":"...","en-uk":"..."}
-    topic       TEXT,                -- ID into tree.json
+    topic_id    TEXT REFERENCES topic(id),
     difficulty  INTEGER CHECK (difficulty BETWEEN 1 AND 10),
     description TEXT,                -- JSON i18n
     links       TEXT,                -- JSON array of URL strings: ["https://...", ...]
@@ -31,11 +41,13 @@ CREATE TABLE IF NOT EXISTS quantity (
     name             TEXT NOT NULL,       -- JSON i18n
     symbol           TEXT NOT NULL,
     symbol_overwrite TEXT,                -- JSON i18n override of quantity symbol
-    topic            TEXT,                -- ID into tree.json
+    topic_id         TEXT REFERENCES topic(id),
     difficulty       INTEGER CHECK (difficulty BETWEEN 1 AND 10),
     hidden           BOOLEAN NOT NULL DEFAULT 0 CHECK (hidden IN (0,1)),
     description      TEXT,                -- JSON i18n
     links            TEXT,                -- JSON array of URL strings: ["https://...", ...]
+    dim_symbol       TEXT,                -- base-dimension symbol (e.g. 'M'); NULL = derived quantity
+    dim_position     INTEGER,             -- order among base dimensions; column is 'dim_' || dim_symbol
     dim_M            REAL NOT NULL DEFAULT 0,
     dim_L            REAL NOT NULL DEFAULT 0,
     dim_T            REAL NOT NULL DEFAULT 0,
@@ -56,17 +68,20 @@ CREATE TABLE IF NOT EXISTS unit (
     quantity_id  TEXT NOT NULL REFERENCES quantity(id),
     system       TEXT CHECK (system IN ('SI','CGS','Imperial') OR system IS NULL),
     is_base      INTEGER NOT NULL DEFAULT 0 CHECK (is_base IN (0,1)),
-    -- Reference graph (NULL = root). Points to unit rows or compound_unit rows
-    -- (no FK declared: SQLite can't model a union; the wiki documents the
-    -- cross-table semantics and `validate_graph` in conversion.py checks it
-    -- at runtime).
+    -- Reference graph (NULL = root) into unit or compound_unit rows (no FK:
+    -- SQLite can't model a union; `validate_graph` in conversion.py checks it).
     reference_unit_id    TEXT,
-    factor               REAL NOT NULL DEFAULT 1,
-    is_factor_reciprocal INTEGER NOT NULL DEFAULT 0 CHECK (is_factor_reciprocal IN (0,1)),
+    factor_numerator     REAL,              -- NULL means 1
+    factor_denominator   REAL,              -- NULL means 1
     constant_id          TEXT REFERENCES constant(id),
-    constant_operator_id TEXT NOT NULL DEFAULT 'mul' CHECK (constant_operator_id IN ('mul', 'div', 'add', 'sub')),
+    -- x_ref = F * C^constant_power * (x_row + offset) + constant_shift * C
+    -- (F = factor ratio, NULL = 1; C = constant value).
+    constant_power       REAL NOT NULL DEFAULT 1,
+    constant_shift       REAL NOT NULL DEFAULT 0,
     offset               REAL NOT NULL DEFAULT 0,
-    CHECK (json_valid(name))
+    CHECK (json_valid(name)),
+    CHECK (factor_numerator IS NULL OR factor_numerator != 0),
+    CHECK (factor_denominator IS NULL OR factor_denominator != 0)
 );
 
 CREATE TABLE IF NOT EXISTS compound_unit (
@@ -76,9 +91,7 @@ CREATE TABLE IF NOT EXISTS compound_unit (
     unit             TEXT NOT NULL,      -- JSON array [{"unit":"<id>","exponent":<n>},...]
     system           TEXT CHECK (system IN ('SI','CGS','Imperial') OR system IS NULL),
     is_base          INTEGER NOT NULL DEFAULT 0 CHECK (is_base IN (0,1)),
-    -- No stored id: the row's slug is computed on the fly via
-    -- scifind_lib.units.compound_unit_slug(quantity_id, unit).
-    -- Value derives from the `unit` parts (see compound_parts_value).
+    -- No stored id: the slug is computed via compound_unit_slug(); value derives from `unit` parts.
     PRIMARY KEY (quantity_id, unit),
     CHECK (json_valid(unit))
 );
@@ -105,6 +118,28 @@ CREATE TABLE IF NOT EXISTS si_prefix (
     symbol   TEXT NOT NULL,              -- JSON i18n: {"en-us":"k","cs-cz":"k"}; LaTeX-safe raw symbols
     CHECK (json_valid(name)),
     CHECK (json_valid(symbol))
+);
+
+-- Slug overrides for single-part compound slugs with irregular names
+-- (hectare/are/litre family): (unit_id, prefix, exponent) -> slug base.
+CREATE TABLE IF NOT EXISTS slug_override (
+    unit_id  TEXT NOT NULL,
+    prefix   INTEGER,
+    exponent INTEGER NOT NULL,
+    slug     TEXT NOT NULL,
+    PRIMARY KEY (unit_id, prefix, exponent)
+);
+
+-- Relational operators backing the dimension search filter (?M_eq=1, ...).
+CREATE TABLE IF NOT EXISTS dimension_filter_operator (
+    operator_id TEXT PRIMARY KEY REFERENCES operator(id),
+    position    INTEGER NOT NULL
+);
+
+-- Small UI policy values (e.g. key 'si_visible_exponents' -> JSON array).
+CREATE TABLE IF NOT EXISTS app_config (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS formula_token (
@@ -135,13 +170,22 @@ CREATE TABLE IF NOT EXISTS formula_token (
 );
 
 CREATE TABLE IF NOT EXISTS operator (
-    id            TEXT PRIMARY KEY,
-    symbol        TEXT,               -- LaTeX display; NULL means invisible
-    arity         INTEGER NOT NULL CHECK (arity > 0),
-    precedence    INTEGER NOT NULL,
-    associativity TEXT NOT NULL CHECK (associativity IN ('left', 'right', 'none')),
-    operator_type TEXT NOT NULL CHECK (operator_type IN ('infix', 'prefix', 'postfix', 'relational')),
-    paren_arg     TEXT NOT NULL DEFAULT '[1]' CHECK (paren_arg LIKE '[%' AND json_valid(paren_arg))
+    -- Fully data-driven: adding an operator is an INSERT, never a code change.
+    id             TEXT PRIMARY KEY,
+    symbol         TEXT,               -- LaTeX display; NULL means juxtaposition
+    aliases        TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(aliases)),
+                                      -- JSON array of surface match strings: id spelling and/or LaTeX symbol
+    arity          INTEGER NOT NULL CHECK (arity > 0),
+    precedence     INTEGER NOT NULL,   -- binding strength; higher binds tighter
+    associativity  TEXT NOT NULL CHECK (associativity IN ('left', 'right', 'none')),
+    type           TEXT NOT NULL CHECK (type IN ('infix', 'prefix', 'postfix', 'relational')),
+                                      -- 'relational' = non-associative comparison;
+                                      -- `a op b op c` folds into one n-ary node
+    latex_template TEXT NOT NULL,      -- `[[i]]` slots, `[[i!]]` grouped, `[[i?..]]` conditionals
+                                       -- (full syntax: see operators.py `render_template`)
+    dim_spec       TEXT NOT NULL DEFAULT ''
+                                       -- `;`-separated clauses with one `result` clause
+                                       -- (full syntax: see operators.py `parse_dim_spec`)
 );
 
 CREATE INDEX IF NOT EXISTS idx_formula_token_formula  ON formula_token(formula_id);

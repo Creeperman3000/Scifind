@@ -95,8 +95,7 @@ from scifind_lib.fetch import (
     fetch_formula,
     fetch_formula_relations,
     fetch_formula_token_quantities,
-    fetch_formulas_with_all_quantities,
-    fetch_formulas_with_any_quantity,
+    fetch_formulas_with_quantities,
     fetch_keyed_rows,
     fetch_quantity,
     fetch_quantity_constants,
@@ -109,7 +108,6 @@ from scifind_lib.fetch import (
     sort_formulas,
     sort_quantities,
     sort_search_rows,
-    suggest_entities,
 )
 from scifind_lib.units import (
     compound_unit_by_slug,
@@ -117,6 +115,7 @@ from scifind_lib.units import (
     select_base_unit_with_fallback,
     unit_by_id,
 )
+from scifind_lib.operators import operand_info, render_template as render_op_template
 
 app = Flask(
     __name__,
@@ -217,12 +216,6 @@ CREATE_EQUATION_MAX_LENGTH = 2000
 logger = logging.getLogger("scifind")
 
 
-def _resolve_sort(value, allowed, default):
-    if value and value in allowed:
-        return value
-    return default
-
-
 def _topic_tree_data(tree, name_map, compressed, exclude_all=False, ids_provided=False):
     if not compressed and not exclude_all and not ids_provided:
         compressed = {r["id"] for r in tree} if tree else set()
@@ -237,7 +230,7 @@ def _topic_tree_data(tree, name_map, compressed, exclude_all=False, ids_provided
 
 
 def _attach_breadcrumbs(row, locale):
-    tree = load_tree()
+    tree = load_tree(get_db())
     name_map = topic_name_map(tree, locale)
     topic = row.get("topic_id")
     topic_path_ids = topic_path(tree, topic)
@@ -248,11 +241,6 @@ def _attach_breadcrumbs(row, locale):
     return row
 
 
-def _filtered_ids_for_query(tree, ids):
-    valid = [i for i in ids if i in all_tree_ids(tree)]
-    return expand_selection(tree, valid)
-
-
 def _passes_topic_difficulty(item, topic_filter, fs):
     """Shared topic + difficulty gate for the quantities/formulas list pages."""
     if topic_filter and item.get("topic_id") not in topic_filter:
@@ -261,16 +249,16 @@ def _passes_topic_difficulty(item, topic_filter, fs):
     return diff is None or fs.diff_min <= diff <= fs.diff_max
 
 
-def _all_tree_root_ids(tree):
-    return {r["id"] for r in tree}
-
-
-def _localised_quantity_names(conn, quantity_ids, locale):
-    if not quantity_ids:
-        return []
-    names_by_id = fetch_quantities_by_ids(conn, quantity_ids)
-    return [localise(names_by_id[qid], locale) for qid in quantity_ids
-            if qid in names_by_id]
+def _list_base(request_args, allowed_sorts, default_sort):
+    """Shared setup for /formulas and /quantities: db, filter state, tree, sort."""
+    conn = get_db()
+    fs = parse_filter_state(request_args, conn)
+    tree = load_tree(conn)
+    compressed = compress_selection(tree, fs.ids)
+    raw_sort = request_args.get("sort")
+    sort_key = raw_sort if raw_sort in allowed_sorts else default_sort
+    topic_filter = expand_selection(tree, [i for i in fs.ids if i in all_tree_ids(tree)])
+    return conn, fs, tree, compressed, sort_key, topic_filter
 
 
 _LATEX_TEXTCMD_RE = re.compile(r"\\(?:mathrm|text)\{([^}]*)\}")
@@ -285,19 +273,8 @@ def _join_names(names, locale="en-us", conj_key="heading.and"):
         return ""
     if len(names) == 1:
         return names[0]
-    locales = _available_locales()
-    cat, _, child = conj_key.partition(".")
-    conj = None
-    for loc in _locale_chain(locale):
-        conj = locales.get(loc, {}).get("ui", {}).get(cat, {}).get(child)
-        if conj is not None:
-            break
-    if not isinstance(conj, str):
-        conj = locales.get(DEFAULT_LOCALE, {}).get("ui", {}).get(cat, {}).get(child)
-    if not isinstance(conj, str):
-        if conj_key not in _WARNED_KEYS:
-            _WARNED_KEYS.add(conj_key)
-            logger.warning("l10n: _join_names key %r not found in any locale, falling back to 'and'", conj_key)
+    conj = _ui_lookup(locale, conj_key)
+    if conj == conj_key:
         conj = "and"
     if len(names) == 2:
         return f"{names[0]} {conj} {names[1]}"
@@ -323,25 +300,28 @@ def _tree_gen_map(tree):
 
 
 def _render_list_heading(view_label, tree, compressed, fs, conn, locale):
+    names_by_id = fetch_quantities_by_ids(conn, fs.quantity_ids) if fs.quantity_ids else {}
     return _heading_from_compressed(
-        view_label, compressed, topic_name_map(tree, locale), locale, fs,
-        dim_mode=g.get("dim_mode", "dim"), dimension_caches=_get_dimension_caches(),
-        active_quantity_names=_localised_quantity_names(conn, fs.quantity_ids, locale),
+        view_label, compressed, tree, locale, fs, conn,
+        active_quantity_names=[localise(names_by_id[qid], locale)
+                               for qid in fs.quantity_ids if qid in names_by_id],
     )
 
 
-_OP_SYMBOLS = {"eq": "=", "geq": "\u2265", "leq": "\u2264"}
+def _op_symbols(conn):
+    """{operator_id: symbol} for dimension filter ops, from the operator table."""
+    return {r["id"]: (r["symbol"] or r["id"])
+            for r in conn.execute("SELECT id, symbol FROM operator").fetchall()}
 
 
-def _heading_from_compressed(view_label, compressed, name_map, locale, fs,
-                             dim_mode="dim", dimension_caches=None,
+def _heading_from_compressed(view_label, compressed, tree, locale, fs, conn,
                              active_quantity_names=None):
     def _ui(key): return _ui_lookup(locale, key)
     parts = [view_label]
+    name_map = topic_name_map(tree, locale)
 
     if compressed:
-        tree = load_tree()
-        order = topic_tree_order()
+        order = topic_tree_order(conn)
         gen_map = _tree_gen_map(tree) if locale == "cs-cz" else {}
         seen, topic_names = set(), []
         for nid in sorted(compressed, key=lambda x: order.get(x, float("inf"))):
@@ -363,28 +343,25 @@ def _heading_from_compressed(view_label, compressed, name_map, locale, fs,
     clauses = []
     if fs.diff_min > MIN_DIFFICULTY or fs.diff_max < MAX_DIFFICULTY:
         where = _ui("heading.where_difficulty_is")
-        if fs.diff_min == fs.diff_max:
-            clauses.append(f"{where} {fs.diff_min}")
-        else:
-            clauses.append(f"{where} {fs.diff_min}\u2013{fs.diff_max}")
+        diff = str(fs.diff_min) if fs.diff_min == fs.diff_max else f"{fs.diff_min}\u2013{fs.diff_max}"
+        clauses.append(f"{where} {diff}")
 
-    if dimension_caches is None:
-        dimension_caches = {}
-    x_map = dimension_caches.get("var" if dim_mode == "unit" else dim_mode, {})
-    y_map = dimension_caches.get("unit", {})
+    caches = _get_dimension_caches()
+    dim_mode = g.get("dim_mode", "dim")
+    x_map = caches.get("var" if dim_mode == "unit" else dim_mode, {})
+    y_map = caches.get("unit", {})
+    op_symbols = _op_symbols(conn)
     dim_parts = []
-    for symbol in dimension_symbols():
+    for symbol in dimension_symbols(conn):
         d = fs.dimension_filter.get(symbol, {})
         if d.get("val") is None:
             continue
-        x_sym = _strip_textcmd(x_map.get(symbol, symbol))
-        y_sym = _strip_textcmd(y_map.get(symbol, symbol))
+        op = op_symbols.get(d.get("op", "eq"), d.get("op", "eq"))
         dv = str(d["val"]).translate(SUPERSCRIPT_DIGITS)
-        dim_parts.append(f"{x_sym} {_OP_SYMBOLS[d.get('op', 'eq')]} {y_sym}{dv}")
+        dim_parts.append(f"{_strip_textcmd(x_map.get(symbol, symbol))} {op} {_strip_textcmd(y_map.get(symbol, symbol))}{dv}")
     if dim_parts:
         d_conj = "heading.or" if fs.dim_mode == "or" else "heading.and"
-        joined = _join_names(dim_parts, locale, d_conj)
-        clauses.append(f"{_ui('heading.where_dimensions_are')} {joined}")
+        clauses.append(f"{_ui('heading.where_dimensions_are')} {_join_names(dim_parts, locale, d_conj)}")
 
     if clauses:
         parts.append(f" {_ui('heading.and')} ".join(clauses))
@@ -455,22 +432,12 @@ def _ensure_csrf_token():
 
 @app.before_request
 def _csrf_protect():
-    if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
-        return
-    if request.endpoint in (None, "static"):
-        return
-    sent = (
-        request.headers.get(_CSRF_HEADER)
-        or request.form.get(_CSRF_FORM_FIELD)
-        or ""
-    )
-    expected = session.get(_CSRF_SESSION_KEY) or ""
-    if not expected or not sent or not secrets.compare_digest(sent, expected):
-        return ("CSRF token missing or invalid", 400)
-
-
-@app.before_request
-def _seed_csrf_token():
+    if request.method in ("POST", "PUT", "PATCH", "DELETE") \
+            and request.endpoint not in (None, "static"):
+        sent = request.headers.get(_CSRF_HEADER) or request.form.get(_CSRF_FORM_FIELD) or ""
+        expected = session.get(_CSRF_SESSION_KEY) or ""
+        if not expected or not sent or not secrets.compare_digest(sent, expected):
+            return ("CSRF token missing or invalid", 400)
     _ensure_csrf_token()
 
 
@@ -607,27 +574,26 @@ def static_v(filename):
 
 @app.before_request
 def detect_locale():
-    def _resolve_setting(arg_key, cookie_key, allowed, default):
+    locales = _available_locales()
+    locale = request.args.get("locale") or request.cookies.get("sf_locale")
+    if locale in locales:
+        session["locale"] = locale
+    g.locale = session["locale"] if session.get("locale") in locales \
+        else _resolve_locale(request.headers.get("Accept-Language", ""))
+
+    for arg_key, cookie_key, allowed, default in (
+        ("dim_mode", "sf_dim_mode", ("dim", "var", "unit"), "dim"),
+        ("unit_system", "sf_unit_system", ("SI", "CGS", "Imperial"), "SI"),
+    ):
         value = request.args.get(arg_key) or request.cookies.get(cookie_key)
         if value in allowed:
             session[arg_key] = value
-        g.__setattr__(arg_key, session.get(arg_key, default))
-
-    locale = request.args.get("locale") or request.cookies.get("sf_locale")
-    if locale in _available_locales():
-        session["locale"] = locale
-    g.locale = (
-        session["locale"]
-        if session.get("locale") in _available_locales()
-        else _resolve_locale(request.headers.get("Accept-Language", ""))
-    )
-
-    _resolve_setting("dim_mode", "sf_dim_mode", ("dim", "var", "unit"), "dim")
-    _resolve_setting("unit_system", "sf_unit_system", ("SI", "CGS", "Imperial"), "SI")
+        setattr(g, arg_key, session.get(arg_key, default))
 
     meta = load_locale_config(g.locale)
-    g.locale_seo_description = meta.get("seoDescription") or load_locale_config(DEFAULT_LOCALE).get("seoDescription", "")
-    g.locale_seo_keywords = meta.get("seoKeywords") or load_locale_config(DEFAULT_LOCALE).get("seoKeywords", "")
+    fallback = load_locale_config(DEFAULT_LOCALE)
+    g.locale_seo_description = meta.get("seoDescription") or fallback.get("seoDescription", "")
+    g.locale_seo_keywords = meta.get("seoKeywords") or fallback.get("seoKeywords", "")
 
 
 _NOT_INITIALISED = (
@@ -669,16 +635,12 @@ def ensure_db_open():
     if request.endpoint in (None, "static"):
         return
     try:
-        db = get_db()
+        has_table = database_has_formula_table(get_db())
     except sqlite3.DatabaseError as exc:
         logger.warning("Database open failed: %s", exc)
-        return _uninitialised_response()
-    if not database_has_formula_table(db):
-        return _uninitialised_response()
-
-
-def _uninitialised_response():
-    return (_NOT_INITIALISED.format(os.environ.get("SCIFIND_DB", "scifind.db")), 503)
+        has_table = False
+    if not has_table:
+        return (_NOT_INITIALISED.format(os.environ.get("SCIFIND_DB", "scifind.db")), 503)
 
 
 def _get_dimension_caches():
@@ -695,78 +657,63 @@ def _get_dimension_caches():
 @app.context_processor
 def inject_globals():
     locale = g.get("locale", "en-us")
-    tree = load_tree()
-    conn = None
     try:
         conn = get_db()
     except sqlite3.OperationalError as exc:
         logger.warning("Database unavailable: %s", exc)
-    # A unit with no path to a root (cycle or orphan) is a hard-stop error.
+        conn = None
+    tree = load_tree(conn) if conn is not None else []
     if conn is not None:
         from scifind_lib.conversion import UnitGraphError, validate_graph
         try:
             validate_graph(conn)
         except UnitGraphError as exc:
             logger.error("Unit graph integrity violated: %s", exc)
-            raise RuntimeError(
-                f"Unit reference graph broken: {exc}. "
-                f"Fix seed.sql before serving traffic."
-            ) from exc
-    fs = parse_filter_state(request.args)
+            raise RuntimeError(f"Unit reference graph broken: {exc}. Fix seed.sql before serving traffic.") from exc
+    fs = parse_filter_state(request.args, conn)
     name_map = topic_name_map(tree, locale)
     compressed = compress_selection(tree, fs.ids)
 
-    all_quantities_for_filter = []
-    dimension_caches = {"var": {}, "unit": {}, "dim": {}}
-    dim_qty_names = {}
+    quantities_for_filter, dim_qty_names = [], {}
+    caches = {"var": {}, "unit": {}, "dim": {}}
     if conn is not None:
         try:
-            all_quantities_for_filter = [
+            quantities_for_filter = [
                 {"id": q["id"], "name": localise(q["name"], locale), "symbol": q["symbol"] or ""}
                 for q in fetch_all_quantities(conn)
             ]
         except sqlite3.OperationalError as exc:
             logger.warning("Quantity table unavailable: %s", exc)
-        dimension_caches = _get_dimension_caches()
+        caches = _get_dimension_caches()
         try:
-            qid_to_name = {
-                q["id"]: localise(q["name"], locale)
-                for q in conn.execute(
-                    f"SELECT id, name FROM quantity WHERE id IN ({','.join('?' * len(dimension_quantity_ids()))})",
-                    tuple(dimension_quantity_ids().values()),
-                ).fetchall()
-            }
-            for sym, qid in dimension_quantity_ids().items():
-                dim_qty_names[sym] = qid_to_name.get(qid, "")
+            qty_ids = dimension_quantity_ids(conn)
+            placeholders = ",".join("?" * len(qty_ids))
+            qid_to_name = {q["id"]: localise(q["name"], locale) for q in conn.execute(
+                f"SELECT id, name FROM quantity WHERE id IN ({placeholders})",
+                tuple(qty_ids.values())).fetchall()}
+            dim_qty_names = {sym: qid_to_name.get(qid, "") for sym, qid in qty_ids.items()}
         except sqlite3.OperationalError as exc:
             logger.warning("Base dimension names unavailable: %s", exc)
 
     dim_mode = g.get("dim_mode", "dim")
-    dim_symbols = dimension_caches.get(dim_mode, dimension_caches.get("dim", {}))
-
-    locale_list = [
-        {"code": code, "name": data.get("meta", {}).get("name", code)}
-        for code, data in _available_locales().items()
-    ]
-    locale_ui = _build_ui_with_fallback(locale)
-    is_qty_page = (request.path == "/quantities"
-                   or request.path.startswith(("/quantity/", "/unit/")))
     sort_context = _sort_context_for(request.path, request.args.get("sort"))
 
     return dict(
         tree_json=_topic_tree_data(tree, name_map, compressed, fs.exclude_all, ids_provided=fs.ids_provided),
         diff_min=fs.diff_min,
         diff_max=fs.diff_max,
-        current_view="quantities" if is_qty_page else "formulas",
+        current_view="quantities" if request.path == "/quantities"
+            or request.path.startswith(("/quantity/", "/unit/")) else "formulas",
         dim_filter=fs.dimension_filter,
         dim_mode=fs.dim_mode,
         qty_mode=fs.quantity_mode,
-        all_quantities_for_filter=all_quantities_for_filter,
-        dim_symbols=dim_symbols,
+        all_quantities_for_filter=quantities_for_filter,
+        dim_symbols=caches.get(dim_mode, caches.get("dim", {})),
         dim_qty_names=dim_qty_names,
-        dimension_symbol_list=dimension_symbols() if conn else [],
-        available_locales=locale_list,
-        locale_ui=locale_ui,
+        dimension_symbol_list=dimension_symbols(conn) if conn else [],
+        available_locales=[{"code": code, "name": data.get("meta", {}).get("name", code)}
+                           for code, data in _available_locales().items()],
+        locale_ui=_build_ui_with_fallback(locale),
         sort=sort_context["sort"],
         available_sorts=sort_context["available_sorts"],
         default_sort=sort_context["default_sort"],
@@ -787,7 +734,7 @@ def _sort_context_for(path, raw_value):
     return {
         "available_sorts": allowed,
         "default_sort": default,
-        "sort": _resolve_sort(raw_value, allowed, default),
+        "sort": raw_value if raw_value in allowed else default,
     }
 
 def _items_from_tokens(conn, tokens):
@@ -899,31 +846,27 @@ def _constant_units_table(conn, constant, system):
         return []
 
     locale = g.locale
-    base = None
-    if constant.get("unit_id"):
-        base = unit_by_id(conn, constant["unit_id"])
-    elif constant.get("compound_unit_id"):
-        base = compound_unit_by_slug(conn, constant["compound_unit_id"])
-    if base is None:
-        base = select_base_unit_with_fallback(conn, rq_id, system)
+    base = _resolve_base_unit(conn, constant.get("unit_id"),
+                              constant.get("compound_unit_id"),
+                              fallback_qid=rq_id)
     default_unit_html, default_unit_symbol = (
         render_compound_unit(base, locale) if base else (Markup(""), "")
     )
 
     graph = UnitGraph(conn, rq_id)
-    base_unit_ids = set()
     if base and base["kind"] == "compound_unit":
         base_unit_ids = {uid for uid, _ in parse_compound_unit(base["unit"])}
     elif base:
         base_unit_ids = {base["id"]}
-    base_system = base["system"] if base else "SI"
+    else:
+        base_unit_ids = set()
 
     units_rows = []
     if base:
         units_rows.append({
             "symbol_latex": default_unit_symbol,
             "name_html": default_unit_html,
-            "system": base_system,
+            "system": base["system"],
             "value_latex": _format_constant_value(si_value),
         })
 
@@ -948,6 +891,17 @@ def _constant_units_table(conn, constant, system):
     return units_rows
 
 
+def _detail_row(symbol_latex, name_html, paren_html, base, locale):
+    unit_html, unit_sym = render_compound_unit(base, locale)
+    return {
+        "symbol_latex": symbol_latex,
+        "name_html": Markup(name_html) if name_html else "",
+        "paren_html": Markup(paren_html) if paren_html else "",
+        "default_unit_html": unit_html,
+        "default_unit_symbol_latex": unit_sym,
+    }
+
+
 def _constant_detail_item(conn, item, locale):
     cid = item.get("constant_id")
     if not cid:
@@ -957,27 +911,16 @@ def _constant_detail_item(conn, item, locale):
     rq_id = item.get("related_quantity_id")
     rq_name = item.get("related_quantity_name")
     rq_symbol = (item.get("related_quantity_symbol") or "").strip()
-    paren_parts = []
+    paren_html = ""
     if rq_name:
-        paren_parts.append(f"${rq_symbol}$" if rq_symbol else "")
-        paren_parts.append(build_entity_link("quantity", rq_id, rq_name))
-    paren_html = f"({' '.join(part for part in paren_parts if part)})" if rq_name else ""
+        sym = f"${rq_symbol}$ " if rq_symbol else ""
+        paren_html = f"({sym}{build_entity_link('quantity', rq_id, rq_name)})"
 
-    base = None
-    if item.get("constant_unit_id"):
-        base = unit_by_id(conn, item["constant_unit_id"])
-    elif item.get("constant_compound_unit_id"):
-        base = compound_unit_by_slug(conn, item["constant_compound_unit_id"])
-    if base is None and item.get("related_quantity_id"):
-        base = select_base_unit_with_fallback(conn, item["related_quantity_id"], g.unit_system)
-    unit_html, unit_sym = render_compound_unit(base, locale)
-    return {
-        "symbol_latex": item.get("constant_symbol") or "",
-        "name_html": Markup(name_html),
-        "paren_html": Markup(paren_html) if paren_html else "",
-        "default_unit_html": unit_html,
-        "default_unit_symbol_latex": unit_sym,
-    }
+    base = _resolve_base_unit(conn, item.get("constant_unit_id"),
+                              item.get("constant_compound_unit_id"),
+                              fallback_qid=rq_id)
+    return _detail_row(item.get("constant_symbol") or "", name_html,
+                       paren_html, base, locale)
 
 
 def _build_formula_detail_items(conn, formula_id, locale, tokens=None):
@@ -996,7 +939,6 @@ def _build_formula_detail_items(conn, formula_id, locale, tokens=None):
                 result.append(const_item)
             continue
 
-        symbol_latex = render_variable_symbol(item, locale)
         qty_name = item.get("quantity_name") or qid.replace("_", " ").title()
         orig_symbol = (item.get("quantity_symbol") or "").strip()
         overwrite = localise(item.get("symbol_overwrite") or "", locale)
@@ -1009,11 +951,11 @@ def _build_formula_detail_items(conn, formula_id, locale, tokens=None):
             paren_parts.append(f"${orig_symbol}$")
 
         if no_raw:
-            marker_ids = set()
-            for m in re.finditer(r"\[\s*([^\]]+)\]", no_raw):
-                qid_from_marker = m.group(1).strip().split("|", 1)[0].strip().lower().replace(" ", "_")
-                if is_slug(qid_from_marker):
-                    marker_ids.add(qid_from_marker)
+            marker_ids = {
+                m.group(1).strip().split("|", 1)[0].strip().lower().replace(" ", "_")
+                for m in re.finditer(r"\[\s*([^\]]+)\]", no_raw)
+            }
+            marker_ids = {mid for mid in marker_ids if is_slug(mid)}
             if qid in marker_ids:
                 name_html = expand_quantity_markers(no_raw)
             else:
@@ -1024,60 +966,89 @@ def _build_formula_detail_items(conn, formula_id, locale, tokens=None):
             name_html = qlink
 
         paren_html = f"({' '.join(paren_parts)})" if paren_parts else ""
-        base = select_base_unit_with_fallback(conn, qid, g.unit_system)
-        unit_html, unit_sym = render_compound_unit(base, locale)
-
-        result.append({
-            "symbol_latex": symbol_latex,
-            "name_html": Markup(name_html) if name_html else "",
-            "paren_html": Markup(paren_html) if paren_html else "",
-            "default_unit_html": unit_html,
-            "default_unit_symbol_latex": unit_sym,
-        })
+        result.append(_detail_row(
+            render_variable_symbol(item, locale), name_html, paren_html,
+            select_base_unit_with_fallback(conn, qid, g.unit_system), locale,
+        ))
 
     return result
+
+
+def _detail_or_404(fetch_fn, entity_id, label):
+    """Fetch one row as a dict or return a (body, 404) tuple."""
+    row = fetch_fn(get_db(), entity_id)
+    if not row:
+        return None, (f"{label} not found", 404)
+    row = dict(row)
+    _attach_breadcrumbs(row, g.locale)
+    return row, None
+
+
+def _parse_links(raw):
+    try:
+        links = json.loads(raw) if raw else []
+    except (ValueError, TypeError):
+        return []
+    return links if isinstance(links, list) else []
+
+
+def _dim_latex(conn, dimensions):
+    caches = _get_dimension_caches()
+    return format_dimensions_latex(
+        *dimensions,
+        symbols=dimension_symbols(conn),
+        variable_symbols=caches["var"],
+        unit_symbols=caches["unit"],
+        dim_symbols=caches["dim"],
+        mode=g.get("dim_mode", "dim"),
+    )
+
+
+def _with_latex(conn, rows, locale, id_key="id"):
+    """Attach rendered formula latex to each row dict (in place)."""
+    out = []
+    for r in rows:
+        r = dict(r)
+        r["latex"] = render_formula_latex(conn, r[id_key], locale=locale) or ""
+        out.append(r)
+    return out
+
+
+def _resolve_base_unit(conn, unit_id=None, compound_id=None, fallback_qid=None):
+    base = None
+    if unit_id:
+        base = unit_by_id(conn, unit_id)
+    elif compound_id:
+        base = compound_unit_by_slug(conn, compound_id)
+    if base is None and fallback_qid:
+        base = select_base_unit_with_fallback(conn, fallback_qid, g.unit_system)
+    return base
+
+
+def _units_ctx(conn, quantity_id, ref_unit_id=None):
+    t = quantity_units_table(conn, quantity_id, g.unit_system,
+                             ref_unit_id=ref_unit_id, tr=_)
+    return {"units": t["units"], "table_data": t["payload"],
+            "si_prefixes": t["si_prefixes"],
+            "si_prefix_sections": t["si_prefix_sections"]}
 
 
 @app.route("/formula/<formula_id>")
 def formula_detail(formula_id):
     conn = get_db()
     locale = g.locale
-    row = fetch_formula(conn, formula_id)
-    if not row:
-        return "Formula not found", 404
-    row = dict(row)
-    _attach_breadcrumbs(row, locale)
-    latex = render_formula_latex(conn, formula_id, locale=locale)
-    related = []
-    for r in fetch_formula_relations(conn, formula_id):
-        r["latex"] = render_formula_latex(conn, r["related_id"], locale=locale)
-        related.append(r)
-    detail_items = _build_formula_detail_items(conn, formula_id, locale)
-
-    links = []
-    if row.get("links"):
-        try:
-            links = json.loads(row["links"])
-            if not isinstance(links, list):
-                links = []
-        except (ValueError, TypeError):
-            links = []
-
-    dim_caches = _get_dimension_caches()
-    dimensions = compute_formula_dimensions(conn, formula_id)
-    dim_latex = format_dimensions_latex(
-        *dimensions,
-        variable_symbols=dim_caches["var"],
-        unit_symbols=dim_caches["unit"],
-        dim_symbols=dim_caches["dim"],
-        mode=g.get("dim_mode", "dim"),
-    )
+    row, err = _detail_or_404(fetch_formula, formula_id, "Formula")
+    if err:
+        return err
     formula_sql, token_sql = build_formula_insert_sql(conn, formula_id)
     return render_template(
         "formula.html",
-        formula=row, latex=latex,
-        relations=related, detail_items=detail_items,
-        dim_latex=dim_latex, links=links,
+        formula=row, latex=render_formula_latex(conn, formula_id, locale=locale),
+        relations=_with_latex(conn, fetch_formula_relations(conn, formula_id),
+                              locale, id_key="related_id"),
+        detail_items=_build_formula_detail_items(conn, formula_id, locale),
+        dim_latex=_dim_latex(conn, compute_formula_dimensions(conn, formula_id)),
+        links=_parse_links(row.get("links")),
         formula_sql=formula_sql, token_sql=token_sql,
     )
 
@@ -1086,58 +1057,27 @@ def formula_detail(formula_id):
 def quantity_detail(quantity_id):
     conn = get_db()
     locale = g.locale
-    quantity = fetch_quantity(conn, quantity_id)
-    if not quantity:
-        return "Quantity not found", 404
-    quantity = dict(quantity)
-    _attach_breadcrumbs(quantity, locale)
-    primary_formulas, non_primary_formulas = fetch_quantity_formulas_by_side(conn, quantity_id)
-    primary_formulas = [dict(formula) for formula in primary_formulas]
-    non_primary_formulas = [dict(formula) for formula in non_primary_formulas]
-    for formulas in (primary_formulas, non_primary_formulas):
-        for formula in formulas:
-            formula["latex"] = render_formula_latex(conn, formula["id"], locale=locale) or ""
-    related_formulas = []
-    for r in fetch_quantity_related_formulas(conn, quantity_id):
-        r = dict(r)
-        r["latex"] = render_formula_latex(conn, r["id"], locale=locale)
-        related_formulas.append(r)
-
-    units_table = quantity_units_table(conn, quantity_id, g.unit_system, tr=_)
-    units = units_table["units"]
-
-    dim_caches = _get_dimension_caches()
-    dim_latex = format_dimensions_latex(
-        *dimensions_from_row(quantity),
-        variable_symbols=dim_caches["var"],
-        unit_symbols=dim_caches["unit"],
-        dim_symbols=dim_caches["dim"],
-        mode=g.get("dim_mode", "dim"),
-    )
+    quantity, err = _detail_or_404(fetch_quantity, quantity_id, "Quantity")
+    if err:
+        return err
+    primary, non_primary = fetch_quantity_formulas_by_side(conn, quantity_id)
     constants = []
     for const in fetch_quantity_constants(conn, quantity_id):
         const = dict(const)
         const["value_latex"] = _format_constant_value(const["value"])
-        if const.get("unit_id"):
-            base = unit_by_id(conn, const["unit_id"])
-        elif const.get("compound_unit_id"):
-            base = compound_unit_by_slug(conn, const["compound_unit_id"])
-        else:
-            base = None
+        base = _resolve_base_unit(conn, const.get("unit_id"),
+                                  const.get("compound_unit_id"))
         _html, const["unit_symbol_latex"] = render_compound_unit(base, g.locale) if base else (Markup(""), "")
         constants.append(const)
     return render_template(
         "quantity.html",
         q=quantity,
-        units=units,
-        primary_formulas=primary_formulas,
-        nonprimary_formulas=non_primary_formulas,
-        related_formulas=related_formulas,
+        primary_formulas=_with_latex(conn, primary, locale),
+        nonprimary_formulas=_with_latex(conn, non_primary, locale),
+        related_formulas=_with_latex(conn, fetch_quantity_related_formulas(conn, quantity_id), locale),
         constants=constants,
-        dim_latex=dim_latex,
-        table_data=units_table["payload"],
-        si_prefixes=units_table["si_prefixes"],
-        si_prefix_sections=units_table["si_prefix_sections"],
+        dim_latex=_dim_latex(conn, dimensions_from_row(quantity, conn)),
+        **_units_ctx(conn, quantity_id),
     )
 
 
@@ -1156,90 +1096,40 @@ def constant_detail(constant_id):
             or localise(constant["related_quantity_name"], "en-us")
         )
 
-    links = []
-    if constant.get("links"):
-        try:
-            links = json.loads(constant["links"])
-            if not isinstance(links, list):
-                links = []
-        except (ValueError, TypeError):
-            links = []
-
-    formulas = []
-    for formula in fetch_constant_formulas(conn, constant_id):
-        formula = dict(formula)
-        formula["latex"] = render_formula_latex(conn, formula["id"], locale=locale) or ""
-        formulas.append(formula)
-
-    dim_caches = _get_dimension_caches()
-    if constant.get("unit_id"):
-        base = unit_by_id(conn, constant["unit_id"])
-    elif constant.get("compound_unit_id"):
-        base = compound_unit_by_slug(conn, constant["compound_unit_id"])
-    else:
-        base = None
+    base = _resolve_base_unit(conn, constant.get("unit_id"),
+                              constant.get("compound_unit_id"))
     compound_unit_json = (base["unit"]
                           if base and base["kind"] == "compound_unit" else None)
-    dim_latex = format_dimensions_latex(
-        *compute_compound_unit_dimensions(conn, compound_unit_json),
-        variable_symbols=dim_caches["var"],
-        unit_symbols=dim_caches["unit"],
-        dim_symbols=dim_caches["dim"],
-        mode=g.get("dim_mode", "dim"),
-    )
-
     display = _constant_value_display(constant["value"]) if constant.get("value") is not None else None
     _, unit_symbol_latex = render_compound_unit(base, g.locale)
-    units = _constant_units_table(conn, constant, g.unit_system)
 
     return render_template(
         "constant.html",
         constant=constant,
-        links=links,
-        formulas=formulas,
-        dim_latex=dim_latex,
+        links=_parse_links(constant.get("links")),
+        formulas=_with_latex(conn, fetch_constant_formulas(conn, constant_id), locale),
+        dim_latex=_dim_latex(conn, compute_compound_unit_dimensions(conn, compound_unit_json)),
         display=display,
         value_latex=_constant_value_latex(display) if display else "",
         unit_symbol_latex=unit_symbol_latex,
-        units=units,
+        units=_constant_units_table(conn, constant, g.unit_system),
     )
 
 
 @app.route("/unit/<unit_id>")
 def unit_detail(unit_id):
     conn = get_db()
-    unit = fetch_unit(conn, unit_id)
-    if not unit:
-        return "Unit not found", 404
-    unit = dict(unit)
+    unit, err = _detail_or_404(fetch_unit, unit_id, "Unit")
+    if err:
+        return err
     locale = g.locale
     qty = fetch_quantity(conn, unit["quantity_id"])
     unit["quantity_name_localized"] = localise(qty["name"], locale) if qty else unit.get("quantity_id", "")
-    _attach_breadcrumbs(unit, locale)
-    units = table_data = si_prefixes = si_prefix_sections = None
-    if qty:
-        # On a unit's own page the reference unit is that unit.
-        units_table = quantity_units_table(
-            conn, unit["quantity_id"], g.unit_system, ref_unit_id=unit_id, tr=_,
-        )
-        units = units_table["units"]
-        table_data = units_table["payload"]
-        si_prefixes = units_table["si_prefixes"]
-        si_prefix_sections = units_table["si_prefix_sections"]
-    return render_template(
-        "unit.html",
-        unit=unit,
-        units=units,
-        table_data=table_data,
-        si_prefixes=si_prefixes,
-        si_prefix_sections=si_prefix_sections,
-        fixed_ref=True,
-    )
+    ctx = _units_ctx(conn, unit["quantity_id"], ref_unit_id=unit_id) if qty \
+        else {"units": None, "table_data": None, "si_prefixes": None, "si_prefix_sections": None}
+    return render_template("unit.html", unit=unit, fixed_ref=True, **ctx)
 
 
-
-SEARCH_QUERY_MAX_LENGTH = 200
-SUGGEST_QUERY_MAX_LENGTH = 50
 
 @app.route("/")
 def index():
@@ -1251,6 +1141,9 @@ def base_units_page():
     return redirect("/quantities?is_dim=1")
 
 
+def _empty_list_response(template, items_key, empty_key, sort_key, sorts):
+    return render_template(template, **{items_key: [], "heading": _(empty_key),
+                                        "sort": sort_key, "available_sorts": sorts})
 
 
 @app.route("/search")
@@ -1258,7 +1151,8 @@ def search_page():
     query = request.args.get("q", "").strip()[:SEARCH_QUERY_MAX_LENGTH]
     conn = get_db()
     locale = g.locale
-    sort_key = _resolve_sort(request.args.get("sort"), SEARCH_SORT_KEYS, DEFAULT_SEARCH_SORT)
+    raw_sort = request.args.get("sort")
+    sort_key = raw_sort if raw_sort in SEARCH_SORT_KEYS else DEFAULT_SEARCH_SORT
     hits = search_entities(conn, query, locale=locale)
     meta_by_kind = fetch_search_meta(conn, hits)
     hits = sort_search_rows(conn, hits, sort_key, locale, meta_by_kind)
@@ -1276,49 +1170,27 @@ def _enrich_search_hits(conn, hits, locale, meta_by_kind=None):
     """Attach latex / symbol data to each search hit for card-style rendering."""
     if meta_by_kind is None:
         meta_by_kind = fetch_search_meta(conn, hits)
-    formula_meta = meta_by_kind.get("formula", {})
-    quantity_meta = meta_by_kind.get("quantity", {})
-    unit_meta = meta_by_kind.get("unit", {})
-    constant_meta = meta_by_kind.get("constant", {})
+    meta = {kind: meta_by_kind.get(kind, {}) for kind in ("formula", "quantity", "unit", "constant")}
+    detail_keys = {"formula": "detail.formula", "quantity": "detail.quantity",
+                   "unit": "detail.unit", "constant": "detail.constant"}
 
     enriched = []
     for kind, ent_id, display_name in hits:
+        if kind not in meta:
+            continue
+        item_meta = meta[kind].get(ent_id, {})
+        item = {"kind": kind, "id": ent_id, "href": f"/{kind}/{ent_id}",
+                "relation": _(detail_keys[kind])}
         if kind == "formula":
-            meta = formula_meta.get(ent_id, {})
-            enriched.append({
-                "kind": kind, "id": ent_id,
-                "href": f"/formula/{ent_id}",
-                "latex": render_formula_latex(conn, ent_id, locale),
-                "name": display_name or meta.get("name_en") or ent_id,
-                "relation": _("detail.formula"),
-            })
-        elif kind == "quantity":
-            meta = quantity_meta.get(ent_id, {})
-            enriched.append({
-                "kind": kind, "id": ent_id,
-                "href": f"/quantity/{ent_id}",
-                "symbol": meta.get("symbol") or "",
-                "name": display_name or ent_id,
-                "relation": _("detail.quantity"),
-            })
-        elif kind == "unit":
-            meta = unit_meta.get(ent_id, {})
-            enriched.append({
-                "kind": kind, "id": ent_id,
-                "href": f"/unit/{ent_id}",
-                "symbol": meta.get("symbol") or "",
-                "name": display_name or (localise(meta["name"], locale) if meta.get("name") else ent_id),
-                "relation": _("detail.unit"),
-            })
-        elif kind == "constant":
-            meta = constant_meta.get(ent_id, {})
-            enriched.append({
-                "kind": kind, "id": ent_id,
-                "href": f"/constant/{ent_id}",
-                "symbol": meta.get("symbol") or "",
-                "name": display_name or ent_id,
-                "relation": _("detail.constant"),
-            })
+            item["latex"] = render_formula_latex(conn, ent_id, locale)
+            item["name"] = display_name or item_meta.get("name_en") or ent_id
+        else:
+            item["symbol"] = item_meta.get("symbol") or ""
+            if kind == "unit" and not display_name and item_meta.get("name"):
+                item["name"] = localise(item_meta["name"], locale)
+            else:
+                item["name"] = display_name or ent_id
+        enriched.append(item)
     return enriched
 
 
@@ -1326,7 +1198,7 @@ def _enrich_search_hits(conn, hits, locale, meta_by_kind=None):
 def search_suggestions():
     query = request.args.get("q", "").strip()[:SUGGEST_QUERY_MAX_LENGTH]
     locale = getattr(g, "locale", DEFAULT_LOCALE)
-    suggestions = suggest_entities(get_db(), query, locale=locale)
+    suggestions = search_entities(get_db(), query, limit=8, locale=locale)
     return {"suggestions": [
         {"id": s[1], "kind": s[0], "heading": s[2] or s[1]} for s in suggestions
     ]}
@@ -1336,37 +1208,27 @@ def search_suggestions():
 
 @app.route("/quantities")
 def all_quantities():
-    conn = get_db()
-    locale = g.locale
-    fs = parse_filter_state(request.args)
+    conn, fs, tree, compressed, sort_key, topic_filter = _list_base(
+        request.args, QUANTITY_SORT_KEYS, DEFAULT_QUANTITY_SORT)
     fs.quantity_mode = "or"
-    sort_key = _resolve_sort(request.args.get("sort"), QUANTITY_SORT_KEYS, DEFAULT_QUANTITY_SORT)
-    tree = load_tree()
-    compressed = compress_selection(tree, fs.ids)
-    if compressed == _all_tree_root_ids(tree):
+    locale = g.locale
+    if compressed == {r["id"] for r in tree}:
         return redirect("/quantities")
 
     if fs.exclude_all or (fs.ids_provided and not fs.ids):
-        return render_template(
-            "quantities.html",
-            quantities=[],
-            heading=_("detail.quantities_no_results"),
-            sort=sort_key,
-            available_sorts=QUANTITY_SORT_KEYS,
-        )
+        return _empty_list_response("quantities.html", "quantities",
+                                    "detail.quantities_no_results", sort_key, QUANTITY_SORT_KEYS)
 
-    raw_quantities = [quantity for quantity in fetch_all_quantities(conn)]
-    topic_filter = _filtered_ids_for_query(tree, fs.ids)
-    dim_qty_ids = set(dimension_quantity_ids().values()) if fs.base_quantity_only else None
+    dim_qty_ids = set(dimension_quantity_ids(conn).values()) if fs.base_quantity_only else None
     system = g.unit_system
     filtered = []
-    for quantity in raw_quantities:
-        quantity = dict(quantity)
+    for row in fetch_all_quantities(conn):
+        quantity = dict(row)
         _attach_breadcrumbs(quantity, locale)
 
         if not _passes_topic_difficulty(quantity, topic_filter, fs):
             continue
-        if fs.has_dimension_filter and not dimension_matches(quantity, fs.dimension_filter, fs.dim_mode):
+        if fs.has_dimension_filter and not dimension_matches(quantity, fs.dimension_filter, fs.dim_mode, conn):
             continue
         if fs.quantity_ids and quantity["id"] not in fs.quantity_ids:
             continue
@@ -1377,13 +1239,11 @@ def all_quantities():
         quantity["default_unit_html"], quantity["default_unit_symbol_latex"] = render_compound_unit(cu, locale)
         filtered.append(quantity)
 
-    filtered = sort_quantities(filtered, sort_key, locale)
+    filtered = sort_quantities(conn, filtered, sort_key, locale)
 
-    heading = _render_list_heading(
+    heading = _("detail.base_quantities") if fs.base_quantity_only else _render_list_heading(
         _("detail.quantities"), tree, compressed, fs, conn, locale,
     )
-    if fs.base_quantity_only:
-        heading = _("detail.base_quantities")
     return render_template(
         "quantities.html",
         quantities=filtered,
@@ -1395,27 +1255,17 @@ def all_quantities():
 
 @app.route("/formulas")
 def all_formulas():
-    conn = get_db()
+    conn, fs, tree, compressed, sort_key, topic_filter = _list_base(
+        request.args, FORMULA_SORT_KEYS, DEFAULT_FORMULA_SORT)
     locale = g.locale
-    fs = parse_filter_state(request.args)
-    tree = load_tree()
-    compressed = compress_selection(tree, fs.ids)
-    if compressed == _all_tree_root_ids(tree):
+    if compressed == {r["id"] for r in tree}:
         return redirect("/formulas")
 
-    sort_key = _resolve_sort(request.args.get("sort"), FORMULA_SORT_KEYS, DEFAULT_FORMULA_SORT)
-
     if fs.exclude_all or (fs.ids_provided and not fs.ids):
-        return render_template(
-            "formulas.html",
-            formulas=[],
-            heading=_("detail.formulas_no_results"),
-            sort=sort_key,
-            available_sorts=FORMULA_SORT_KEYS,
-        )
+        return _empty_list_response("formulas.html", "formulas",
+                                    "detail.formulas_no_results", sort_key, FORMULA_SORT_KEYS)
 
     formulas = [dict(formula) for formula in fetch_all_formulas(conn)]
-    topic_filter = _filtered_ids_for_query(tree, fs.ids)
     formulas = [formula for formula in formulas if _passes_topic_difficulty(formula, topic_filter, fs)]
 
     if fs.has_dimension_filter:
@@ -1423,16 +1273,11 @@ def all_formulas():
         dim_map = compute_all_formula_dimensions(conn, formula_ids)
         formulas = [
             formula for formula in formulas
-            if dimension_matches(dim_map.get(formula["id"], {}), fs.dimension_filter, fs.dim_mode)
+            if dimension_matches(dim_map.get(formula["id"], {}), fs.dimension_filter, fs.dim_mode, conn)
         ]
 
     if fs.quantity_ids:
-        quantity_match = (
-            fetch_formulas_with_any_quantity
-            if fs.quantity_mode == "or"
-            else fetch_formulas_with_all_quantities
-        )
-        matching_ids = quantity_match(conn, fs.quantity_ids)
+        matching_ids = fetch_formulas_with_quantities(conn, fs.quantity_ids, fs.quantity_mode)
         if matching_ids is not None:
             formulas = [formula for formula in formulas if formula["id"] in matching_ids]
 
@@ -1464,35 +1309,31 @@ def export():
     fmt = request.args.get("format") or request.cookies.get("sf_export_format", "csv")
     conn = get_db()
 
-    def _respond(data, mimetype, filename):
-        resp = Response(data, mimetype=mimetype, headers={"Content-Disposition": f"attachment; filename={filename}"})
-        resp.set_cookie("sf_export_format", fmt, max_age=365*24*3600, path="/")
-        return resp
-
-    def _binary_export(export_fn, mimetype, filename):
+    if fmt == "sql":
+        data, mimetype, filename = (export_to_sql(conn).encode("utf-8"),
+                                    "application/sql", "scifind.sql")
+    elif fmt in ("xlsx", "ods"):
+        export_fn, mimetype, filename = {
+            "xlsx": (export_to_xlsx,
+                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                     "scifind.xlsx"),
+            "ods": (export_to_ods,
+                    "application/vnd.oasis.opendocument.spreadsheet",
+                    "scifind.ods"),
+        }[fmt]
         buffer = io.BytesIO()
         export_fn(conn, buffer)
-        buffer.seek(0)
-        return _respond(buffer.getvalue(), mimetype, filename)
+        data = buffer.getvalue()
+    else:
+        data, mimetype, filename = (export_to_csv_zip(conn),
+                                    "application/zip", "scifind_csv.zip")
 
-    if fmt == "sql":
-        return _respond(export_to_sql(conn).encode("utf-8"),
-                        "application/sql", "scifind.sql")
-
-    if fmt == "xlsx":
-        return _binary_export(export_to_xlsx,
-                              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                              "scifind.xlsx")
-    if fmt == "ods":
-        return _binary_export(export_to_ods,
-                              "application/vnd.oasis.opendocument.spreadsheet",
-                              "scifind.ods")
-
-    return _respond(export_to_csv_zip(conn), "application/zip", "scifind_csv.zip")
+    resp = Response(data, mimetype=mimetype,
+                    headers={"Content-Disposition": f"attachment; filename={filename}"})
+    resp.set_cookie("sf_export_format", fmt, max_age=365 * 24 * 3600, path="/")
+    return resp
 
 
-
-CREATE_EQUATION_MAX_LENGTH = 2000
 
 @app.route("/create")
 def create_formula():
@@ -1501,208 +1342,163 @@ def create_formula():
 
 
 
-def _parse_override_form_keys():
-    """Walk request.form and collect per-quantity override entries."""
-    overrides = {}
-    sep = "]["
+def _parse_bracket(prefix, nparts, fields=None):
+    """Parse `prefix[a][b]...` form keys; blanks omitted, last non-blank wins."""
+    out, pre = {}, prefix + "["
     for key, values in request.form.lists():
-        if not key.startswith("override[") or not key.endswith("]"):
+        if not key.startswith(pre) or not key.endswith("]"):
             continue
-        body = key[len("override["):-1]
-        if sep not in body:
+        parts = key[len(pre):-1].split("][")
+        if len(parts) != nparts or (fields and parts[-1] not in fields):
             continue
-        ov_key, field = body.rsplit(sep, 1)
-        if field not in ("symbol", "name"):
-            continue
-        value = next((v for v in reversed(values) if v.strip()), "")
+        value = next((v for v in reversed(values) if v and v.strip()), "")
         if not value:
             continue
-        overrides.setdefault(ov_key, {})[field] = value
-    return overrides
+        node = out
+        for part in parts[:-1]:
+            node = node.setdefault(part, {})
+        node[parts[-1]] = value.strip()
+    return out
+
+
+def _check_equation():
+    """Return (equation, error) enforcing CREATE_EQUATION_MAX_LENGTH."""
+    equation = request.form.get("equation") or ""
+    if len(equation) > CREATE_EQUATION_MAX_LENGTH:
+        return None, f"equation exceeds {CREATE_EQUATION_MAX_LENGTH} characters"
+    return equation, None
 
 
 @app.route("/create/preview-render", methods=["POST"])
 def create_preview_render():
     """Form-POST version of /api/preview that also returns detail_items HTML."""
-    equation = (request.form.get("equation") or "").strip()
-    if len(equation) > CREATE_EQUATION_MAX_LENGTH:
-        return {"error": f"equation exceeds {CREATE_EQUATION_MAX_LENGTH} characters"}, 400
+    equation, error = _check_equation()
+    if error:
+        return {"error": error}, 400
     conn = get_db()
-    locale = g.locale
-    overrides = _parse_override_form_keys()
-    caches = _get_dimension_caches()
-    result = parse_and_preview_equation(conn, equation, locale=locale, dim_caches=caches, overrides=overrides, dim_mode=g.get("dim_mode", "dim"))
+    result = parse_and_preview_equation(
+        conn, equation.strip(), locale=g.locale, dim_caches=_get_dimension_caches(),
+        overrides=_parse_bracket("override", 2, ("symbol", "name")),
+        dim_mode=g.get("dim_mode", "dim"))
     if result.get("error") or not result.get("latex"):
         return result
-    items = _build_formula_detail_items(conn, None, locale, tokens=result["tokens"])
-    result["detail_items"] = items
+    result["detail_items"] = _build_formula_detail_items(
+        conn, None, g.locale, tokens=result["tokens"])
     return result
 
 
 def _operator_latex(item):
-    """Generate LaTeX for an operator in the token sidebar."""
-    op_id = item["id"]
-    symbol = item.get("symbol") or ""
-    op_type = item["operator_type"]
-    x, y = "x", "y"
-    if op_type in ("infix", "relational"):
-        if op_id == "frac":
-            return f"\\frac{{{x}}}{{{y}}}"
-        if op_id == "pow":
-            return f"{x}^{{{y}}}"
-        if symbol:
-            return f"{x} {symbol} {y}"
-        return f"{x} {y}"
-    if op_type == "prefix":
-        return f"-{x}" if symbol == "-" else f"{symbol} {x}"
-    if op_type == "postfix":
-        return f"{x}{symbol}" if symbol else x
-    return ""
+    """LaTeX for an operator in the token sidebar via its own template."""
+    try:
+        arity = int(item.get("arity") or 2)
+    except (TypeError, ValueError):
+        arity = 2
+    operands = ["x", "y", "z", "w"][:max(arity, 1)]
+    try:
+        return render_op_template(
+            item.get("latex_template") or "[[0]] [[1]]", operands,
+            [operand_info("operator")] * len(operands), item.get("id"))
+    except ValueError:
+        return item.get("symbol") or item["id"]
 
 
 def _render_token_item(item, kind, locale):
     """One <div class="qty-result"> for the token sidebar."""
+    esc = html_module.escape
     item = dict(item)
     if kind == "op":
-        sym_text = _operator_latex(item)
-        name = item["id"]
+        sym_text, name = _operator_latex(item), item["id"]
         insert = item.get("symbol") or item["id"]
-        search = " ".join([item["id"], item.get("symbol") or ""]).lower()
+        search = f'{item["id"]} {item.get("symbol") or ""}'
     else:
         sym_text = item.get("symbol") or ""
         name = localise(item.get("name") or "", locale, default="en-us") or item["id"]
         insert = item["id"]
-        search = " ".join([
-            item["id"], item.get("symbol") or "", str(item.get("name") or ""),
-        ]).lower()
-
-    sym_html = f'<span class="qty-result-sym">${html_module.escape(sym_text)}$</span>' if sym_text else '<span class="qty-result-sym"></span>'
-    return (
-        f'<div class="qty-result" data-kind="{kind}" data-insert="{html_module.escape(insert)}"'
-        f' data-search="{html_module.escape(search)}">'
-        f'{sym_html}'
-        f'<span class="qty-result-name">{html_module.escape(name)}</span>'
-        f'</div>'
-    )
+        search = f'{item["id"]} {item.get("symbol") or ""} {item.get("name") or ""}'
+    sym_html = f'<span class="qty-result-sym">${esc(sym_text)}$</span>' if sym_text else '<span class="qty-result-sym"></span>'
+    return (f'<div class="qty-result" data-kind="{kind}" data-insert="{esc(insert)}"'
+            f' data-search="{esc(search.lower())}">{sym_html}'
+            f'<span class="qty-result-name">{esc(name)}</span></div>')
 
 
 def _render_token_section(label, target_id, items, kind, locale, no_match_label):
     """One labelled <section> of token items with a collapse toggle."""
+    esc = html_module.escape
     body = "".join(_render_token_item(it, kind, locale) for it in items)
-    return (
-        f'<div class="section-label-row">'
-        f'<div class="section-label">{html_module.escape(label)}</div>'
-        f'<div class="filter-buttons">'
-        f'<button class="filter-btn" data-action="toggle-token-section" data-target="{target_id}" type="button">'
-        f'<span class="token-section-icon"><i data-lucide="chevron-up" width="16" height="16"></i></span>'
-        f'</button>'
-        f'</div></div>'
-        f'<div class="token-list" id="{target_id}">{body}</div>'
-        f'<div class="token-empty">{html_module.escape(no_match_label)}</div>'
-    )
+    return (f'<div class="section-label-row"><div class="section-label">{esc(label)}</div>'
+            f'<div class="filter-buttons"><button class="filter-btn" data-action="toggle-token-section"'
+            f' data-target="{target_id}" type="button"><span class="token-section-icon">'
+            f'<i data-lucide="chevron-up" width="16" height="16"></i></span></button></div></div>'
+            f'<div class="token-list" id="{target_id}">{body}</div>'
+            f'<div class="token-empty">{esc(no_match_label)}</div>')
 
 
 @app.route("/create/token-sidebar")
 def create_token_sidebar():
     """Server-rendered Q/C/O token sidebar for the /create page."""
-    conn = get_db()
-    locale = g.locale
+    conn, locale = get_db(), g.locale
     no_results = _("create.no_results")
-    sections = [
-        _render_token_section(
-            _("detail.quantities"), "token-qty",
-            fetch_all_quantities(conn), "qty", locale, no_results,
-        ),
-        _render_token_section(
-            _("nav.constants"), "token-const",
-            fetch_all_constants(conn), "const", locale, no_results,
-        ),
-        _render_token_section(
-            _("nav.operators"), "token-op",
-            fetch_all_operators(conn), "op", locale, no_results,
-        ),
-    ]
-
+    sections = "".join(_render_token_section(label, tid, fetch(conn), kind, locale, no_results)
+                       for label, tid, fetch, kind in (
+                           (_("detail.quantities"), "token-qty", fetch_all_quantities, "qty"),
+                           (_("nav.constants"), "token-const", fetch_all_constants, "const"),
+                           (_("nav.operators"), "token-op", fetch_all_operators, "op")))
     return Markup(
         '<div class="filter-qty-search-wrap">'
         f'<input type="text" class="text-field" id="token-search" placeholder="{html_module.escape(_("create.search_placeholder"))}" autocomplete="off">'
         '</div>'
-        f'<div class="token-sidebar">{"".join(sections)}</div>'
+        f'<div class="token-sidebar">{sections}</div>'
     )
 
 
 def _render_breadcrumb(selected_id, tree, name_map):
     """Server-rendered topic breadcrumb (root > ... > selected > child trigger)."""
-    selected_node = _find_node(tree, selected_id) if selected_id else None
-    if selected_node is not None:
-        kids = selected_node.get("children") or []
-        path = topic_path(tree, selected_id) or [selected_id]
-    else:
-        kids = tree
-        path = None
-
-    parts = []
-    if path:
-        for i, tid in enumerate(path):
-            if i > 0:
-                parts.append(' &gt; ')
-            parts.append(
-                f'<span class="topic-current"'
-                f' data-id="{html_module.escape(tid)}">'
-                f'{html_module.escape(name_map.get(tid, tid))}</span>'
-            )
-
+    esc = html_module.escape
+    node = _find_node(tree, selected_id) if selected_id else None
+    kids, path = (node.get("children") or [], topic_path(tree, selected_id) or [selected_id]) \
+        if node is not None else (tree, None)
+    parts = [' &gt; '.join(
+        f'<span class="topic-current" data-id="{esc(tid)}">{esc(name_map.get(tid, tid))}</span>'
+        for tid in path)] if path else []
     if kids:
         if parts:
             parts.append(' &gt; ')
-        trigger_label = _("create.topic")
-        menu_items = "".join(
-            _render_menu_item(kid, name_map) for kid in kids
-        )
+        label = _("create.topic")
+        menu = "".join(_render_menu_item(kid, name_map) for kid in kids)
         parts.append(
-            f'<span class="topic-current has-menu" data-text="{html_module.escape(trigger_label)}">'
-            f'<button class="topic-dropdown-trigger" type="button">'
-            f'{html_module.escape(trigger_label)}</button>'
-            f'<div class="topic-children-menu">{menu_items}</div>'
-            f'</span>'
-        )
+            f'<span class="topic-current has-menu" data-text="{esc(label)}">'
+            f'<button class="topic-dropdown-trigger" type="button">{esc(label)}</button>'
+            f'<div class="topic-children-menu">{menu}</div></span>')
     return Markup("".join(parts))
 
 
 def _find_node(tree, node_id):
-    found = []
-    def visit(node):
+    stack = list(tree)
+    while stack:
+        node = stack.pop()
         if node["id"] == node_id:
-            found.append(node)
-    walk_tree(tree, visit)
-    return found[0] if found else None
+            return node
+        stack.extend(node.get("children") or [])
+    return None
 
 
 def _render_menu_item(node, name_map):
-    """One entry of the topic dropdown; `node` is a tree.json node dict."""
-    node_id = node["id"]
-    name = name_map.get(node_id, node_id)
-    kids = node.get("children") or []
-    if kids:
+    """One entry of the topic dropdown; `node` is a topic-tree node dict."""
+    esc = html_module.escape
+    node_id, name = node["id"], name_map.get(node["id"], node["id"])
+    if kids := node.get("children"):
         sub = "".join(_render_menu_item(c, name_map) for c in kids)
-        return (
-            f'<div class="topic-menu-item" data-id="{html_module.escape(node_id)}">'
-            f'<span>{html_module.escape(name)}</span>'
-            f'<span class="caret"></span>'
-            f'<div class="topic-submenu">{sub}</div>'
-            f'</div>'
-        )
-    return (
-        f'<button type="button" class="topic-menu-item" data-id="{html_module.escape(node_id)}">'
-        f'<span>{html_module.escape(name)}</span>'
-        f'</button>'
-    )
+        return (f'<div class="topic-menu-item" data-id="{esc(node_id)}">'
+                f'<span>{esc(name)}</span><span class="caret"></span>'
+                f'<div class="topic-submenu">{sub}</div></div>')
+    return (f'<button type="button" class="topic-menu-item" data-id="{esc(node_id)}">'
+            f'<span>{esc(name)}</span></button>')
 
 
 @app.route("/create/breadcrumb")
 def create_breadcrumb():
     topic = (request.args.get("topic") or "").strip() or None
-    tree = load_tree()
+    tree = load_tree(get_db())
     name_map = topic_name_map(tree, g.locale)
     return _render_breadcrumb(topic, tree, name_map)
 
@@ -1718,103 +1514,56 @@ def create_languages():
     return {"current": getattr(g, "locale", DEFAULT_LOCALE), "locales": items, "repo": repo}
 
 
-def _parse_translation_block(prefix):
-    """Parse a `<prefix>[<locale>][<field>]` FormData block; blanks omitted."""
-    out = {}
-    pattern = re.compile(r"^" + re.escape(prefix) + r"\[([^\]]+)\]\[([^\]]+)\]$")
-    for key, val in request.form.items(multi=True):
-        m = pattern.match(key)
-        if not m:
-            continue
-        loc, field = m.group(1), m.group(2)
-        if not val or not str(val).strip():
-            continue
-        out.setdefault(loc, {})[field] = str(val).strip()
-    return out
-
-
 def _build_create_sql_payload(conn, form):
     """Parse the /create form fields and return (formula_sql, token_sql)."""
-    def scalar(name):
-        return (form.get(name) or "").strip()
-
-    name_en = scalar("name_en")
-    formula_id = scalar("formula_id")
-    topic = scalar("topic")
-    difficulty = scalar("difficulty") or "2"
-    equation = form.get("equation") or ""
-    description = scalar("description") or None
-    links_raw = scalar("links")
-    links = None
-    if links_raw:
-        url_lines = [p.strip() for p in links_raw.splitlines() if p.strip()]
-        if url_lines:
-            links = url_lines
-
-    overrides = _parse_override_form_keys()
-
-    tr_top = _parse_translation_block("tr")
-    tr_ov = _parse_translation_block("tr_overrides")
+    get = lambda n: (form.get(n) or "").strip()
+    links = [line.strip() for line in get("links").splitlines() if line.strip()] or None
+    tr_top = _parse_bracket("tr", 2)
+    tr_ov = _parse_bracket("tr_overrides", 3, ("symbol", "name"))
     translations = {}
     for loc in set(tr_top) | set(tr_ov):
-        top = tr_top.get(loc, {})
-        entry = {k: top[k] for k in ("name", "description") if k in top}
+        entry = {k: tr_top[loc][k] for k in ("name", "description") if k in tr_top.get(loc, {})}
         if loc in tr_ov:
             entry["overrides"] = tr_ov[loc]
         if entry:
             translations[loc] = entry
-
     return build_create_sql(
-        conn,
-        name_en=name_en,
-        topic=topic,
-        difficulty=difficulty,
-        equation=equation,
-        overrides=overrides,
-        description=description,
-        links=links,
-        translations=translations,
-        formula_id=formula_id,
-    )
+        conn, name_en=get("name_en"), topic=get("topic"),
+        difficulty=get("difficulty") or "2", equation=form.get("equation") or "",
+        overrides=_parse_bracket("override", 2, ("symbol", "name")),
+        description=get("description") or None, links=links,
+        translations=translations, formula_id=get("formula_id"))
+
+
+def _sql_block(pre_id, sql, action):
+    esc = html_module.escape
+    return (f'<div class="sql-block"><button class="formula-copy-btn" type="button"'
+            f' data-action="{action}" title="Copy"><i data-lucide="copy" width="16" height="16"></i></button>'
+            f'<pre id="{pre_id}">{esc(sql)}</pre></div>')
 
 
 def _render_sql_modal_html(formula_sql, token_sql):
     return Markup(
-        '<div class="sql-block">'
-        f'<button class="formula-copy-btn" type="button" data-action="copy-formula-sql" title="Copy">'
-        f'<i data-lucide="copy" width="16" height="16"></i>'
-        f'</button>'
-        f'<pre id="formula-sql">{html_module.escape(formula_sql)}</pre>'
-        f'</div>'
-        '<h3>' + html_module.escape(_("create.token_inserts")) + '</h3>'
-        '<div class="sql-block">'
-        f'<button class="formula-copy-btn" type="button" data-action="copy-token-sql" title="Copy">'
-        f'<i data-lucide="copy" width="16" height="16"></i>'
-        f'</button>'
-        f'<pre id="token-sql">{html_module.escape(token_sql)}</pre>'
-        f'</div>'
-    )
+        _sql_block("formula-sql", formula_sql, "copy-formula-sql")
+        + f'<h3>{html_module.escape(_("create.token_inserts"))}</h3>'
+        + _sql_block("token-sql", token_sql, "copy-token-sql"))
+
+
+def _sql_error(message, code=None):
+    esc, err = html_module.escape(str(message)), html_module.escape(code or str(message))
+    return Markup(f'<p class="detail-desc" data-error="{err}">{esc}</p>'), 400
 
 
 @app.route("/create/build-sql", methods=["POST"])
 def create_build_sql():
     """Form-POST equivalent of /api/build-sql returning rendered modal HTML."""
-    equation = (request.form.get("equation") or "")
-    if len(equation) > CREATE_EQUATION_MAX_LENGTH:
-        body = (
-            f'<p class="detail-desc" data-error="equation-too-long">'
-            f'equation exceeds {CREATE_EQUATION_MAX_LENGTH} characters</p>'
-        )
-        return Markup(body), 400
-    conn = get_db()
+    _, error = _check_equation()
+    if error:
+        return _sql_error(error, "equation-too-long")
     try:
-        formula_sql, token_sql = _build_create_sql_payload(conn, request.form)
+        formula_sql, token_sql = _build_create_sql_payload(get_db(), request.form)
     except ValueError as e:
-        body = (
-            f'<p class="detail-desc" data-error="{html_module.escape(str(e))}">'
-            f'{html_module.escape(str(e))}</p>'
-        )
-        return Markup(body), 400
+        return _sql_error(e)
     return _render_sql_modal_html(formula_sql, token_sql)
 
 

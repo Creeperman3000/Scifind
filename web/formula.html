@@ -6,17 +6,9 @@
 
 <div class="detail-desc">{{ _('detail.formula') }}</div>
 
-<div class="breadcrumb-bar">
-{% for crumb in formula.breadcrumbs %}
-  {% if not loop.first %} &gt; {% endif %}
-  <a href="/formulas?ids={{ crumb.id }}">{{ crumb.name }}</a>
-{% endfor %}
-</div>
+{{ breadcrumbs(formula.breadcrumbs, base='/formulas') }}
 
-<div class="detail-meta">
-  <span>{{ _('detail.dimensions') }}: ${{ dim_latex }}$</span>
-  <span>{{ _('detail.difficulty') }}: {{ formula.difficulty }}/10</span>
-</div>
+{{ detail_meta(dim_latex, formula.difficulty) }}
 
 <div class="formula-box">
   <div id="formula-math">$${{ latex }}$$</div>
@@ -48,27 +40,9 @@
 </div>
 {% endif %}
 
-{% if relations %}
-<div class="detail-section">
-  <h3>{{ _('detail.related') }}</h3>
-  <div class="formula-grid">
-  {% for r in relations %}
-    {{ formula_card('/formula/' ~ r.related_id, r.latex, _(r.name), relation=_('relation.' ~ r.relation_type)) }}
-  {% endfor %}
-  </div>
-</div>
-{% endif %}
+{{ formula_section(_('detail.related'), relations, 'related_id') }}
 
-{% if links %}
-<div class="detail-section">
-  <h3>{{ _('detail.links') }}</h3>
-  <ol class="link-list">
-  {% for url in links %}
-    <li><a href="{{ url }}" target="_blank" rel="noopener noreferrer">{{ url }}</a></li>
-  {% endfor %}
-  </ol>
-</div>
-{% endif %}
+{{ links_list(links) }}
 
 <div class="modal-overlay" id="formula-sql-modal" role="dialog" aria-modal="true">
   <div class="modal-content">

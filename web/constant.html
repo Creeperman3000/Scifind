@@ -7,26 +7,10 @@
 <div class="detail-desc">{{ _('detail.constant') }}</div>
 
 {% if constant.related_quantity_id %}
-<div class="breadcrumb-bar">
-  {% if constant.breadcrumbs %}
-  {% for crumb in constant.breadcrumbs %}
-    {% if not loop.first %} &gt; {% endif %}
-    <a href="/quantities?ids={{ crumb.id }}">{{ crumb.name }}</a>
-  {% endfor %}
-  &gt;
-  {% endif %}
-  <a href="/quantity/{{ constant.related_quantity_id }}">{{ constant.quantity_name_localized }}</a>
-</div>
+{{ breadcrumbs(constant.breadcrumbs, '/quantity/' ~ constant.related_quantity_id, constant.quantity_name_localized) }}
 {% endif %}
 
-<div class="detail-meta">
-  {% if dim_latex %}
-  <span>{{ _('detail.dimensions') }}: ${{ dim_latex }}$</span>
-  {% endif %}
-  {% if constant.difficulty %}
-    <span>{{ _('detail.difficulty') }}: {{ constant.difficulty }}/10</span>
-  {% endif %}
-</div>
+{{ detail_meta(dim_latex, constant.difficulty) }}
 
 {% if display %}
 <div class="formula-box constant-box">
@@ -65,26 +49,8 @@
 </div>
 {% endif %}
 
-{% if formulas %}
-<div class="detail-section">
-  <h3>{{ _('detail.formulas_with_constant') }}</h3>
-  <div class="formula-grid">
-  {% for f in formulas %}
-    {{ formula_card('/formula/' ~ f.id, f.latex, _(f.name)) }}
-  {% endfor %}
-  </div>
-</div>
-{% endif %}
+{{ formula_section(_('detail.formulas_with_constant'), formulas) }}
 
-{% if links %}
-<div class="detail-section">
-  <h3>{{ _('detail.links') }}</h3>
-  <ol class="link-list">
-  {% for url in links %}
-    <li><a href="{{ url }}" target="_blank" rel="noopener noreferrer">{{ url }}</a></li>
-  {% endfor %}
-  </ol>
-</div>
-{% endif %}
+{{ links_list(links) }}
 
 {% endblock %}

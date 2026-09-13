@@ -5,12 +5,16 @@ from scifind_lib.db import (  # noqa: F401
     initialize_database, open_database,
 )
 from scifind_lib.formula import (  # noqa: F401
-    DIMENSION_OPS, build_dimension_symbol_triplet,
+    build_dimension_symbol_triplet,
     compute_all_formula_dimensions, compute_compound_unit_dimensions,
-    compute_formula_dimensions, compute_rpn_dimensions, dimension_columns,
+    compute_formula_dimensions,     compute_rpn_dimensions, dimension_column_for, dimension_columns,
     dimension_matches, dimension_quantity_ids, dimension_symbols,
-    dimensions_from_row, format_dimension_number, format_dimensions_latex,
+    dimensions_from_row, filter_ops, format_dimension_number, format_dimensions_latex,
     format_dimensions_plain, parse_and_preview_equation, render_formula_latex,
+)
+from scifind_lib.operators import (  # noqa: F401
+    apply_dim_spec, load_operators, operand_info, parse_dim_spec,
+    render_template, template_arity, template_bare_slots,
 )
 from scifind_lib.i18n import (  # noqa: F401
     difficulty_to_stars, locale_sibilants, localise, localise_english,
@@ -21,11 +25,14 @@ from scifind_lib.tree import (  # noqa: F401
     topic_name_map, topic_path, topic_tree_order, walk_tree,
 )
 from scifind_lib.units import (  # noqa: F401
-    DEFAULT_VISIBLE_EXPONENTS, SI_BASE_EXPONENT, compound_slug_is_base,
-    compound_unit_by_slug, format_compound_unit_html,
-    format_compound_unit_symbol, inject_si_prefix_nodes, parse_compound_unit,
+    compound_slug_is_base,
+    compound_unit_by_slug, compound_unit_slug,
+    format_compound_unit_html,
+    format_compound_unit_symbol, inject_si_prefix_nodes,
+    parse_compound_unit,
     parse_compound_unit_parts, prefix_name_callback, select_base_unit,
-    select_base_unit_with_fallback, si_prefix_sections, split_numerator_denominator,
+    select_base_unit_with_fallback, si_prefix_factor,
+    si_prefix_sections, split_numerator_denominator,
     unit_by_id, unit_name_callback, unit_name_map, unit_quantity_map,
     unit_symbol_map,
 )
@@ -39,7 +46,8 @@ from scifind_lib.fetch import (  # noqa: F401
     fetch_first_unit, fetch_formula, fetch_formula_token_quantities,
     fetch_formula_quantities, fetch_formula_relations,
     fetch_formulas_filtered, fetch_formulas_with_all_quantities,
-    fetch_formulas_with_any_quantity, fetch_keyed_rows,
+    fetch_formulas_with_any_quantity, fetch_formulas_with_quantities,
+    fetch_keyed_rows,
     fetch_prefixable_base_units, fetch_quantities_by_ids, fetch_quantity,
     fetch_quantity_constants, fetch_quantity_formulas,
     fetch_quantity_formulas_by_side, fetch_quantity_related_formulas,

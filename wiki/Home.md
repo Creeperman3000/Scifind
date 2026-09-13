@@ -1,6 +1,6 @@
 # Scifind
 
-Scifind is a physics formula database with a web app and a CLI tool.
+Scifind is a physics formula database with a web app and a CLI.
 Formulas are stored as a list of [RPN](https://en.wikipedia.org/wiki/Reverse_Polish_notation) tokens in a normalized
 SQLite schema. Features include:
 

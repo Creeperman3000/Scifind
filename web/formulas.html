@@ -5,11 +5,7 @@
 <h2>{{ heading }}</h2>
 
 {% if formulas %}
-<div class="formula-grid">
-{% for f in formulas %}
-  {{ formula_card('/formula/' ~ f.id, f.latex, _(f.name)) }}
-{% endfor %}
-</div>
+{{ formula_grid(formulas) }}
 {% else %}
 <p>{{ _('detail.formulas_no_results') }}</p>
 {% endif %}

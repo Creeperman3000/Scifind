@@ -14,8 +14,8 @@ See [Web App](Web-App) for more.
 
 ## I18n
 
-All user-facing DB fields (`name`, `description`, `label`,
-`symbol_overwrite`, `quantity_name_overwrite`) are i18n JSON.
+Most user-facing DB fields (`name`, `description`, `label`,
+`symbol_overwrite`, `name_overwrite`) are i18n JSON.
 
 ```json
 {
@@ -26,14 +26,14 @@ All user-facing DB fields (`name`, `description`, `label`,
 
 ## Creating Formulas
 
-### The easy way: `/create`
+### 1. The easy way: `/create`
 
 1. Open `/create` in the web app
 2. Write the equation using quantity / constant / operator IDs (e.g. `force = mass mul acceleration`)
 3. Set the topic, difficulty, description and links
-4. Page generates ready-to-submit SQL (both the `formula` and all `formula_token`s.
+4. Page generates SQL (both the `formula` and all `formula_token`s.
 
-### Manual SQL
+### 2. Manual SQL
 
 1. Insert a row into `formula`.
 2. Insert `formula_token` rows in `position` order. Each token is one of:
@@ -44,7 +44,7 @@ All user-facing DB fields (`name`, `description`, `label`,
    - `token_kind='number'` + `value`
       - a numerical value
    - `token_kind='operator'` + `operator_id`
-3. Optional decorations per token: `label`, `symbol_overwrite`, `quantity_name_overwrite`.
+3. Optional decorations per token: `label`, `symbol_overwrite`, `name_overwrite`.
 4. Link related formulas via `formula_relation`.
 5. Rebuild: `python scifind_cli.py init --force`.
 
@@ -64,15 +64,58 @@ For example, `E_k = ½ m v²` (`kinetic_energy_formula` in the seed) is:
 | 10  | operator | `mul`           |
 | 11  | operator | `eq`            |
 
+### 3. Via Scifind-formulas
+
+```bash
+git clone https://github.com/Creeperman3000/Scifind-formulas.git
+```
+
+Modify, add or remove formulas in the `formulas/` directory.
+
 ### Adding an Operator
 
-Add a row to `seed.sql` and re-initialise.
-Let's use `\cosh` as an example:
+Add a row to `seed.sql` and re-initialise — no code changes needed.
+The parser, renderer and dimension checker all read their behaviour
+from the row. Let's use `\cosh` as an example:
 
 ```sql
-INSERT OR IGNORE INTO operator (id, symbol, math, arity, precedence, associativity, operator_type, paren_arg)
-VALUES ('cosh', '\cosh', 'math.cosh(a)', 1, 30, 'right', 'prefix', '[1]');
+INSERT OR IGNORE INTO operator
+  (id, symbol, aliases, arity, precedence, associativity, type,
+   latex_template, dim_spec)
+VALUES ('cosh', '\cosh', '["cosh", "\\cosh"]', 1, 30, 'right', 'prefix',
+        '\cosh{[[0!]]}', 'require dimless(all); result zero');
 ```
+
+- `type` is `infix`, `prefix`, `postfix` or `relational`;
+  `associativity` is `left`, `right` or `none`. Comparisons are
+  `relational` (non-associative), and `a op b op c` folds into one
+  n-ary node.
+- `latex_template` places operands via `[[0]]`…`[[n]]`. `[[i!]]` skips
+  precedence parens where the template already groups the slot (inside
+  `{...}`). `[[i?then:else]]` renders `then` only when operand *i*
+  renders non-empty (a blank `drop` slot renders empty, so e.g. `sub`
+  uses `[[0?[[0]] - [[1]]:-[[1]]]]` for unary minus).
+  `[[i=matcher?then:else]]` tests operand *values*: `num:<float>`,
+  `const:<id>` or `qty:<id>` — e.g. `log` renders `\ln` when its base
+  is `euler_e`, `sqrt` omits the index when it is `2`. Branches may
+  nest; everything else (including `{`/`}`) is literal text.
+- `dim_spec` is readable operand math, evaluated by one uniform engine (no
+  per-operator branches): `;`-separated clauses with exactly one `result`
+  clause — `drop(0)` (blank `drop` operands dropped before evaluation —
+  `sub` declares it so a blank left operand leaves the right side's
+  dimensions), `require same(all)` or `require same(0, 1)` (those operands
+  must agree; the result is their common vector, returned via
+  `result same`), `require dimless(all)` or `require dimless(1)` (those
+  operands must be dimensionless), and one of `result same`
+  (`add`, `sub`), `result zero` (`sin`, `log`), `result any`
+  (`relational` comparisons only) or a linear combination such as
+  `result dims(0)+dims(1)` (`mul`), `result dims(0)-dims(1)` (`div`),
+  `result dims(2)` (`sum` bounds ignored), `result dims(0)*value(1)`
+  (`pow`: scale by another operand's numeric value) or
+  `result dims(0)/value(1)` (`sqrt`).
+- Surface spellings (id and/or LaTeX symbol) go in the `aliases`
+  JSON array; parentheses are `paren` tokens handled by the parser,
+  not operator rows.
 
 ### Adding a Constant
 
@@ -84,43 +127,40 @@ VALUES ('electron_volt', '{"en-us": "Electronvolt"}', '\text{eV}', 1.602176634e-
 
 ## Rendering Rules
 
-Paren wrapping is a property of the **operator** via `operator.paren_arg`
-(a JSON array where length = arity).
-- `1` = the renderer may wrap that operand in parentheses
-- `0` = never
-
-| Operator                     | `paren_arg` | Notes                                                             |
-| ---------------------------- | ----------- | ----------------------------------------------------------------- |
-| `add`, `mul`, `eq`, `cdot`   | `[1,1]`     | both operands may wrap                                            |
-| `frac`                       | `[0,0]`     | operands inside `{...}` of the macro                              |
-| `pow`                        | `[1,0]`     | exponent lives inside `^{...}`                                    |
-| `sin`, `cos`, `tan`, …       | `[1]`       | argument may wrap                                                 |
-| `Delta`, `nabla`             | `[1]`       | argument may wrap                                                 |
-| `overl`                      | `[0]`       | argument never wraps                                              |
-| `log`                        | `[0,0]`     | arity-2 infix `\log_{base}{arg}`; base `euler_e` emits `\ln{arg}` |
-| `sqrt`                       | `[0,0]`     | arity-2 infix `\sqrt{radicand}` or `\sqrt[index]{radicand}`       |
-| `sum`, `int`, `prod`, `oint` | `[0,0,0]`   | arity-3 infix `\op_{from}^{to}{body}`                             |
-| `lim`                        | `[0,0,0]`   | arity-3 infix `\lim_{var \to val}{body}`                          |
+Parentheses are decided generically from precedence and associativity:
+a child binding looser than its parent wraps, equal precedence wraps per
+associativity (left-associative wraps the right operand and vice versa,
+non-associative always wraps), and every operand may wrap. Template
+slots written `[[i!]]` skip the precedence parens because the template
+already groups them (e.g. inside `\frac{...}{...}`); explicit source
+parentheses are always honoured.
 
 If you are using `create/`, you can force a change in the order of operations with parentheses:
 `(m+m)^(m+m)` renders as `\left(m + m\right)^{m + m}` -> `(m+m)ᵐ⁺ᵐ`.
-The parentheses in the exponent are dropped due to `paren_arg`.
+The exponent needs no parens (it lives inside `^{...}`).
 
-### The `drop` sentinel
+### Placeholders and value-dependent rendering
 
-The `drop` quantity has an empty symbol and zero dimensions. Use it in
-any operand slot to blank that slot out. It is invisible to the user in
-variable lists, detail tables, and dimensional analysis.
+The `drop` backing quantity (empty symbol, hidden, zero dimensions)
+marks a blank operand slot. It renders empty like any empty-symbol
+quantity, so template conditionals (`[[i?then:else]]`) omit its
+wrappers accordingly and juxtaposition drops its side; no code names
+it. Special cases live in the operator rows as template data:
 
 | Source | Renders as |
 |--------|------------|
-| `drop x sub` | `-x` (unary minus) |
-| `log drop x` | `\log{x}` |
-| `log b drop` | `\log_{b}` |
-| `log euler_e x` | `\ln{x}` |
-| `sqrt x 2` / `sqrt x drop` | `\sqrt{x}` |
+| `drop sub x` | `-x` (unary minus, via `sub`'s own template) |
+| `log euler_e x` | `\ln{x}` (value matcher on the base) |
+| `log b x` | `\log_{b}{x}` |
+| `sqrt x 2` | `\sqrt{x}` (value matcher on the index) |
 | `sqrt x 3` | `\sqrt[3]{x}` |
 | `sum 1 drop x` | `\sum_{1}{x}` |
 | `sum drop 10 x` | `\sum^{10}{x}` |
 | `sum drop drop x` | `\sum{x}` |
 | `lim x drop body` | `\lim{body}` |
+
+Dimensions treat blank slots generically too: each operator's
+`dim_spec` may declare `drop(...)` indexes dropped before evaluation
+(`sub` declares `drop(0)`), while a real empty-symbol operand such as
+`dimensionless` keeps its normal zero-dimension meaning everywhere
+else.

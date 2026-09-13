@@ -1,55 +1,14 @@
-"""Equation tokeniser + shunting-yard-to-RPN + RPN-to-tree."""
+"""Equation tokeniser + shunting-yard-to-RPN + RPN-to-tree.
 
-import json
-import logging
+All operator behavior comes from the ``operator`` table via
+:mod:`scifind_lib.operators`; this module has no operator-specific branches.
+"""
+
 from dataclasses import dataclass, field
 from typing import Optional
 
 from scifind_lib.db import in_clause
-
-logger = logging.getLogger("scifind.parser")
-
-
-CHAINABLE_RELATIONALS = {
-    "eq", "approx", "neq", "ngeq", "sim", "perp", "parallel",
-    "lt", "gt", "leq", "geq",
-}
-
-
-def parse_paren_arg(raw, arity, op_id):
-    """Parse the operator.paren_arg JSON column into [bool] of length arity."""
-    errmsg = (
-        f"paren_arg for {op_id} must be a JSON list of {arity} 0/1 values; got {raw!r}"
-    )
-    try:
-        parsed = json.loads(raw)
-    except (json.JSONDecodeError, TypeError) as exc:
-        logger.warning("operator %r: paren_arg bad JSON: %s", op_id, exc)
-        raise ValueError(errmsg) from exc
-    if (
-        not isinstance(parsed, list)
-        or len(parsed) != arity
-        or not all(isinstance(p, (int, bool)) and int(p) in (0, 1) for p in parsed)
-    ):
-        logger.warning("operator %r: paren_arg invalid: %r", op_id, parsed)
-        raise ValueError(errmsg)
-    return [bool(p) for p in parsed]
-
-
-def _load_parse_tables(conn):
-    """Fresh (qty_ids, const_ids, op_by_id, symbol_to_id) for one parse; uncached to avoid stale rows."""
-    qty_ids = {r["id"] for r in conn.execute("SELECT id FROM quantity")}
-    const_ids = {r["id"] for r in conn.execute("SELECT id FROM constant")}
-    op_by_id = {}
-    symbol_to_id = {}
-    for r in conn.execute(
-        "SELECT id, symbol, arity, precedence, associativity, operator_type, paren_arg "
-        "FROM operator"
-    ):
-        op_by_id[r["id"]] = dict(r)
-        if r["symbol"]:
-            symbol_to_id[r["symbol"]] = r["id"]
-    return qty_ids, const_ids, op_by_id, symbol_to_id
+from scifind_lib.operators import alias_to_id_map, load_operators
 
 
 def quantity_token_key(quantity_id, label, pos):
@@ -84,192 +43,183 @@ def _scan_number(equation, pos, length):
     return {"token_kind": "number", "value": value}, j
 
 
-def _scan_identifier(equation, pos, length, op_by_id, symbol_to_id, qty_ids, const_ids):
-    """Scan an identifier/operator/alias at equation[pos]; return (token, next_pos)."""
-    op_id, op_len = _match_operator_at(symbol_to_id, equation, pos, length)
-    if op_id is not None:
-        return {"token_kind": "operator", "operator_id": op_id}, pos + op_len
+def _scan_word(equation, pos, length):
+    """Scan an identifier at equation[pos]; return (word, alias, next_pos)."""
     j = pos
     while j < length and (equation[j].isalnum() or equation[j] == "_"):
         j += 1
-    ident = equation[pos:j]
+    word = equation[pos:j]
     alias = None
     if j < length and equation[j] == "[":
         k = equation.find("]", j + 1)
         if k == -1:
-            raise ValueError(f"unterminated alias for {ident!r}")
+            raise ValueError(f"unterminated alias for {word!r}")
         alias = equation[j + 1:k] or None
         j = k + 1
-    if ident in op_by_id:
-        if alias is not None:
-            raise ValueError(f"operator {ident} cannot have an alias")
-        return {"token_kind": "operator", "operator_id": ident}, j
-    if ident in qty_ids:
-        tok = {"token_kind": "quantity", "quantity_id": ident}
-    elif ident in const_ids:
-        tok = {"token_kind": "constant", "constant_id": ident}
-    else:
-        raise ValueError(f"unknown identifier: {ident!r}")
-    if alias is not None:
-        tok["label"] = alias
-    return tok, j
-
-
-def _match_operator_at(symbol_to_id, equation, i, length):
-    """Return (op_id, width) for the longest operator starting at equation[i], up to 4 chars."""
-    for width in (4, 3, 2, 1):
-        if i + width > length:
-            continue
-        op_id = symbol_to_id.get(equation[i:i + width])
-        if op_id is None:
-            continue
-        return op_id, width
-    return None, 0
+    return word, alias, j
 
 
 def parse_equation(conn, equation):
     """Tokenize an infix equation string and convert to RPN token dicts."""
-    qty_ids, const_ids, op_by_id, symbol_to_id = _load_parse_tables(conn)
+    operators = load_operators(conn)
+    qty_ids = {r["id"] for r in conn.execute("SELECT id FROM quantity")}
+    const_ids = {r["id"] for r in conn.execute("SELECT id FROM constant")}
+    alias_to_id = alias_to_id_map(operators)
+    max_match_width = max((len(s) for s in alias_to_id), default=1)
 
     if not equation or not equation.strip():
         return []
 
     pos, length = 0, len(equation)
     tokens = []
+    expect_operand = True
+
+    def emit_op(op_id):
+        nonlocal expect_operand
+        op = operators[op_id]
+        if expect_operand and op.fixity == "postfix":
+            raise ValueError(f"operator {op_id!r} needs a left operand")
+        tokens.append({"token_kind": "operator", "operator_id": op_id})
+        expect_operand = op.fixity != "postfix"
 
     while pos < length:
         char = equation[pos]
         if char.isspace():
             pos += 1
             continue
-        if char.isdigit() or (char == "." and pos + 1 < length and equation[pos + 1].isdigit()):
+        if char.isdigit() or (char == "." and pos + 1 < length
+                              and equation[pos + 1].isdigit()):
             tok, pos = _scan_number(equation, pos, length)
             tokens.append(tok)
+            expect_operand = False
             continue
         if char.isalpha() or char == "_":
-            tok, pos = _scan_identifier(
-                equation, pos, length, op_by_id, symbol_to_id, qty_ids, const_ids
-            )
-            tokens.append(tok)
+            # Whole-word match only, so quantities like `single` never split
+            # into an operator prefix plus garbage.
+            word, alias, pos = _scan_word(equation, pos, length)
+            if (op_id := alias_to_id.get(word)) is not None:
+                if alias is not None:
+                    raise ValueError(f"operator {word} cannot have an alias")
+                emit_op(op_id)
+                continue
+            kind = "quantity" if word in qty_ids else "constant" if word in const_ids else None
+            if kind is None:
+                raise ValueError(f"unknown identifier: {word!r}")
+            tokens.append({"token_kind": kind, f"{kind}_id": word,
+                           **({"label": alias} if alias else {})})
+            expect_operand = False
             continue
-        if char == "(":
-            tokens.append({"token_kind": "operator", "operator_id": "paren_open"})
+        if char in "()":
+            tokens.append({"token_kind": "paren", "paren": char})
             pos += 1
+            expect_operand = char == "("
             continue
-        if char == ")":
-            tokens.append({"token_kind": "operator", "operator_id": "paren_close"})
-            pos += 1
-            continue
-        op_id, op_len = _match_operator_at(symbol_to_id, equation, pos, length)
-        if op_id is not None:
-            tokens.append({"token_kind": "operator", "operator_id": op_id})
-            pos += op_len
-            continue
-        raise ValueError(f"unexpected character: {char!r} at position {pos}")
+        op_id, op_len = None, 0
+        for width in range(min(max_match_width, length - pos), 0, -1):
+            if (op_id := alias_to_id.get(equation[pos:pos + width])) is not None:
+                op_len = width
+                break
+        if op_id is None:
+            raise ValueError(f"unexpected character: {char!r} at position {pos}")
+        emit_op(op_id)
+        pos += op_len
 
-    return _infix_to_rpn(tokens, op_by_id)
+    return _infix_to_rpn(tokens, operators)
 
 
-def _infix_to_rpn(tokens, op_by_id):
-    """Convert a flat infix token list to RPN; paren groups mark the outer token with `_paren_wrap`."""
+def _emit_op(stack, output):
+    output.append({"token_kind": "operator", "operator_id": stack.pop()["id"]})
+
+
+def _cascade_completed(stack, output, operators):
+    """Credit one finished operand to enclosing prefix frames, emitting completed calls."""
+    while stack and stack[-1]["kind"] == "op":
+        top = stack[-1]
+        top_op = operators[top["id"]]
+        if top_op.fixity != "prefix":
+            break
+        top["nargs"] += 1
+        if top["nargs"] < top_op.arity:
+            break
+        _emit_op(stack, output)
+
+
+def _infix_to_rpn(tokens, operators):
+    """Convert flat infix tokens to RPN (prefix/postfix/infix + relational chaining)."""
     output = []
     stack = []
-
-    def _bump_operand_count():
-        for entry in reversed(stack):
-            if entry["operator_id"] == "paren_open":
-                continue
-            op_meta = op_by_id.get(entry["operator_id"])
-            if op_meta is None:
-                continue
-            if entry["consumed"] >= op_meta["arity"]:
-                continue
-            entry["consumed"] += 1
-            return
+    expect_operand = True
 
     for tok in tokens:
         kind = tok["token_kind"]
         if kind in ("number", "quantity", "constant"):
             output.append(tok)
-            while stack and stack[-1]["operator_id"] in op_by_id:
-                top_op = op_by_id[stack[-1]["operator_id"]]
-                if top_op["operator_type"] not in ("prefix", "postfix"):
-                    break
-                output.append(stack.pop())
-            _bump_operand_count()
+            _cascade_completed(stack, output, operators)
+            expect_operand = False
             continue
-        op_id = tok["operator_id"]
-        if op_id == "paren_open":
-            stack.append({**tok, "consumed": 0})
-            continue
-        if op_id == "paren_close":
-            while stack and stack[-1]["operator_id"] != "paren_open":
-                output.append(stack.pop())
+        if kind == "paren":
+            if tok["paren"] == "(":
+                stack.append({"kind": "paren", "out_len": len(output)})
+                expect_operand = True
+                continue
+            while stack and stack[-1]["kind"] != "paren":
+                _emit_op(stack, output)
             if not stack:
                 raise ValueError("unmatched ')'")
-            stack.pop()
-            if output:
-                output[-1]["_paren_wrap"] = True
-            while stack:
-                top_id = stack[-1]["operator_id"]
-                if top_id == "paren_open":
-                    break
-                top_op = op_by_id.get(top_id)
-                if top_op is None or top_op["operator_type"] != "prefix":
-                    break
-                output.append(stack.pop())
-            _bump_operand_count()
+            marker = stack.pop()
+            if len(output) == marker["out_len"]:
+                raise ValueError("empty parentheses")
+            output[-1]["_paren_wrap"] = True
+            _cascade_completed(stack, output, operators)
+            expect_operand = False
             continue
-        op = op_by_id.get(op_id)
+        op_id = tok["operator_id"]
+        op = operators.get(op_id)
         if op is None:
             raise ValueError(f"unknown operator: {op_id!r}")
-        op_type = op["operator_type"]
-        prec = op["precedence"]
-        assoc = op["associativity"]
-        if op_type in ("prefix", "postfix"):
-            stack.append({**tok, "consumed": 0})
+        if op.fixity == "postfix":
+            if expect_operand:
+                raise ValueError(f"operator {op_id!r} needs a left operand")
+            output.append({"token_kind": "operator", "operator_id": op_id})
+            _cascade_completed(stack, output, operators)
+            expect_operand = False
             continue
-        if assoc == "none" and op_type == "relational":
-            while stack and stack[-1]["operator_id"] != "paren_open":
-                top_id = stack[-1]["operator_id"]
-                top_op = op_by_id.get(top_id)
-                if top_op and top_op["operator_type"] == "relational":
-                    break
-                output.append(stack.pop())
-            stack.append({**tok, "consumed": 0})
+        if op.fixity == "prefix" or expect_operand:
+            # Lenient binary push where an operand is expected, so prefix-led
+            # expressions like `neg log 10 x` still parse; a genuinely missing
+            # operand surfaces as RPN underflow at reduce time.
+            stack.append({"kind": "op", "id": op_id, "nargs": 0})
+            expect_operand = True
             continue
-        while stack:
-            top_entry = stack[-1]
-            top_id = top_entry["operator_id"]
-            if top_id == "paren_open":
+        while stack and stack[-1]["kind"] == "op":
+            top = stack[-1]
+            top_op = operators[top["id"]]
+            ready = top_op.fixity == "prefix" and top["nargs"] >= top_op.arity
+            higher = top_op.fixity != "prefix" and (
+                top_op.precedence > op.precedence
+                or (top_op.precedence == op.precedence and op.associativity == "left"))
+            if not (ready or higher):
+                if (top_op.fixity != "prefix" and top_op.precedence == op.precedence
+                        and op.fixity == "relational" and top["id"] != op_id):
+                    raise ValueError(
+                        f"operator {op_id!r} is not associative; "
+                        f"add parentheses to chain it")
                 break
-            top_op = op_by_id.get(top_id)
-            if top_op is None or top_op["operator_type"] in ("prefix", "postfix"):
-                break
-            if (
-                top_op["precedence"] == prec
-                and assoc == "left"
-                and top_entry["consumed"] >= top_op["arity"]
-            ):
-                output.append(stack.pop())
-            elif top_op["precedence"] > prec and top_entry["consumed"] >= top_op["arity"]:
-                output.append(stack.pop())
-            else:
-                break
-        stack.append({**tok, "consumed": 0})
+            _emit_op(stack, output)
+        stack.append({"kind": "op", "id": op_id, "nargs": 1})
+        expect_operand = True
 
     while stack:
-        top_entry = stack.pop()
-        if top_entry["operator_id"] in ("paren_open", "paren_close"):
+        if stack[-1]["kind"] == "paren":
             raise ValueError("unmatched parenthesis")
-        output.append(top_entry)
+        _emit_op(stack, output)
 
     return output
 
 
 @dataclass
 class FormulaNode:
-    """A node in the parsed formula tree; `symbol` is resolved so rendering needs no DB lookups."""
+    """A node in the parsed formula tree (operator nodes carry resolved display/dim data)."""
     kind: str
     children: list = field(default_factory=list)
     quantity_id: Optional[str] = None
@@ -282,115 +232,78 @@ class FormulaNode:
     arity: int = 0
     precedence: int = 0
     associativity: str = "left"
-    operator_type: str = "infix"
-    paren_arg: Optional[list] = None
+    fixity: str = "infix"
+    latex_template: str = ""
+    dim_spec: dict = field(default_factory=dict)
+    placeholder: bool = False
     _paren_wrap: bool = False
-
-
-_OPERATOR_COLUMNS = (
-    "id, symbol, arity, precedence, associativity, operator_type, paren_arg"
-)
 
 
 def bulk_entity_rows(conn, table, columns, ids):
     """{id: row} for `ids` in a single query (empty input → {})."""
-    ids = set(ids)
-    if not ids:
+    if not (ids := set(ids)):
         return {}
     marks, params = in_clause(ids)
-    return {
-        r["id"]: dict(r)
-        for r in conn.execute(
-            f"SELECT {columns} FROM {table} WHERE id IN ({marks})", params
-        )
-    }
+    rows = conn.execute(f"SELECT {columns} FROM {table} WHERE id IN ({marks})", params)
+    return {r["id"]: dict(r) for r in rows}
+
+
+def _leaf_node(kind, tok, row, wrap):
+    """Quantity/constant leaf (blank-symbol quantities become placeholders)."""
+    if kind == "quantity":
+        return FormulaNode(
+            kind="quantity", quantity_id=tok["quantity_id"], label=tok.get("label"),
+            symbol_overwrite=tok.get("symbol_overwrite"), symbol=row.get("symbol"),
+            placeholder=not (row.get("symbol") or tok.get("symbol_overwrite")
+                             or tok.get("label")),
+            _paren_wrap=wrap)
+    return FormulaNode(kind="constant", constant_id=tok["constant_id"],
+                       symbol=row["symbol"] or tok["constant_id"], _paren_wrap=wrap)
+
+
+def _op_node(op, args, wrap):
+    node = FormulaNode(kind="operator", children=list(args), operator_id=op.id,
+                       symbol=op.symbol, arity=op.arity, precedence=op.precedence,
+                       associativity=op.associativity, fixity=op.fixity,
+                       latex_template=op.latex_template, dim_spec=dict(op.dim_spec),
+                       _paren_wrap=wrap)
+    if (op.fixity == "relational" and args and args[-1].kind == "operator"
+            and args[-1].operator_id == op.id):
+        inner = args[-1]
+        node.children = args[:-1] + list(inner.children)
+        node.arity = len(node.children)
+        node._paren_wrap = inner._paren_wrap
+    return node
 
 
 def reduce_rpn_to_tree(conn, tokens):
-    """Reduce a token stream to an expression tree via bulk-loaded entity rows."""
-    op_map = bulk_entity_rows(
-        conn, "operator", _OPERATOR_COLUMNS,
-        (t["operator_id"] for t in tokens if t["token_kind"] == "operator"),
-    )
-    qty_map = bulk_entity_rows(
-        conn, "quantity", "id, name, symbol",
-        (t["quantity_id"] for t in tokens
-         if t["token_kind"] == "quantity" and t["quantity_id"] != "drop"),
-    )
-    const_map = bulk_entity_rows(
-        conn, "constant", "id, symbol",
-        (t["constant_id"] for t in tokens if t["token_kind"] == "constant"),
-    )
+    """Reduce a token stream to an expression tree (relational chains fold n-ary)."""
+    operators = load_operators(conn)
+    qty_map = bulk_entity_rows(conn, "quantity", "id, name, symbol",
+                               {t["quantity_id"] for t in tokens if t["token_kind"] == "quantity"})
+    const_map = bulk_entity_rows(conn, "constant", "id, symbol",
+                                 {t["constant_id"] for t in tokens if t["token_kind"] == "constant"})
     stack = []
     for tok in tokens:
         kind = tok["token_kind"]
+        wrap = bool(tok.get("_paren_wrap"))
         if kind == "operator":
-            op = op_map.get(tok["operator_id"])
+            op = operators.get(tok["operator_id"])
             if op is None:
                 raise ValueError(f"unknown operator: {tok['operator_id']!r}")
-            if len(stack) < op["arity"]:
+            if len(stack) < op.arity:
                 raise ValueError(
-                    f"RPN underflow at {tok['operator_id']}: need {op['arity']}, have {len(stack)}"
-                )
-            args = [stack.pop() for _ in range(op["arity"])][::-1]
-            new_node = FormulaNode(
-                kind="operator",
-                children=args,
-                operator_id=op["id"],
-                symbol=op["symbol"],
-                arity=op["arity"],
-                precedence=op["precedence"],
-                associativity=op["associativity"],
-                operator_type=op["operator_type"],
-                paren_arg=parse_paren_arg(op["paren_arg"], op["arity"], op["id"]),
-                _paren_wrap=bool(tok.get("_paren_wrap")),
-            )
-            if (
-                op["operator_type"] == "relational"
-                and op["id"] in CHAINABLE_RELATIONALS
-                and len(args) == 2
-                and args[1].kind == "operator"
-                and args[1].operator_id == op["id"]
-                and args[1].operator_type == "relational"
-            ):
-                inner = args[1]
-                new_node.children = [args[0]] + list(inner.children)
-                new_node.arity = len(new_node.children)
-                new_node._paren_wrap = inner._paren_wrap
-            stack.append(new_node)
-        elif kind == "quantity":
-            qid = tok["quantity_id"]
-            q = qty_map.get(qid)
-            if q is None:
-                if qid == "drop":
-                    q = {}
-                else:
-                    raise ValueError(f"unknown quantity: {qid!r}")
-            stack.append(FormulaNode(
-                kind="quantity",
-                quantity_id=qid,
-                label=tok.get("label"),
-                symbol_overwrite=tok.get("symbol_overwrite"),
-                symbol=q.get("symbol"),
-                _paren_wrap=bool(tok.get("_paren_wrap")),
-            ))
-        elif kind == "constant":
-            cid = tok["constant_id"]
-            c = const_map.get(cid)
-            if c is None:
-                raise ValueError(f"unknown constant: {cid!r}")
-            stack.append(FormulaNode(
-                kind="constant",
-                constant_id=cid,
-                symbol=c["symbol"] or cid,
-                _paren_wrap=bool(tok.get("_paren_wrap")),
-            ))
+                    f"RPN underflow at {tok['operator_id']}: need {op.arity}, "
+                    f"have {len(stack)}")
+            stack.append(_op_node(op, [stack.pop() for _ in range(op.arity)][::-1], wrap))
+        elif kind in ("quantity", "constant"):
+            key = "quantity_id" if kind == "quantity" else "constant_id"
+            row = (qty_map if kind == "quantity" else const_map).get(tok[key])
+            if row is None:
+                raise ValueError(f"unknown {kind}: {tok[key]!r}")
+            stack.append(_leaf_node(kind, tok, row, wrap))
         elif kind == "number":
-            stack.append(FormulaNode(
-                kind="number",
-                value=tok["value"],
-                _paren_wrap=bool(tok.get("_paren_wrap")),
-            ))
+            stack.append(FormulaNode(kind="number", value=tok["value"], _paren_wrap=wrap))
         else:
             raise ValueError(f"unknown token kind: {tok!r}")
     if not stack:

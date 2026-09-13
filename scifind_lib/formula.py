@@ -1,13 +1,17 @@
-"""Formula dimensions + LaTeX rendering."""
+"""Formula dimensions + LaTeX rendering (both data-driven from operator specs)."""
 
 import logging
 from fractions import Fraction
 
-from scifind_lib.constants import (
-    _BASE_DIMENSION_ORDER,
-    _BASE_DIMENSION_QTY_IDS,
-)
+from scifind_lib.db import in_clause
 from scifind_lib.i18n import localise, with_subscript, wrap_symbol_in_latex
+from scifind_lib.operators import (
+    apply_dim_spec,
+    operand_info,
+    render_template,
+    template_arity,
+    template_bare_slots,
+)
 from scifind_lib.parser import (
     bulk_entity_rows,
     parse_equation,
@@ -21,315 +25,224 @@ from scifind_lib.units import (
 )
 
 logger = logging.getLogger("scifind.dimensions")
-
-_SYMS = list(_BASE_DIMENSION_ORDER)
-_COLS = [f"dim_{s}" for s in _SYMS]
-_SYM_TO_COL = dict(zip(_SYMS, _COLS))
-
-
-def dimension_symbols():
-    return list(_SYMS)
-
-
-def dimension_columns():
-    return list(_COLS)
-
-
-def dimension_quantity_ids():
-    return dict(_BASE_DIMENSION_QTY_IDS)
-
-
-DIMENSION_OPS = ("eq", "geq", "leq")
-_DIMENSION_OP_FNS = {
-    "eq":  lambda a, v: a == v,
+DimensionMismatchError = ValueError
+_FILTER_COMPARISONS = {
+    "eq": lambda a, v: a == v,
     "geq": lambda a, v: a >= v,
     "leq": lambda a, v: a <= v,
 }
 
 
+def _dim_id_rows(conn):
+    return conn.execute(
+        "SELECT dim_symbol, id FROM quantity "
+        "WHERE dim_symbol IS NOT NULL ORDER BY dim_position"
+    ).fetchall()
+
+
+def dimension_symbols(conn):
+    """Base-dimension symbols from quantity.dim_symbol ordered by dim_position."""
+    return [r["dim_symbol"] for r in _dim_id_rows(conn)]
+
+
+def dimension_columns(conn):
+    return [f"dim_{s}" for s in dimension_symbols(conn)]
+
+
+def dimension_column_for(symbol):
+    return f"dim_{symbol}"
+
+
+def dimension_quantity_ids(conn):
+    """{dim_symbol: quantity_id} from quantity rows with dim_symbol set."""
+    return {r["dim_symbol"]: r["id"] for r in _dim_id_rows(conn)}
+
+
+def filter_ops(conn):
+    """Dimension filter operator ids from dimension_filter_operator (position order)."""
+    return tuple(r["operator_id"] for r in conn.execute(
+        "SELECT operator_id FROM dimension_filter_operator ORDER BY position"
+    ).fetchall())
+
+
 def format_dimension_number(n):
-    if n == int(n):
-        return str(int(n))
-    return f"{n:.10f}".rstrip("0").rstrip(".")
+    return str(int(n)) if n == int(n) else f"{n:.10f}".rstrip("0").rstrip(".")
 
 
-def _nonzero_dims(values):
+def _nonzero_dims(exponents, symbols):
     """Yield (symbol, exponent) pairs with a truthy exponent."""
-    for symbol, exponent in zip(_SYMS, values):
-        if exponent:
-            yield symbol, exponent
+    return ((s, e) for s, e in zip(symbols, exponents) if e)
 
 
-def format_dimensions_plain(*values):
+def format_dimensions_plain(*exponents, symbols):
     """Render dimension exponents as a human-readable string like M·L·T⁻¹."""
-    parts = [
-        symbol if exponent == 1 else f"{symbol}^{format_dimension_number(exponent)}"
-        for symbol, exponent in _nonzero_dims(values)
-    ]
+    parts = [s if e == 1 else f"{s}^{format_dimension_number(e)}"
+             for s, e in _nonzero_dims(exponents, symbols)]
     return " · ".join(parts) if parts else "\\varnothing"
 
 
 def format_dimensions_latex(
-    *values, variable_symbols=None, unit_symbols=None,
+    *exponents, symbols, variable_symbols=None, unit_symbols=None,
     dim_symbols=None, mode="var",
 ):
     """Render dimension exponents as LaTeX (mode: dim | var | unit)."""
-    lookup = {
-        "dim": dim_symbols,
-        "var": variable_symbols,
-        "unit": unit_symbols,
-    }.get(mode) or {}
-    parts = []
-    for symbol, exponent in _nonzero_dims(values):
-        sym = lookup.get(symbol, symbol)
-        if exponent == 1:
-            parts.append(sym)
-        else:
-            exp_text = str(int(exponent)) if exponent == int(exponent) else str(exponent)
-            parts.append(f"{sym}^{{{exp_text}}}")
+    lookup = {"dim": dim_symbols, "var": variable_symbols, "unit": unit_symbols}.get(mode) or {}
+    parts = [(lookup.get(s, s) if e == 1 else f"{lookup.get(s, s)}^{{{format_dimension_number(e)}}}")
+             for s, e in _nonzero_dims(exponents, symbols)]
     return " \\cdot ".join(parts) if parts else "\\varnothing"
 
 
-def dimensions_from_row(row):
-    return [row[c] for c in _COLS]
+def dimensions_from_row(row, conn):
+    cols = dimension_columns(conn)
+    return list(row) if isinstance(row, (list, tuple)) else [row[c] for c in cols]
 
 
-def dimension_matches(row_dimensions, dimension_filter, dim_mode="and"):
-    """Apply a {symbol: {op, val}} filter to a dimension row."""
+def dimension_matches(row_dimensions, dimension_filter, dim_mode, conn):
     active = [(s, df) for s, df in dimension_filter.items() if df["val"] is not None]
     if not active:
         return True
+    cols = dimension_columns(conn)
 
-    def _get(key):
-        v = row_dimensions.get(key)
+    def _val(symbol):
+        col = f"dim_{symbol}"
+        if isinstance(row_dimensions, (list, tuple)):
+            idx = cols.index(col)
+            v = row_dimensions[idx] if idx < len(row_dimensions) else None
+            return v if v is not None else 0
+        v = row_dimensions[col]
         return v if v is not None else 0
 
-    results = (
-        _DIMENSION_OP_FNS[df["op"]](_get(_SYM_TO_COL[s]), df["val"])
-        for s, df in active
-    )
-    return any(results) if dim_mode == "or" else all(results)
+    out = [_FILTER_COMPARISONS[df["op"]](_val(s), df["val"]) for s, df in active]
+    return any(out) if dim_mode == "or" else all(out)
 
 
 def _collect_qid_dimensions(conn):
-    qid_dims = {
-        r["id"]: [r[c] for c in _COLS]
-        for r in conn.execute(f"SELECT id, {', '.join(_COLS)} FROM quantity")
-    }
-    # Constants whose quantity_id resolves a known quantity inherit its
-    # dimensions (standard_gravity -> acceleration) instead of contributing zero.
-    for r in conn.execute(
-        "SELECT id, quantity_id FROM constant WHERE quantity_id IS NOT NULL"
-    ):
-        if r["quantity_id"] in qid_dims:
-            qid_dims[r["id"]] = list(qid_dims[r["quantity_id"]])
-    return qid_dims
+    cols = dimension_columns(conn)
+    q = {r["id"]: [r[c] for c in cols] for r in conn.execute(f"SELECT id, {', '.join(cols)} FROM quantity")}
+    for r in conn.execute("SELECT id, quantity_id FROM constant WHERE quantity_id IS NOT NULL"):
+        if r["quantity_id"] in q:
+            q[r["id"]] = list(q[r["quantity_id"]])
+    return q
 
 
-class DimensionMismatchError(ValueError):
-    """Raised when a formula's dimensional structure cannot be analysed."""
+def _formula_tokens(conn, formula_id):
+    return [dict(t) for t in conn.execute(
+        "SELECT * FROM formula_token WHERE formula_id = ? ORDER BY position", (formula_id,)).fetchall()]
 
 
-def _add_dims(dst, src, scale=1.0):
-    for i, v in enumerate(src):
-        dst[i] += v * scale
+def _rounded(dims):
+    return [int(round(v)) for v in dims]
 
 
-def _walk_dimensions(node, qid_to_dims, dims):
-    """Add the dimensional exponents of every quantity under `node` to `dims`; raises on invalid structure."""
+def _operand_info(node):
+    """Operand descriptor for template matchers and dimension specs."""
+    if node.kind == "quantity":
+        return operand_info("quantity", ref=node.quantity_id, placeholder=node.placeholder)
+    if node.kind == "constant":
+        return operand_info("constant", ref=node.constant_id)
+    if node.kind == "number":
+        return operand_info("number", value=node.value)
+    return operand_info(node.kind)
+
+
+def _node_dimensions(node, qid_to_dims, width=None):
+    if width is None:
+        width = len(next(iter(qid_to_dims.values()), []))
     if node.kind == "quantity":
         if node.quantity_id not in qid_to_dims:
-            raise DimensionMismatchError(
-                f"quantity {node.quantity_id!r} has no registered dimensions"
-            )
-        _add_dims(dims, qid_to_dims[node.quantity_id])
-        return
+            raise DimensionMismatchError(f"quantity {node.quantity_id!r} has no registered dimensions")
+        return list(qid_to_dims[node.quantity_id])
     if node.kind == "constant":
-        if node.constant_id in qid_to_dims:
-            _add_dims(dims, qid_to_dims[node.constant_id])
-        return
+        return list(qid_to_dims.get(node.constant_id, [0] * width))
+    if node.kind == "number":
+        return [0] * width
     if node.kind != "operator":
-        return
-    op = node.operator_id
+        raise DimensionMismatchError(f"cannot analyse node: {node!r}")
     children = node.children
-    if op in ("div", "frac"):
-        lhs, rhs = [0.0] * len(dims), [0.0] * len(dims)
-        _walk_dimensions(children[0], qid_to_dims, lhs)
-        _walk_dimensions(children[1], qid_to_dims, rhs)
-        _add_dims(dims, lhs)
-        _add_dims(dims, rhs, scale=-1.0)
-        return
-    if op == "pow":
-        base, exp = children
-        if exp.kind == "number" and exp.value is not None:
-            sub_dims = [0.0] * len(dims)
-            _walk_dimensions(base, qid_to_dims, sub_dims)
-            _add_dims(dims, sub_dims, scale=exp.value)
-            return
-        exp_dims = [0.0] * len(dims)
-        _walk_dimensions(exp, qid_to_dims, exp_dims)
-        if any(abs(v) > 1e-9 for v in exp_dims):
-            raise DimensionMismatchError(
-                f"exponent must be dimensionless; got {exp_dims}"
-            )
-        if exp.kind in ("quantity", "operator"):
-            sub_dims = [0.0] * len(dims)
-            _walk_dimensions(base, qid_to_dims, sub_dims)
-            _add_dims(dims, sub_dims)
-            return
-        raise DimensionMismatchError(
-            f"exponent must be a number, quantity, or operator expression; "
-            f"got kind={exp.kind!r}"
-        )
-    if op in ("add", "sub"):
-        lhs, rhs = [0.0] * len(dims), [0.0] * len(dims)
-        _walk_dimensions(children[0], qid_to_dims, lhs)
-        _walk_dimensions(children[1], qid_to_dims, rhs)
-        if any(abs(a - b) > 1e-9 for a, b in zip(lhs, rhs)):
-            raise DimensionMismatchError(
-                f"operands of {op} have mismatched dimensions: "
-                f"{lhs} vs {rhs}"
-            )
-        _add_dims(dims, lhs)
-        return
-    if op in ("sin", "cos", "tan"):
-        arg = [0.0] * len(dims)
-        _walk_dimensions(children[0], qid_to_dims, arg)
-        if any(abs(v) > 1e-9 for v in arg):
-            raise DimensionMismatchError(
-                f"argument of {op} must be dimensionless; got {arg}"
-            )
-        return
-    if op == "sqrt":
-        sub_dims = [0.0] * len(dims)
-        _walk_dimensions(children[0], qid_to_dims, sub_dims)
-        _add_dims(dims, sub_dims, scale=0.5)
-        return
-    for c in children:
-        _walk_dimensions(c, qid_to_dims, dims)
+    return apply_dim_spec(node.dim_spec or {}, [_node_dimensions(c, qid_to_dims, width) for c in children],
+                          [_operand_info(c) for c in children], node.operator_id)
 
 
-def _compute_dimensions(conn, tree, empty_default, qid_dims=None):
-    if tree is None:
-        return empty_default
-    node = tree
-    while node.kind == "operator" and node.operator_type == "relational":
-        node = node.children[0]
-    dims = [0.0] * len(_COLS)
-    _walk_dimensions(node, qid_dims or _collect_qid_dimensions(conn), dims)
-    return [int(round(d)) for d in dims]
-
-
-def _dims_for_tokens(conn, tokens, empty_default, label=None, qid_dims=None):
-    """Reduce RPN tokens to dimension exponents, logging failures as `label`."""
-    if not tokens:
-        return empty_default
+def _dims_for_tokens(conn, tokens, label=None, qid_dims=None, cols=None):
+    cols = cols if cols is not None else dimension_columns(conn)
     try:
         tree = reduce_rpn_to_tree(conn, tokens)
+        while tree.kind == "operator" and tree.fixity == "relational":
+            tree = tree.children[0]
+        return _rounded(_node_dimensions(tree, qid_dims or _collect_qid_dimensions(conn), len(cols)))
     except Exception as exc:
-        if label:
-            logger.warning("formula %s: RPN evaluation failed: %s", label, exc)
-        else:
-            logger.warning("RPN evaluation failed: %s", exc)
-        return empty_default
-    try:
-        return _compute_dimensions(conn, tree, empty_default, qid_dims)
-    except DimensionMismatchError as exc:
-        if label:
-            logger.warning("formula %s: %s", label, exc)
-        else:
-            logger.warning("%s", exc)
-        return empty_default
+        logger.warning("formula %s: %s", label, exc)
+        return [0] * len(cols)
 
 
 def compute_formula_dimensions(conn, formula_id):
-    """Compute dimensions from the LHS of a stored formula."""
-    tokens = conn.execute(
-        "SELECT * FROM formula_token WHERE formula_id = ? ORDER BY position",
-        (formula_id,),
-    ).fetchall()
-    return _dims_for_tokens(conn, [dict(t) for t in tokens], [], label=formula_id)
+    return _dims_for_tokens(conn, _formula_tokens(conn, formula_id), label=formula_id)
 
 
 def compute_rpn_dimensions(conn, tokens):
-    """Like compute_formula_dimensions, but on an in-memory RPN token list."""
-    return _dims_for_tokens(conn, tokens, [0.0] * len(_COLS))
+    return _dims_for_tokens(conn, tokens)
 
 
 def compute_compound_unit_dimensions(conn, compound_unit_json):
-    """Base-dimension exponents for a `compound_unit.unit` JSON string (zeros unparseable)."""
-    total = [0] * len(_COLS)
-    unit_qty = {r["id"]: r["quantity_id"]
-                for r in conn.execute("SELECT id, quantity_id FROM unit")}
+    cols = dimension_columns(conn)
+    total = [0.0] * len(cols)
+    unit_qty = {r["id"]: r["quantity_id"] for r in conn.execute("SELECT id, quantity_id FROM unit")}
     qid_dims = _collect_qid_dimensions(conn)
     for unit_id, exponent in parse_compound_unit(compound_unit_json):
-        for i, v in enumerate(qid_dims.get(unit_qty.get(unit_id), [])):
-            total[i] += v * exponent
-    return [int(round(v)) for v in total]
+        dims = qid_dims.get(unit_qty.get(unit_id))
+        if dims:
+            total = [t + v * exponent for t, v in zip(total, dims)]
+    return _rounded(total)
 
 
 def compute_all_formula_dimensions(conn, formula_ids=None):
-    """{formula_id: {dim_M, dim_L, ...}} for all or given formulas."""
-    ids = formula_ids if formula_ids is not None else {
-        r["id"] for r in conn.execute("SELECT id FROM formula")}
+    formula_ids = ([r["id"] for r in conn.execute("SELECT id FROM formula")]
+                   if formula_ids is None else list(formula_ids))
+    cols = dimension_columns(conn)
     qid_dims = _collect_qid_dimensions(conn)
-    result = {}
-    for fid in ids:
-        tokens = conn.execute(
-            "SELECT * FROM formula_token WHERE formula_id = ? ORDER BY position",
-            (fid,),
-        ).fetchall()
-        dims = _dims_for_tokens(
-            conn, [dict(t) for t in tokens], [], label=fid, qid_dims=qid_dims)
-        result[fid] = dict(zip(_COLS, dims)) if dims else dict.fromkeys(_COLS, 0)
-    return result
+    marks, params = in_clause(formula_ids)
+    grouped = {fid: [] for fid in formula_ids}
+    rows = conn.execute(f"SELECT * FROM formula_token WHERE formula_id IN ({marks}) ORDER BY formula_id, position", params).fetchall() if formula_ids else []
+    for r in rows:
+        grouped.setdefault(r["formula_id"], []).append(dict(r))
+    return {fid: dict(zip(cols, _dims_for_tokens(conn, grouped.get(fid, []), label=fid, qid_dims=qid_dims, cols=cols)))
+            for fid in formula_ids}
 
 
 def build_dimension_symbol_triplet(conn):
     """(variable_map, unit_map, dim_map) for the dimension display."""
-    qty_rows = conn.execute(
-        f"SELECT id, symbol FROM quantity "
-        f"WHERE id IN ({','.join('?' * len(_BASE_DIMENSION_QTY_IDS))})",
-        tuple(_BASE_DIMENSION_QTY_IDS.values()),
-    ).fetchall()
-    by_id = {r["id"]: r for r in qty_rows}
-    syms = {
-        r["id"]: r["symbol"]
-        for r in conn.execute("SELECT id, symbol FROM unit")
-    }
+    qty_map = dimension_quantity_ids(conn)
+    by_id = {}
+    if qty_map:
+        marks, params = in_clause(list(qty_map.values()))
+        by_id = {r["id"]: r for r in conn.execute(
+            f"SELECT id, symbol FROM quantity WHERE id IN ({marks})", params).fetchall()}
+    syms = {r["id"]: r["symbol"] for r in conn.execute("SELECT id, symbol FROM unit")}
     variable_map, unit_map, dim_map = {}, {}, {}
-    for symbol, qid in _BASE_DIMENSION_QTY_IDS.items():
+    for symbol, qid in qty_map.items():
         row = by_id.get(qid)
-        variable_map[symbol] = (row["symbol"] if row and row["symbol"] else symbol)
+        variable_map[symbol] = row["symbol"] if row and row["symbol"] else symbol
         unit_map[symbol] = variable_map[symbol]
+        dim_map[symbol] = symbol
         base = select_base_unit(conn, qid, "SI")
         if base is None:
             continue
         if base["kind"] == "compound_unit":
             sym = base.get("symbol_overwrite") or format_compound_unit_symbol(
-                base["unit"],
-                unit_symbol=lambda uid: wrap_symbol_in_latex(syms.get(uid, uid)),
-            )
+                base["unit"], unit_symbol=lambda uid: wrap_symbol_in_latex(syms.get(uid, uid)))
         else:
             sym = wrap_symbol_in_latex(base.get("symbol") or symbol)
         if sym:
             unit_map[symbol] = sym
-        dim_map[symbol] = symbol
     return variable_map, unit_map, dim_map
-
-
-_RANGED_OPS = ("sum", "int", "prod", "oint")
 
 
 def _latex_quantity(node, locale):
     if not node.quantity_id:
         return "?"
-    if node.quantity_id == "drop":
-        return ""
+    # Empty symbols (placeholder operands) render empty; template conditionals omit wrappers.
     sym = localise(node.symbol_overwrite or "", locale) or node.symbol
-    if not sym:
-        return ""
-    return with_subscript(sym, localise(node.label or "", locale))
+    return with_subscript(sym, localise(node.label or "", locale)) if sym else ""
 
 
 def _latex_number(node):
@@ -351,183 +264,72 @@ def _format_positive_number(v):
     return format_dimension_number(v)
 
 
-def _latex_ranged_op(node, locale):
-    """Render `\\op_{from}^{to}{body}` for sum/int/prod/oint."""
-    lo = _latex_node(node.children[0], locale)
-    hi = _latex_node(node.children[1], locale)
-    body = _latex_node(node.children[2], locale)
-    if not body:
-        return ""
-    op = f"\\{node.operator_id}"
-    if not lo and not hi:
-        return f"{op}{{{body}}}"
-    if not lo:
-        return f"{op}^{{{hi}}}{{{body}}}"
-    if not hi:
-        return f"{op}_{{{lo}}}{{{body}}}"
-    return f"{op}_{{{lo}}}^{{{hi}}}{{{body}}}"
-
-
-def _needs_paren(child, parent, side):
-    """Precedence/associativity check for wrapping a child operand."""
-    if child.kind != "operator":
-        return False
-    if child.operator_type == "relational" or child.precedence < parent.precedence:
-        return True
-    if child.precedence != parent.precedence:
-        return False
+def _needs_parens(child, parent, index):
+    """Whether a child operand needs ``\\left(...\\right)`` wrapping."""
+    if child.kind != "operator" or child.precedence != parent.precedence:
+        return child.kind == "operator" and child.precedence < parent.precedence
     if parent.associativity == "none":
         return True
-    if side == "child":
-        return False
-    return (parent.associativity == "left") == (side == "right")
+    if parent.fixity == "infix" and len(parent.children) == 2:
+        return (index == 1) if parent.associativity == "left" else (index == 0)
+    return False
 
 
-def _wrap_in_parens(child_str, child, parent, side):
-    """Wrap child in `\\left(...\\right)` per paren_arg / precedence / source parens."""
-    side_idx = 1 if side == "right" else 0
-    paren_arg = parent.paren_arg or [True] * parent.arity
-    if side_idx >= len(paren_arg) or not paren_arg[side_idx]:
-        return child_str
-    if _needs_paren(child, parent, side):
-        return "\\left(" + child_str + "\\right)"
-    if child._paren_wrap and child.kind == "operator" \
-            and not child_str.startswith("\\left("):
+def _join_juxtaposition(left, right, left_latex, right_latex):
+    """Spacing for a juxtaposition operator (NULL symbol in the operator table)."""
+    if not left_latex:
+        return right_latex
+    if not right_latex:
+        return left_latex
+    if left.kind == "number" and right.kind == "number":
+        return f"{left_latex} \\times {right_latex}"
+    if left.kind == "number":
+        sep = "\\," if right_latex.startswith("\\") else ""
+        return f"{left_latex}{sep}{right_latex}"
+    if right.kind == "number":
+        sep = "\\," if left.kind in ("constant", "quantity") else ""
+        return f"{left_latex}{sep}{right_latex}"
+    return f"{left_latex} {right_latex}"
+
+
+def _wrap_child(child_str, child, parent, index, bare):
+    """Wrap a rendered child in ``\\left(...\\right)`` when needed."""
+    if child.kind == "operator" and (
+            (child._paren_wrap and not child_str.startswith("\\left("))
+            or (index not in bare and _needs_parens(child, parent, index))):
         return "\\left(" + child_str + "\\right)"
     return child_str
 
 
-def _render_binary(node, locale):
-    if node.arity != 2:
-        raise ValueError(f"{node.operator_type} op {node.operator_id} arity {node.arity}")
-    left, right = node.children
-    left_latex = _latex_node(left, locale)
-    right_latex = _latex_node(right, locale)
-    left_latex = _wrap_in_parens(left_latex, left, node, "left")
-    right_latex = _wrap_in_parens(right_latex, right, node, "right")
-    return left_latex, right_latex
-
-
-def _render_child(node, locale):
-    child_latex = _latex_node(node.children[0], locale)
-    return _wrap_in_parens(child_latex, node.children[0], node, "child")
-
-
-def _latex_sqrt(node, locale):
-    radicand = _latex_node(node.children[0], locale)
-    if not radicand:
-        return ""
-    index = node.children[1]
-    if index.kind == "number" and index.value == 2:
-        return f"\\sqrt{{{radicand}}}"
-    idx = _latex_node(index, locale)
-    if not idx:
-        return f"\\sqrt{{{radicand}}}"
-    return f"\\sqrt[{idx}]{{{radicand}}}"
-
-
-def _latex_sub(node, locale):
-    left, right = node.children
-    right_latex = _wrap_in_parens(_latex_node(right, locale), right, node, "right")
-    if left.kind == "quantity" and left.quantity_id == "drop":
-        return f"-{right_latex}"
-    left_latex = _wrap_in_parens(_latex_node(left, locale), left, node, "left")
-    return f"{left_latex} - {right_latex}"
-
-
-def _latex_log(node, locale):
-    base_node = node.children[0]
-    arg = _latex_node(node.children[1], locale)
-    if not arg:
-        return ""
-    if base_node.kind == "constant" and base_node.constant_id == "euler_e":
-        return f"\\ln{{{arg}}}"
-    base = _latex_node(base_node, locale)
-    if not base:
-        return f"\\log{{{arg}}}"
-    return f"\\log_{{{base}}}{{{arg}}}"
-
-
-def _latex_lim(node, locale):
-    var = _latex_node(node.children[0], locale)
-    val = _latex_node(node.children[1], locale)
-    body = _latex_node(node.children[2], locale)
-    if not body:
-        return ""
-    if not var or not val:
-        return f"\\lim{{{body}}}"
-    return f"\\lim_{{{var} \\to {val}}}{{{body}}}"
-
-
-def _latex_implicit_mul(node, locale, left, right, left_latex, right_latex):
-    """Juxtaposition rendering for a symbol-less binary operator."""
-    if left.kind == "number" and right.kind == "number":
-        return f"{left_latex} \\times {right_latex}"
-    if left.kind == "number":
-        if right.kind == "operator" and right.operator_id == "frac":
-            num = _latex_node(right.children[0], locale)
-            den = _latex_node(right.children[1], locale)
-            return f"{left_latex}\\,\\frac{{{num}}}{{{den}}}"
-        if right.kind in ("constant", "quantity") and right_latex.startswith("\\"):
-            return f"{left_latex}\\,{right_latex}"
-        return f"{left_latex}{right_latex}"
-    if right.kind == "number":
-        if left.kind in ("constant", "quantity"):
-            return f"{left_latex}\\,{right_latex}"
-        return f"{left_latex}{right_latex}"
-    return f"{left_latex} {right_latex}"
-
-
-def _latex_infix(node, locale):
-    if node.operator_id == "sqrt":
-        return _latex_sqrt(node, locale)
-    if node.operator_id == "sub":
-        return _latex_sub(node, locale)
-    if node.operator_id == "log":
-        return _latex_log(node, locale)
-    if node.operator_id in _RANGED_OPS:
-        return _latex_ranged_op(node, locale)
-    if node.operator_id == "lim":
-        return _latex_lim(node, locale)
-    left, right = node.children
-    if node.operator_id == "frac":
-        left_latex = _latex_node(left, locale)
-        right_latex = _latex_node(right, locale)
-        return f"\\frac{{{left_latex}}}{{{right_latex}}}"
-    left_latex, right_latex = _render_binary(node, locale)
-    if node.operator_id == "pow":
-        return f"{left_latex}^{{{right_latex}}}"
-    if node.symbol:
-        return f"{left_latex} {node.symbol} {right_latex}"
-    return _latex_implicit_mul(node, locale, left, right, left_latex, right_latex)
-
-
-def _latex_prefix(node, locale):
-    if node.operator_id == "abs":
-        child_latex = _render_child(node, locale)
-        return f"\\left|{child_latex}\\right|"
-    child_latex = _render_child(node, locale)
-    sym = node.symbol or ""
-    if sym == "-":
-        return f"-{child_latex}"
-    return f"{sym} {{{child_latex}}}"
-
-
-def _latex_postfix(node, locale):
-    child_latex = _render_child(node, locale)
-    return f"{child_latex}{node.symbol or ''}"
-
-
-def _latex_relational(node, locale):
-    sym = node.symbol or "="
-    parts = []
-    for i, child in enumerate(node.children):
-        child_str = _wrap_in_parens(
-            _latex_node(child, locale), child, node, "left" if i == 0 else "right")
-        parts.append(child_str)
-        if i < len(node.children) - 1:
-            parts.append(f" {sym} ")
-    return "".join(parts)
+def _latex_operator(node, locale):
+    template = node.latex_template or ""
+    if not template:
+        raise ValueError(f"operator {node.operator_id!r} has no latex_template")
+    op_id = node.operator_id or "<template>"
+    bare = template_bare_slots(template, op_id)
+    # Juxtaposition is schema-defined as NULL symbol, not a template comparison.
+    if len(node.children) == 2 and node.arity == 2 and node.symbol is None:
+        left, right = node.children
+        left_latex, right_latex = _latex_node(left, locale), _latex_node(right, locale)
+        # A placeholder operand (empty rendering) vanishes with its grouping.
+        if not left_latex:
+            return right_latex
+        if not right_latex:
+            return left_latex
+        return _join_juxtaposition(left, right,
+                                   _wrap_child(left_latex, left, node, 0, bare),
+                                   _wrap_child(right_latex, right, node, 1, bare))
+    operands = [_wrap_child(_latex_node(c, locale), c, node, i, bare) for i, c in enumerate(node.children)]
+    infos = [_operand_info(c) for c in node.children]
+    slots = template_arity(template, op_id)
+    if len(operands) <= slots:
+        return render_template(template, operands, infos, op_id)
+    # N-ary chain (relational fold): extra operands rejoin with empty lead slots.
+    out = render_template(template, operands[:slots], infos[:slots], op_id)
+    for extra, info in zip(operands[slots:], infos[slots:]):
+        out += render_template(template, [""] * (slots - 1) + [extra],
+                               [operand_info("operator")] * (slots - 1) + [info], op_id)
+    return out
 
 
 def _latex_node(node, locale="en-us"):
@@ -538,35 +340,21 @@ def _latex_node(node, locale="en-us"):
     if node.kind == "number":
         return _latex_number(node)
     if node.kind == "operator":
-        if node.operator_type == "infix":
-            return _latex_infix(node, locale)
-        if node.operator_type == "prefix":
-            return _latex_prefix(node, locale)
-        if node.operator_type == "postfix":
-            return _latex_postfix(node, locale)
-        if node.operator_type == "relational":
-            return _latex_relational(node, locale)
-        raise ValueError(f"unknown operator type: {node.operator_type!r}")
+        return _latex_operator(node, locale)
     raise ValueError(f"cannot render node: {node!r}")
 
 
 def render_formula_latex(conn, formula_id, locale="en-us"):
     """Render a formula (by id) as a LaTeX string."""
-    tokens = conn.execute(
-        "SELECT * FROM formula_token WHERE formula_id = ? ORDER BY position",
-        (formula_id,),
-    ).fetchall()
+    tokens = _formula_tokens(conn, formula_id)
     if not tokens:
         return ""
-    tree = reduce_rpn_to_tree(conn, [dict(t) for t in tokens])
-    if tree is None:
-        return ""
-    return _latex_node(tree, locale)
+    tree = reduce_rpn_to_tree(conn, tokens)
+    return _latex_node(tree, locale) if tree is not None else ""
 
 
 def _empty_preview(error=""):
-    return {"tokens": [], "latex": "", "dim_latex": "",
-            "variables": [], "error": error}
+    return {"tokens": [], "latex": "", "dim_latex": "", "variables": [], "error": error}
 
 
 def _apply_quantity_overrides(tokens, overrides):
@@ -575,9 +363,7 @@ def _apply_quantity_overrides(tokens, overrides):
         if tok["token_kind"] != "quantity":
             continue
         tok["pos"] = pos
-        if not overrides:
-            continue
-        ov = overrides.get(quantity_token_key(tok["quantity_id"], tok.get("label"), pos)) or {}
+        ov = (overrides or {}).get(quantity_token_key(tok["quantity_id"], tok.get("label"), pos)) or {}
         if ov.get("symbol"):
             tok["symbol_overwrite"] = ov["symbol"]
         if ov.get("label"):
@@ -585,36 +371,33 @@ def _apply_quantity_overrides(tokens, overrides):
 
 
 def _preview_variables(conn, tokens, overrides):
-    """Build the per-occurrence variable list for the /create form."""
-    qty_rows = bulk_entity_rows(
-        conn, "quantity", "id, name, symbol",
-        (tok["quantity_id"] for tok in tokens
-         if tok["token_kind"] == "quantity" and tok["quantity_id"] != "drop"),
-    )
+    """Per-occurrence variable list for the /create form (hidden rows skipped)."""
+    qty_rows = bulk_entity_rows(conn, "quantity", "id, name, symbol, hidden",
+                                (t["quantity_id"] for t in tokens if t["token_kind"] == "quantity"))
     variables = []
     for tok in tokens:
         if tok["token_kind"] != "quantity":
             continue
-        qid = tok["quantity_id"]
-        if qid == "drop":
-            continue
-        pos = tok["pos"]
-        qrow = qty_rows.get(qid)
+        qrow = qty_rows.get(tok["quantity_id"])
         if qrow is None:
-            raise ValueError(f"unknown quantity: {qid!r}")
-        key = quantity_token_key(qid, tok.get("label"), pos)
+            raise ValueError(f"unknown quantity: {tok['quantity_id']!r}")
+        if qrow.get("hidden"):
+            continue
+        key = quantity_token_key(tok["quantity_id"], tok.get("label"), tok["pos"])
         ov = (overrides or {}).get(key) or {}
-        variables.append({
-            "id": qid,
-            "alias": tok.get("label") or "",
-            "pos": pos,
-            "key": key,
-            "symbol": qrow["symbol"],
-            "name": qrow["name"],
-            "symbol_overwrite": ov.get("symbol", ""),
-            "name_overwrite": ov.get("name", ""),
-        })
+        variables.append({"id": tok["quantity_id"], "alias": tok.get("label") or "", "pos": tok["pos"],
+                          "key": key, "symbol": qrow["symbol"], "name": qrow["name"],
+                          "symbol_overwrite": ov.get("symbol", ""), "name_overwrite": ov.get("name", "")})
     return variables
+
+
+def _preview_dim_latex(conn, dims, dim_caches, dim_mode):
+    if dim_caches is None:
+        dim_caches = dict(zip(("var", "unit", "dim"), build_dimension_symbol_triplet(conn)))
+    return format_dimensions_latex(*dims, symbols=dimension_symbols(conn),
+                                   variable_symbols=dim_caches.get("var", {}),
+                                   unit_symbols=dim_caches.get("unit", {}),
+                                   dim_symbols=dim_caches.get("dim", {}), mode=dim_mode)
 
 
 def parse_and_preview_equation(conn, equation, locale="en-us", dim_caches=None, overrides=None, dim_mode="dim"):
@@ -627,33 +410,11 @@ def parse_and_preview_equation(conn, equation, locale="en-us", dim_caches=None, 
         return _empty_preview(str(e))
     if not tokens:
         return _empty_preview()
-
     _apply_quantity_overrides(tokens, overrides)
-
     try:
         tree = reduce_rpn_to_tree(conn, tokens)
     except ValueError as e:
-        return {"tokens": tokens, "latex": "", "dim_latex": "",
-                "variables": [], "error": str(e)}
-
-    latex = _latex_node(tree, locale)
-
-    dims = compute_rpn_dimensions(conn, tokens)
-    if dim_caches is None:
-        dim_caches = dict(zip(
-            ("var", "unit", "dim"), build_dimension_symbol_triplet(conn)))
-    dim_latex = format_dimensions_latex(
-        *dims,
-        variable_symbols=dim_caches.get("var", {}),
-        unit_symbols=dim_caches.get("unit", {}),
-        dim_symbols=dim_caches.get("dim", {}),
-        mode=dim_mode,
-    )
-
-    return {
-        "tokens": tokens,
-        "latex": latex,
-        "dim_latex": dim_latex,
-        "variables": _preview_variables(conn, tokens, overrides),
-        "error": "",
-    }
+        return {"tokens": tokens, "latex": "", "dim_latex": "", "variables": [], "error": str(e)}
+    return {"tokens": tokens, "latex": _latex_node(tree, locale),
+            "dim_latex": _preview_dim_latex(conn, compute_rpn_dimensions(conn, tokens), dim_caches, dim_mode),
+            "variables": _preview_variables(conn, tokens, overrides), "error": ""}

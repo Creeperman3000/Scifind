@@ -1,7 +1,7 @@
 /* eslint-disable no-undef */
 'use strict';
 /* Conversion cells are rendered server-side; picking a different
-     reference row just swaps the pre-computed LaTeX (no client math). */
+   reference row just swaps the pre-computed LaTeX (no client math). */
 
   function _setUnitsCell(td, latex) {
     if (latex === null || latex === undefined) { td.innerHTML = '&ndash;'; return; }
@@ -13,22 +13,23 @@
     renderLatexEl(span);
   }
 
-  function _fillUnitsTable(table) {
-    var st = table._unitsData;
-    if (!st) return;
+  /* One pass per table: ref highlight + button state + conversion cell. */
+  function _syncUnitsTable(table, st) {
     table.querySelectorAll('tbody tr[data-unit-id]').forEach(function(tr) {
       var id = tr.getAttribute('data-unit-id');
+      var isRef = id === st.ref;
+      tr.classList.toggle('is-ref', isRef);
+      var btn = tr.querySelector('.units-ref-btn');
+      if (btn) {
+        btn.disabled = isRef;
+        btn.setAttribute('aria-pressed', isRef ? 'true' : 'false');
+      }
       var td = tr.querySelector('td.uv-conv');
       if (!td) return;
-      if (id === st.ref) {
-        _setUnitsCell(td, null);
-      } else {
-        var latex = (st.latex_by_ref[id] || {})[st.ref];
-        if (latex == null && st.value_latex && st.value_latex[id]) {
-          latex = st.value_latex[id];
-        }
-        _setUnitsCell(td, latex);
-      }
+      if (isRef) { _setUnitsCell(td, null); return; }
+      var latex = (st.latex_by_ref[id] || {})[st.ref];
+      if (latex == null) latex = st.value_latex[id];
+      _setUnitsCell(td, latex);
     });
   }
 
@@ -36,22 +37,18 @@
     var st = sec._unitsState;
     if (!st) return;
     sec.querySelectorAll('.units-ref-name').forEach(function(span) {
-      span.textContent = (st.ref_labels || {})[st.ref] || '';
+      span.textContent = st.ref_labels[st.ref] || '';
     });
     sec.querySelectorAll('table[data-units-dynamic]').forEach(function(table) {
-      table.querySelectorAll('tbody tr[data-unit-id]').forEach(function(tr) {
-        var id = tr.getAttribute('data-unit-id');
-        var isRef = id === st.ref;
-        tr.classList.toggle('is-ref', isRef);
-        var btn = tr.querySelector('.units-ref-btn');
-        if (btn) {
-          btn.disabled = isRef;
-          btn.setAttribute('aria-pressed', isRef ? 'true' : 'false');
-        }
-      });
-      if (table._unitsData) _fillUnitsTable(table);
+      _syncUnitsTable(table, st);
     });
     if (typeof renderMathInContent === 'function') renderMathInContent();
+  }
+
+  function _stripHtml(raw) {
+    var tmp = document.createElement('div');
+    tmp.innerHTML = raw;
+    return (tmp.textContent || tmp.innerText || '').trim();
   }
 
   function _setupUnitsTable(table) {
@@ -62,46 +59,32 @@
     if (!sec._unitsState) {
       var data;
       try { data = JSON.parse(dataEl.textContent); } catch (e) { return; }
-      var latex_by_ref = {};
-      var ref_labels = {};
-      var value_latex = {};
-      var entries = (data.entries || []).concat(data.si_entries || []);
-      entries.forEach(function(e) {
-        latex_by_ref[e.id] = e.latex_by_ref || {};
-        // Strip HTML from the label for the "Conversion to: <unit>" header.
-        var raw = e.label || e.name || e.id;
-        var tmp = document.createElement('div');
-        tmp.innerHTML = raw;
-        ref_labels[e.id] = (tmp.textContent || tmp.innerText || '').trim();
-        if (e.value_latex) value_latex[e.id] = e.value_latex;
+      var st = { ref: data.ref, latex_by_ref: {}, ref_labels: {}, value_latex: {} };
+      (data.entries || []).concat(data.si_entries || []).forEach(function(e) {
+        st.latex_by_ref[e.id] = e.latex_by_ref || {};
+        st.ref_labels[e.id] = _stripHtml(e.label || e.name || e.id);
+        if (e.value_latex) st.value_latex[e.id] = e.value_latex;
       });
-      sec._unitsState = {
-        ref: data.ref,
-        latex_by_ref: latex_by_ref,
-        ref_labels: ref_labels,
-        value_latex: value_latex,
-      };
+      sec._unitsState = st;
     }
-    table._unitsData = sec._unitsState;
     _syncUnitsSection(sec);
   }
 
   function initUnitsTables(scope) {
     var root = scope || document;
     root.querySelectorAll('table[data-units-dynamic]').forEach(_setupUnitsTable);
-    var doRender = function() {
+    onKatexReady(function() {
       renderLatexIn(root);
       renderMathInContent();
-    };
-    onKatexReady(doRender);
+    });
   }
 
   function pickUnitsRef(btn) {
     var sec = btn.closest('.detail-section');
     if (!sec || !sec._unitsState) return;
     var id = btn.getAttribute('data-unit-id');
-    if (id == null) return;
-    if (sec._unitsState.latex_by_ref[id]) sec._unitsState.ref = id;
+    if (id == null || !sec._unitsState.latex_by_ref[id]) return;
+    sec._unitsState.ref = id;
     _syncUnitsSection(sec);
   }
 
@@ -113,8 +96,7 @@
     var row = table.querySelector('.si-toggle-row');
     if (row) {
       row.setAttribute('aria-expanded', open ? 'true' : 'false');
-      row.setAttribute('title', open ? row.getAttribute('data-less') || '' :
-                                      row.getAttribute('data-more') || '');
+      row.setAttribute('title', row.getAttribute(open ? 'data-less' : 'data-more') || '');
     }
   }
 
@@ -126,9 +108,8 @@
         var added = muts[i].addedNodes;
         for (var j = 0; j < added.length; j++) {
           var n = added[j];
-          if (n.nodeType !== 1) continue;
-          if ((n.matches && n.matches('table[data-units-dynamic]')) ||
-              (n.querySelector && n.querySelector('table[data-units-dynamic]'))) {
+          if (n.nodeType !== 1 || !n.querySelector) continue;
+          if (n.matches('table[data-units-dynamic]') || n.querySelector('table[data-units-dynamic]')) {
             initUnitsTables(mc);
             return;
           }
@@ -149,8 +130,7 @@
       if (!decs.length && !dot) return;
       decs.forEach(function(sp) { sp.style.display = ''; });
       if (dot) dot.style.display = '';
-      val.style.maskImage = '';
-      val.style.webkitMaskImage = '';
+      val.style.maskImage = val.style.webkitMaskImage = '';
       var guard = decs.length + 1;
       while (box.scrollWidth > box.clientWidth && guard-- > 0) {
         var last = null;
@@ -162,14 +142,8 @@
       }
       var visible = decs.filter(function(sp) { return sp.style.display !== 'none'; });
       if (dot) dot.style.display = visible.length ? '' : 'none';
-      var anchor = null;
-      if (visible.length) {
-        anchor = visible[visible.length - 1];
-      } else if (dot && dot.style.display !== 'none') {
-        anchor = dot;
-      } else {
-        anchor = val.querySelector('.cv-int');
-      }
+      var anchor = visible.length ? visible[visible.length - 1]
+        : (dot && dot.style.display !== 'none') ? dot : val.querySelector('.cv-int');
       if (!anchor) return;
       var vRect = val.getBoundingClientRect();
       var mantEnd = anchor.getBoundingClientRect().right - vRect.left;
@@ -184,8 +158,7 @@
         var tStart = timesEl.getBoundingClientRect().left - vRect.left;
         grad += ', #000 ' + Math.max(tStart - 1, mantEnd + 1).toFixed(1) + 'px';
       }
-      val.style.webkitMaskImage = grad + ')';
-      val.style.maskImage = grad + ')';
+      val.style.webkitMaskImage = val.style.maskImage = grad + ')';
     });
   }
   function recheckConstantValues() {
@@ -200,12 +173,11 @@
   }
 
   function copyFormula(fmt) {
-    var el = document.getElementById('formula-math');
     var latex = document.getElementById('formula-tex');
     if (!latex) return;
     var tex = latex.textContent;
+    var labelMap = { latex: 'LaTeX', unicode: 'Unicode', png: 'PNG', svg: 'SVG' };
     var doCopy = null;
-
     if (fmt === 'latex') {
       doCopy = navigator.clipboard.writeText(tex);
     } else if (fmt === 'unicode') {
@@ -220,11 +192,7 @@
         return navigator.clipboard.write([new ClipboardItem(item)]);
       });
     }
-
-    if (doCopy) {
-      var labelMap = { latex: 'LaTeX', unicode: 'Unicode', png: 'PNG', svg: 'SVG' };
-      toastCopy(doCopy, labelMap[fmt] || fmt);
-    }
+    if (doCopy) toastCopy(doCopy, labelMap[fmt] || fmt);
   }
 
   function copySqlBlock(btn) {
@@ -234,15 +202,17 @@
     toastCopy(navigator.clipboard.writeText(pre.textContent), 'SQL');
   }
 
+  function _setModal(id, open) {
+    var modal = document.getElementById(id);
+    if (modal) modal.classList.toggle('open', !!open);
+  }
   function openFormulaSqlModal() {
     var menu = document.getElementById('formula-copy-menu');
     if (menu) menu.classList.remove('open');
-    var modal = document.getElementById('formula-sql-modal');
-    if (modal) modal.classList.add('open');
+    _setModal('formula-sql-modal', true);
   }
   function closeFormulaSqlModal() {
-    var modal = document.getElementById('formula-sql-modal');
-    if (modal) modal.classList.remove('open');
+    _setModal('formula-sql-modal', false);
   }
 
   function toggleCopyMenu(e) {

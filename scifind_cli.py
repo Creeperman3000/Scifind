@@ -26,38 +26,20 @@ if str(_PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(_PROJECT_DIR))
 
 from scifind_lib import (
-    database_connection,
-    database_path,
-    database_has_formula_table,
-    initialize_database,
-    render_formula_latex,
-    format_dimensions_plain,
-    dimensions_from_row,
-    search_entities,
-    difficulty_to_stars,
-    localise_english,
-    fetch_formula,
-    fetch_formula_relations,
-    fetch_formula_quantities,
-    fetch_quantity,
-    fetch_quantity_units,
-    fetch_quantity_formulas,
-    fetch_all_quantities,
-    fetch_formulas_filtered,
-    fetch_units_with_quantity,
-    export_to_csv,
-    export_to_csv_directory,
-    export_to_xlsx,
-    export_to_ods,
-    export_to_sql,
-    select_base_unit_with_fallback,
-    topic_name,
-    format_unit_symbol_plain,
-    group_by_topic,
+    database_connection, database_path, database_has_formula_table,
+    initialize_database, render_formula_latex, format_dimensions_plain,
+    dimension_symbols, dimensions_from_row, search_entities,
+    difficulty_to_stars, localise_english, fetch_formula,
+    fetch_formula_relations, fetch_formula_quantities, fetch_quantity,
+    fetch_quantity_units, fetch_quantity_formulas, fetch_all_quantities,
+    fetch_formulas_filtered, fetch_units_with_quantity, export_to_csv,
+    export_to_csv_directory, export_to_xlsx, export_to_ods, export_to_sql,
+    select_base_unit_with_fallback, load_tree, topic_name,
+    format_unit_symbol_plain, group_by_topic,
 )
 
 
-def _exit_with_error(message, code=1):
+def _err(message, code=1):
     print(f"error: {message}", file=sys.stderr)
     sys.exit(code)
 
@@ -66,7 +48,7 @@ _USE_COLOUR = sys.stdout.isatty()
 _CODES = {"bold": 1, "dim": 2, "yellow": 33, "cyan": 36}
 
 
-def _styled(style, text):
+def _st(style, text):
     return f"\033[{_CODES[style]}m{text}\033[0m" if _USE_COLOUR else text
 
 
@@ -74,119 +56,112 @@ def _wrap(text):
     return textwrap.fill(text, width=72, initial_indent="  ", subsequent_indent="  ")
 
 
-def _print_unit_row(unit):
-    mark = "\u2713" if unit["is_base"] else " "
-    print(
-        f"  [{mark}] ${unit['symbol']}$  {_styled("bold", unit['id'])}  "
-        f"[{unit['system'] or 'any'}]"
-    )
+def _header(title, qualifier=None):
+    text = f"\n  {_st('bold', title)}"
+    if qualifier:
+        text += f" for {_st('yellow', qualifier)}"
+    print(text + "\n")
+
+
+def _unit_row(unit):
+    mark = "✓" if unit["is_base"] else " "
+    print(f"  [{mark}] ${unit['symbol']}$  {_st('bold', unit['id'])}  "
+          f"[{unit['system'] or 'any'}]")
+
+
+def _base_unit_str(conn, qid, system="SI"):
+    base = select_base_unit_with_fallback(conn, qid, system)
+    if base is None:
+        return ""
+    unit_json = base["unit"] if base["kind"] == "compound_unit" \
+        else json.dumps([{"unit": base["id"], "exponent": 1}])
+    return format_unit_symbol_plain(unit_json)
+
+
+def _dims(conn, qty):
+    return (format_dimensions_plain(*dimensions_from_row(qty, conn),
+                                    symbols=dimension_symbols(conn)),
+            _base_unit_str(conn, qty["id"]))
 
 
 def command_init(args):
     if not args.force:
         with database_connection() as existing:
             if database_has_formula_table(existing):
-                _exit_with_error(
-                    "database already initialised. Pass --force to re-initialise "
-                    "(this will wipe existing data).",
-                    code=2,
-                )
-
+                _err("database already initialised. Pass --force to re-initialise "
+                     "(this will wipe existing data).", code=2)
     try:
         if args.force:
             os.environ["SCIFIND_ALLOW_FORCE_INIT"] = "1"
-        change_count = initialize_database(force=args.force)
+        count = initialize_database(force=args.force)
     except (sqlite3.Error, OSError) as exc:
-        _exit_with_error(f"initialisation failed: {exc}")
-
+        _err(f"initialisation failed: {exc}")
     print(f"Database initialised at {database_path()}")
-    print(f"  {change_count} SQL statements executed.")
+    print(f"  {count} SQL statements executed.")
 
 
-def _parse_difficulty_range(raw):
+def _diff_range(raw):
     try:
-        parts = [int(p) for p in raw.split("-")]
-        if len(parts) == 1:
-            return parts[0], parts[0]
-        if len(parts) == 2:
-            return parts[0], parts[1]
+        lo, *hi = (int(p) for p in raw.split("-"))
+        return (lo, hi[0]) if hi else (lo, lo)
     except ValueError:
         pass
-    _exit_with_error(f"invalid difficulty range {raw!r} (expected N or N-M)")
+    _err(f"invalid difficulty range {raw!r} (expected N or N-M)")
 
 
-def _query_formulas(conn, topic=None, difficulty=None):
-    diff_min = diff_max = None
+def _list_formulas(topic=None, difficulty=None, id_width=40,
+                   row_indent="    ", topic_suffix=":"):
+    lo = hi = None
     if difficulty:
-        diff_min, diff_max = _parse_difficulty_range(difficulty)
-    return fetch_formulas_filtered(conn, topic=topic, diff_min=diff_min, diff_max=diff_max)
-
-
-def _print_section_header(title, qualifier=None):
-    header = f"\n  {_styled("bold", title)}"
-    if qualifier:
-        header += f" for {_styled("yellow", qualifier)}"
-    print(header + "\n")
-
-
-def _print_formulas(rows, id_width=40, row_indent="    ", topic_suffix=":"):
-    for topic, items in group_by_topic(rows).items():
-        print(f"\n  {_styled("yellow", topic)}{topic_suffix}")
-        for formula in items:
-            stars = difficulty_to_stars(formula["difficulty"])
-            print(f"{row_indent}{formula['id']:{id_width}s} {stars}  {formula['name_en']}")
-    print()
-
-
-def _list_formulas(topic=None, difficulty=None, **print_kw):
+        lo, hi = _diff_range(difficulty)
     with database_connection() as conn:
-        rows = _query_formulas(conn, topic=topic, difficulty=difficulty)
+        rows = fetch_formulas_filtered(conn, topic=topic, diff_min=lo, diff_max=hi)
+        tree = load_tree(conn)
     if not rows:
         print("No formulas found.")
         return
-    _print_formulas(rows, **print_kw)
+    for t, items in group_by_topic(rows, tree).items():
+        print(f"\n  {_st('yellow', t)}{topic_suffix}")
+        for f in items:
+            print(f"{row_indent}{f['id']:{id_width}s} "
+                  f"{difficulty_to_stars(f['difficulty'])}  {f['name_en']}")
+    print()
 
 
 def command_list(args):
     _list_formulas(topic=args.topic, difficulty=args.difficulty)
 
 
+def command_browse(args):
+    _list_formulas(id_width=38, row_indent="      ", topic_suffix="")
+
+
 def command_show(args):
     with database_connection() as conn:
         row = fetch_formula(conn, args.id)
         if not row:
-            _exit_with_error(f"Formula '{args.id}' not found.")
+            _err(f"Formula '{args.id}' not found.")
         related = fetch_formula_relations(conn, args.id)
         quantities = fetch_formula_quantities(conn, args.id)
         latex = render_formula_latex(conn, args.id, locale="en-us")
-
-    name = localise_english(row["name"])
-    description = localise_english(row["description"])
-    difficulty = row["difficulty"]
-    topic = topic_name(row["topic_id"])
-    stars = difficulty_to_stars(difficulty)
-
-    print(f"\n  {_styled("bold", name)}  {stars}")
-    if topic:
-        print(f"  {_styled("cyan", topic)}  (difficulty {difficulty}/10)")
-
+        tree = load_tree(conn)
+    print(f"\n  {_st('bold', localise_english(row['name']))}  "
+          f"{difficulty_to_stars(row['difficulty'])}")
+    if (topic := topic_name(row["topic_id"], tree)):
+        print(f"  {_st('cyan', topic)}  (difficulty {row['difficulty']}/10)")
     if latex:
-        print("\n  $$")
-        print(f"  {latex}")
-        print("  $$")
-
-    if description:
-        print(f"\n  {_styled("dim", _wrap(description))}")
-
+        print(f"\n  $$\n  {latex}\n  $$")
+    if (desc := localise_english(row["description"])):
+        print(f"\n  {_st('dim', _wrap(desc))}")
     if quantities:
-        print(f"\n  {_styled("bold", 'Quantities:')}")
-        for qty in quantities:
-            print(f"    ${qty['symbol']}$  {qty['name_en']}  ({_styled("dim", qty['id'])})")
-
+        print(f"\n  {_st('bold', 'Quantities:')}")
+        for q in quantities:
+            print(f"    ${q['symbol']}$  {q['name_en']}  ({_st('dim', q['id'])})")
     if related:
-        print(f"\n  {_styled("bold", 'Related:')}")
-        for rel in related:
-            print(f"    {_styled("dim", rel['relation_type'])} \u2192 {rel['related_id']}  ({rel['related_name']})")
+        print(f"\n  {_st('bold', 'Related:')}")
+        for r in related:
+            print(f"    {_st('dim', r['relation_type'])} → "
+                  f"{r['related_id']}  ({r['related_name']})")
     print()
 
 
@@ -196,78 +171,56 @@ def command_search(args):
     if not rows:
         print("No results.")
         return
-
-    print(f"\n  {_styled("bold", f'{len(rows)} result(s)')} for {_styled("yellow", repr(args.query))}\n")
+    print(f"\n  {_st('bold', f'{len(rows)} result(s)')} "
+          f"for {_st('yellow', repr(args.query))}\n")
     for kind, id_, name_en in rows:
         print(f"  [{kind}] {name_en}  ({id_})")
     print()
 
 
-def _unit_str_for_quantity(conn, qid, system="SI"):
-    base = select_base_unit_with_fallback(conn, qid, system)
-    if base is None:
-        return ""
-    if base["kind"] == "compound_unit":
-        unit_json = base["unit"]
-    else:
-        unit_json = json.dumps([{"unit": base["id"], "exponent": 1}])
-    return format_unit_symbol_plain(unit_json)
-
-
 def command_quantities(args):
     with database_connection() as conn:
-        if args.formula:
-            rows = fetch_formula_quantities(conn, args.formula)
-        else:
-            rows = fetch_all_quantities(conn)
+        rows = (fetch_formula_quantities(conn, args.formula) if args.formula
+                else fetch_all_quantities(conn))
         if not rows:
             print("No quantities found.")
             return
-
-        _print_section_header("Quantities", args.formula)
-
-        for qty in rows:
-            dimensions = format_dimensions_plain(*dimensions_from_row(qty))
-            unit_str = _unit_str_for_quantity(conn, qty["id"])
-            print(f"  ${qty['symbol']}$  {_styled("bold", qty['name_en'])}  ({_styled("dim", qty['id'])})")
-            suffix = f"  default unit: {unit_str}" if unit_str else ""
-            print(f"      Dimensions: {_styled("dim", dimensions)}{suffix}")
+        _header("Quantities", args.formula)
+        for q in rows:
+            dims, unit = _dims(conn, q)
+            print(f"  ${q['symbol']}$  {_st('bold', q['name_en'])}  "
+                  f"({_st('dim', q['id'])})")
+            suffix = f"  default unit: {unit}" if unit else ""
+            print(f"      Dimensions: {_st('dim', dims)}{suffix}")
     print()
 
 
 def command_quantity(args):
     with database_connection() as conn:
-        quantity = fetch_quantity(conn, args.id)
-        if not quantity:
-            _exit_with_error(f"Quantity '{args.id}' not found.")
+        qty = fetch_quantity(conn, args.id)
+        if not qty:
+            _err(f"Quantity '{args.id}' not found.")
         units = fetch_quantity_units(conn, args.id)
         formulas = fetch_quantity_formulas(conn, args.id)
-
-        name = localise_english(quantity["name"])
-        description = localise_english(quantity["description"])
-        dimensions = format_dimensions_plain(*dimensions_from_row(quantity))
-        unit_str = _unit_str_for_quantity(conn, args.id)
-
-    label = f"${quantity['symbol']}$ \u2014 {name}"
-    print(f"\n  {_styled("bold", label)}  ({_styled("dim", quantity['id'])})")
-    if dimensions:
-        print(f"  Dimensions: {_styled("dim", dimensions)}")
-    if unit_str:
-        print(f"  Default unit: {unit_str}")
-
-    if description:
-        print(f"\n  {_styled("dim", _wrap(description))}")
-
+        dims, unit = _dims(conn, qty)
+        name, desc = localise_english(qty["name"]), localise_english(qty["description"])
+    label = f"${qty['symbol']}$ — {name}"
+    print(f"\n  {_st('bold', label)}  "
+          f"({_st('dim', qty['id'])})")
+    if dims:
+        print(f"  Dimensions: {_st('dim', dims)}")
+    if unit:
+        print(f"  Default unit: {unit}")
+    if desc:
+        print(f"\n  {_st('dim', _wrap(desc))}")
     if units:
-        print(f"\n  {_styled("bold", 'Units:')}")
-        for unit in units:
-            _print_unit_row(unit)
-
+        print(f"\n  {_st('bold', 'Units:')}")
+        for u in units:
+            _unit_row(u)
     if formulas:
-        print(f"\n  {_styled("bold", 'Appears in formulas:')}")
-        for formula in formulas:
-            stars = difficulty_to_stars(formula["difficulty"])
-            print(f"    {formula['id']:40s} {stars}  {formula['name_en']}")
+        print(f"\n  {_st('bold', 'Appears in formulas:')}")
+        for f in formulas:
+            print(f"    {f['id']:40s} {difficulty_to_stars(f['difficulty'])}  {f['name_en']}")
     print()
 
 
@@ -277,29 +230,18 @@ def command_units(args):
     if not rows:
         print("No units found.")
         return
-
-    _print_section_header("Units", args.quantity)
-
-    if args.quantity:
-        for unit in rows:
-            _print_unit_row(unit)
-    else:
-        last_qid = None
-        for unit in rows:
-            if unit["quantity_id"] != last_qid:
-                last_qid = unit["quantity_id"]
-                print(f"  {_styled("yellow", unit['quantity_id'])} \u2014 {unit['quantity_name']}")
-            _print_unit_row(unit)
+    _header("Units", args.quantity)
+    last_qid = None
+    for u in rows:
+        if not args.quantity and u["quantity_id"] != last_qid:
+            last_qid = u["quantity_id"]
+            print(f"  {_st('yellow', u['quantity_id'])} — {u['quantity_name']}")
+        _unit_row(u)
     print()
-
-
-def command_browse(args):
-    _list_formulas(id_width=38, row_indent="      ", topic_suffix="")
 
 
 def command_export(args):
     fmt = (args.format or "csv").lower()
-
     with database_connection() as conn:
         if fmt == "csvdir":
             target = args.output or "."
@@ -308,7 +250,7 @@ def command_export(args):
             return
         if fmt in ("xlsx", "ods"):
             output = args.output or f"scifind.{fmt}"
-            {"xlsx": export_to_xlsx, "ods": export_to_ods}[fmt](conn, output)
+            (export_to_xlsx if fmt == "xlsx" else export_to_ods)(conn, output)
             print(f"Exported to {output}")
             return
         data = export_to_sql(conn) if fmt == "sql" else export_to_csv(conn)
@@ -320,8 +262,32 @@ def command_export(args):
             sys.stdout.write(data)
 
 
+# (command, help, [(flags, kwargs), ...])
+_SUBCOMMANDS = [
+    ("init", "Create and seed the database",
+     [(("--force",), {"action": "store_true",
+                      "help": "Re-initialise even if database already exists (wipes existing data)."})]),
+    ("list", "List formulas",
+     [(("--topic", "-t"), {"help": "Filter by topic"}),
+      (("--difficulty", "-d"), {"help": "Difficulty range: N or N-M"})]),
+    ("show", "Show formula", [(("id",), {"help": "Formula ID"})]),
+    ("search", "Full-text search",
+     [(("query",), {"help": "Search terms"}),
+      (("--limit", "-l"), {"type": int, "default": 20, "help": "Max results"})]),
+    ("quantities", "List quantities",
+     [(("--formula",), {"help": "Filter by formula ID"})]),
+    ("quantity", "Show quantity details", [(("id",), {"help": "Quantity ID"})]),
+    ("units", "List units",
+     [(("--quantity", "-q"), {"help": "Filter by quantity ID"})]),
+    ("browse", "Browse by branch/topic", []),
+    ("export", "Export all tables",
+     [(("--format", "-f"), {"choices": ["csv", "csvdir", "xlsx", "ods", "sql"],
+                            "default": "csv", "help": "Output format (default: csv)"}),
+      (("--output", "-o"), {"help": "Output file or directory"})]),
+]
+
+
 def main():
-    default_database = database_path()
     parser = argparse.ArgumentParser(
         description="Scifind — structured physics formula database",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -341,65 +307,21 @@ def main():
               scifind_cli export --format sql -o scifind.sql
         """),
     )
-    parser.add_argument("--db", help=f"Database path (default: {default_database})")
-    subcommands = parser.add_subparsers(dest="command", required=True)
-
-    p_init = subcommands.add_parser("init", help="Create and seed the database")
-    p_init.add_argument(
-        "--force", action="store_true",
-        help="Re-initialise even if database already exists (wipes existing data).",
-    )
-
-    p_list = subcommands.add_parser("list", help="List formulas")
-    p_list.add_argument("--topic", "-t", help="Filter by topic")
-    p_list.add_argument("--difficulty", "-d", help="Difficulty range: N or N-M")
-
-    p_show = subcommands.add_parser("show", help="Show formula")
-    p_show.add_argument("id", help="Formula ID")
-
-    p_search = subcommands.add_parser("search", help="Full-text search")
-    p_search.add_argument("query", help="Search terms")
-    p_search.add_argument("--limit", "-l", type=int, default=20, help="Max results")
-
-    p_quantities = subcommands.add_parser("quantities", help="List quantities")
-    p_quantities.add_argument("--formula", help="Filter by formula ID")
-
-    p_quantity = subcommands.add_parser("quantity", help="Show quantity details")
-    p_quantity.add_argument("id", help="Quantity ID")
-
-    p_units = subcommands.add_parser("units", help="List units")
-    p_units.add_argument("--quantity", "-q", help="Filter by quantity ID")
-
-    subcommands.add_parser("browse", help="Browse by branch/topic")
-
-    p_export = subcommands.add_parser("export", help="Export all tables")
-    p_export.add_argument(
-        "--format", "-f", choices=["csv", "csvdir", "xlsx", "ods", "sql"],
-        default="csv", help="Output format (default: csv)",
-    )
-    p_export.add_argument("--output", "-o", help="Output file or directory")
-
+    parser.add_argument("--db", help=f"Database path (default: {database_path()})")
+    subs = parser.add_subparsers(dest="command", required=True)
+    for name, help_text, arguments in _SUBCOMMANDS:
+        sub = subs.add_parser(name, help=help_text)
+        for flags, kwargs in arguments:
+            sub.add_argument(*flags, **kwargs)
     args = parser.parse_args()
     if args.db:
         os.environ["SCIFIND_DB"] = args.db
-
-    commands = {
-        "init": command_init,
-        "list": command_list,
-        "show": command_show,
-        "search": command_search,
-        "quantities": command_quantities,
-        "quantity": command_quantity,
-        "units": command_units,
-        "browse": command_browse,
-        "export": command_export,
-    }
     try:
-        commands[args.command](args)
+        globals()[f"command_{args.command}"](args)
     except sqlite3.Error as exc:
-        _exit_with_error(f"database error: {exc}")
+        _err(f"database error: {exc}")
     except OSError as exc:
-        _exit_with_error(f"file error: {exc}")
+        _err(f"file error: {exc}")
     except (KeyboardInterrupt, SystemExit):
         raise
     except Exception:

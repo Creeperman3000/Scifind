@@ -1,38 +1,54 @@
-"""Science/branch/topic tree loaded from tree.json."""
+"""Science/branch/topic tree, loaded from the ``topic`` table."""
 
 import json
 
-from scifind_lib.constants import TREE_PATH
 from scifind_lib.i18n import localise
 
-_TREE_CACHE = {}
+
+def _parse_json_dict(text):
+    try:
+        data = json.loads(text or "{}")
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
-def load_tree():
-    if "tree" not in _TREE_CACHE:
-        try:
-            with open(TREE_PATH, encoding="utf-8") as f:
-                _TREE_CACHE["tree"] = json.load(f).get("sciences", [])
-        except (OSError, ValueError):
-            _TREE_CACHE["tree"] = []
-    return _TREE_CACHE["tree"]
+def load_tree(conn):
+    """Nested topic tree rebuilt from ``topic`` rows ordered by position."""
+    rows = conn.execute(
+        "SELECT id, parent_id, name, name_genative, position FROM topic "
+        "ORDER BY position"
+    ).fetchall()
+    nodes = {}
+    for r in rows:
+        translations = _parse_json_dict(r["name"])
+        if gen_val := _parse_json_dict(r["name_genative"]).get("cs-cz"):
+            translations.setdefault("cs-cz-gen", gen_val)
+        nodes[r["id"]] = {
+            "id": r["id"], "translations": translations, "children": [],
+            "_parent": r["parent_id"],
+        }
+    roots = []
+    for node in nodes.values():
+        parent = node.pop("_parent")
+        if parent and parent in nodes:
+            nodes[parent]["children"].append(node)
+        else:
+            roots.append(node)
+    return roots
 
 
 def walk_tree(tree, visit):
     """Depth-first walk; visit(node) is called for each node."""
-    for root in tree:
-        visit(root)
-        for child in (root.get("children") or []):
-            walk_tree([child], visit)
+    for node in tree:
+        visit(node)
+        walk_tree(node.get("children") or [], visit)
 
 
 def leaf_ids(node):
     if not node.get("children"):
         return {node["id"]}
-    leaves = set()
-    for child in node["children"]:
-        leaves |= leaf_ids(child)
-    return leaves
+    return set().union(*(leaf_ids(c) for c in node["children"]))
 
 
 def descendant_ids(node):
@@ -44,38 +60,34 @@ def descendant_ids(node):
 
 def expand_selection(tree, ids):
     """Expand a set of tree-level ids to all leaf ids they cover."""
-    idset = set(ids)
-    covered = set()
+    idset, covered = set(ids), set()
 
-    def _expand_node(node):
+    def _expand(node):
         if node["id"] in idset:
             covered.update(descendant_ids(node))
 
-    walk_tree(tree, _expand_node)
+    walk_tree(tree, _expand)
     return covered
 
 
 def compress_selection(tree, ids):
     """Replace a set of leaf ids with the minimal ancestor-covering set."""
-    idset = set(ids)
-    covered_leaves = set()
+    idset, covered, out = set(ids), set(), set()
 
-    def visit_collect(node):
+    def _collect(node):
         if node["id"] in idset:
-            covered_leaves.update(leaf_ids(node))
+            covered.update(leaf_ids(node))
 
-    walk_tree(tree, visit_collect)
+    walk_tree(tree, _collect)
 
-    out = set()
-
-    def visit_collapse(roots):
-        for node in roots:
-            if leaf_ids(node) <= covered_leaves:
+    def _collapse(nodes):
+        for node in nodes:
+            if leaf_ids(node) <= covered:
                 out.add(node["id"])
-                continue
-            visit_collapse(node.get("children") or [])
+            else:
+                _collapse(node.get("children") or [])
 
-    visit_collapse(tree)
+    _collapse(tree)
     return out
 
 
@@ -87,52 +99,28 @@ def all_tree_ids(tree):
 
 def topic_name_map(tree, locale="en-us"):
     """Flat {id: localised name} for every node in the tree."""
-    out = {}
-
-    def _name_node(node):
-        out[node["id"]] = localise(node.get("translations") or {}, locale)
-    walk_tree(tree, _name_node)
-    return out
+    nodes = []
+    walk_tree(tree, nodes.append)
+    return {n["id"]: localise(n.get("translations") or {}, locale) for n in nodes}
 
 
-def topic_name(topic_id, tree=None, locale="en-us"):
+def topic_name(topic_id, tree, locale="en-us"):
     if not topic_id:
         return None
-    if tree is None:
-        tree = load_tree()
-    name_map = topic_name_map(tree, locale)
-    if topic_id in name_map:
-        return name_map[topic_id]
-    return topic_id.replace("_", " ").title()
+    return topic_name_map(tree, locale).get(topic_id, topic_id.replace("_", " ").title())
 
 
 def topic_path(tree, topic):
     """Return the ids along the path to a topic, or None if not in the tree."""
-    def _path_node(node, ancestors=()):
+    for node in tree:
         if node["id"] == topic:
-            return ancestors + (topic,)
-        for child in (node.get("children") or []):
-            result = _path_node(child, ancestors + (node["id"],))
-            if result:
-                return result
-    for root in tree:
-        if result := _path_node(root):
-            return result
+            return (topic,)
+        if result := topic_path(node.get("children") or [], topic):
+            return (node["id"],) + result
     return None
 
 
-def topic_tree_order():
-    """{topic_id: depth-first index} over the science tree."""
-    tree = load_tree()
-    order = {}
-    counter = [0]
-
-    def _order_node(node):
-        order[node["id"]] = counter[0]
-        counter[0] += 1
-        for child in (node.get("children") or []):
-            _order_node(child)
-
-    for root in tree:
-        _order_node(root)
-    return order
+def topic_tree_order(conn):
+    """{topic_id: position} over the science tree, from ``topic.position``."""
+    return {r["id"]: r["position"]
+            for r in conn.execute("SELECT id, position FROM topic").fetchall()}

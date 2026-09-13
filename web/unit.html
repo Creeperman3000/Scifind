@@ -7,16 +7,7 @@
 <div class="detail-desc">{{ _('detail.unit') }}</div>
 
 {% if unit.quantity_id %}
-<div class="breadcrumb-bar">
-  {% if unit.breadcrumbs %}
-  {% for crumb in unit.breadcrumbs %}
-    {% if not loop.first %} &gt; {% endif %}
-    <a href="/quantities?ids={{ crumb.id }}">{{ crumb.name }}</a>
-  {% endfor %}
-  &gt;
-  {% endif %}
-  <a href="/quantity/{{ unit.quantity_id }}">{{ unit.quantity_name_localized }}</a>
-</div>
+{{ breadcrumbs(unit.breadcrumbs, '/quantity/' ~ unit.quantity_id, unit.quantity_name_localized) }}
 {% endif %}
 
 {{ units_table(units, table_data, si_prefix_sections, fixed_ref) }}

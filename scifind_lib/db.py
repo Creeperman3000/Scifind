@@ -21,10 +21,8 @@ def sql_literal(value):
         return "NULL"
     if isinstance(value, bool):
         return "1" if value else "0"
-    if isinstance(value, float):
+    if isinstance(value, (int, float)):
         return repr(value)
-    if isinstance(value, int):
-        return str(value)
     return "'" + str(value).replace("'", "''") + "'"
 
 
@@ -37,22 +35,17 @@ def insert_statement(table, columns, values):
 def in_clause(ids):
     """Build a `(?, ?, …)` placeholder list + values; empty input yields ``("NULL", ())``."""
     items = list(ids)
-    if not items:
-        return "NULL", ()
-    return ",".join("?" for _ in items), tuple(items)
+    return ("NULL", ()) if not items else (",".join("?" for _ in items), tuple(items))
 
 
 def open_database():
     path = database_path()
-    parent = os.path.dirname(path)
-    if parent:
+    if parent := os.path.dirname(path):
         os.makedirs(parent, exist_ok=True)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")
-    conn.execute("PRAGMA busy_timeout = 5000")
-    conn.execute("PRAGMA synchronous = NORMAL")
+    for pragma in ("foreign_keys = ON", "journal_mode = WAL", "busy_timeout = 5000", "synchronous = NORMAL"):
+        conn.execute(f"PRAGMA {pragma}")
     return conn
 
 
@@ -67,45 +60,31 @@ def database_connection():
 
 
 def database_has_formula_table(conn):
-    return bool(conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='formula'"
-    ).fetchone())
+    return bool(conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='formula'").fetchone())
 
 
 def initialize_database(force=False, schema_path=None, seed_path=None):
     """Create (or recreate) the schema and seed data; ``force`` requires SCIFIND_ALLOW_FORCE_INIT=1."""
-    if force and os.environ.get("SCIFIND_ALLOW_FORCE_INIT", "").lower() not in (
-        "1", "true", "yes",
-    ):
-        raise PermissionError(
-            "initialize_database(force=True) requires SCIFIND_ALLOW_FORCE_INIT=1"
-        )
+    if force and os.environ.get("SCIFIND_ALLOW_FORCE_INIT", "").lower() not in {"1", "true", "yes"}:
+        raise PermissionError("initialize_database(force=True) requires SCIFIND_ALLOW_FORCE_INIT=1")
     project_dir = Path(__file__).resolve().parent.parent
-    schema_path = schema_path or (project_dir / "schema.sql")
-    seed_path = seed_path or (project_dir / "seed.sql")
-    conn = open_database()
-    try:
+    schema_path = schema_path or project_dir / "schema.sql"
+    seed_path = seed_path or project_dir / "seed.sql"
+    tables = ("formula_relation", "formula_token", "formula", "operator", "constant",
+              "compound_unit", "unit", "quantity", "topic", "si_prefix",
+              "slug_override", "dimension_filter_operator", "app_config")
+    with database_connection() as conn:
         conn.execute("PRAGMA foreign_keys = OFF")
         try:
             if force:
-                for table in (
-                    "formula_relation", "formula_token",
-                    "formula", "operator", "constant",
-                    "compound_unit", "unit", "quantity",
-                    "si_prefix",
-                ):
+                for table in tables:
                     conn.execute(f"DROP TABLE IF EXISTS {table}")
-            conn.executescript(Path(schema_path).read_text(encoding="utf-8"))
-            conn.executescript(Path(seed_path).read_text(encoding="utf-8"))
+            for path in (schema_path, seed_path):
+                conn.executescript(Path(path).read_text(encoding="utf-8"))
             conn.execute("PRAGMA foreign_keys = ON")
             conn.commit()
         except Exception as exc:
             logger.error("initialize_database failed; rolling back: %s", exc)
-            try:
-                conn.execute("ROLLBACK")
-            except sqlite3.Error:
-                pass
+            conn.rollback()
             raise
         return conn.total_changes
-    finally:
-        conn.close()

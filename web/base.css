@@ -1,5 +1,4 @@
-/* Breakpoints are hardcoded; var() is not allowed in @media:
-   tablet 768px, content 849px, desktop 1024px */
+/* Breakpoints (var() is not allowed in @media): tablet 768px, content 849px, desktop 1024px */
 
 /* ---- 1. Reset ---- */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -124,7 +123,7 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-
 
 .form-row { display: flex; gap: 8px; align-items: center; }
 
-.settings-link {
+.settings-link, .settings-item button:not(.sort-option):not(.cselect-trigger) {
   display: inline-block;
   padding: 4px 12px;
   font-size: 0.85rem;
@@ -135,7 +134,7 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-
   cursor: pointer;
   text-decoration: none;
 }
-.settings-link:hover { background: var(--bg-secondary); text-decoration: none; }
+.settings-link:hover, .settings-item button:not(.sort-option):not(.cselect-trigger):hover { background: var(--bg-secondary); text-decoration: none; }
 
 .btn-primary {
   padding: 10px 24px;
@@ -180,21 +179,23 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-
 .topbar-left { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .topbar-right { display: flex; align-items: center; gap: 4px; flex-shrink: 0; margin-left: auto; }
 
+.topbar-btn, .filter-btn {
+  border: none;
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+}
 .topbar-btn {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 32px;
   height: 32px;
-  border: none;
-  background: none;
-  cursor: pointer;
   border-radius: var(--radius-md);
-  color: var(--text);
   flex-shrink: 0;
 }
-.topbar-btn:hover { background: var(--bg-secondary); }
-.topbar-btn svg { display: block; }
+.topbar-btn:hover, .filter-btn:hover { background: var(--bg-secondary); }
+.topbar-btn svg, .filter-btn svg { display: block; }
 
 .topbar-logo {
   display: flex;
@@ -273,7 +274,9 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-
   align-items: center;
   border-radius: var(--radius-sm);
 }
-.search-suggestion:hover, .search-suggestion.highlighted { background: var(--bg-secondary); }
+.search-suggestion:hover, .search-suggestion.highlighted, .settings-item:hover, .sort-option:hover,
+.topic-menu-item:hover, .lang-picker .lang-row:hover,
+.formula-copy-menu button:hover { background: var(--bg-secondary); }
 .search-suggestion .ss-kind { margin-left: auto; padding-left: 12px; font-size: 0.75rem; color: var(--text-secondary); }
 
 .topbar.expand-search .topbar-left { display: none; }
@@ -360,7 +363,8 @@ html.suppress-transitions .sidebar { transition: none !important; }
   gap: 2px;
 }
 .view-tab svg { flex-shrink: 0; }
-.view-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.view-tab.active, .dock-pill.active, .dock-half.active { background: var(--accent); color: #fff; }
+.view-tab.active { border-color: var(--accent); }
 
 .section-label { font-size: 0.75rem; letter-spacing: 0.05em; color: var(--text-secondary); margin: 12px 0 6px; }
 .section-label-row { display: flex; align-items: center; justify-content: space-between; gap: 4px; margin: 12px 0 6px; flex-wrap: wrap; }
@@ -369,17 +373,11 @@ html.suppress-transitions .sidebar { transition: none !important; }
 .filter-buttons { display: flex; flex-wrap: wrap; justify-content: flex-end; }
 .filter-btn {
   padding: 2px;
-  border: none;
-  background: none;
-  color: var(--text);
-  cursor: pointer;
   line-height: 1;
   border-radius: var(--radius-sm);
 }
-.filter-btn:hover { background: var(--bg-secondary); }
 .filter-btn.active { color: var(--accent); }
 .filter-btn.disabled { opacity: 0.35; pointer-events: none; }
-.filter-btn svg { display: block; }
 
 .filter-dim-row { display: flex; align-items: center; gap: 4px; padding: 2px 0; font-size: 0.8rem; }
 .dim-symbol { font-weight: 600; font-size: 0.85rem; width: 28px; text-align: center; flex-shrink: 0; }
@@ -566,12 +564,9 @@ html.suppress-transitions .sidebar { transition: none !important; }
   cursor: pointer;
   border-radius: var(--radius-sm);
 }
-.sort-option:hover { background: var(--bg-secondary); }
 
-/* Open: trigger morphs into the head of the list; the selected value
-   stays in the trigger instead of repeating as a row. */
-/* Full transition list here (not the generic hover rule below) so the
-   radius morph animates too. */
+/* Open: trigger morphs into the head of the list (selected value stays in the trigger). */
+/* Full transition list here (not the generic hover rule below) so the radius morph animates too. */
 .sort-trigger, .cselect-trigger {
   transition:
     border-radius var(--dur-fast) var(--ease-out),
@@ -601,17 +596,6 @@ html.suppress-transitions .sidebar { transition: none !important; }
 .cselect-menu { max-height: 240px; overflow-y: auto; }
 .cselect-trigger.compact { width: auto; min-width: 46px; justify-content: center; gap: 3px; padding: 3px 6px; font-size: 0.8rem; }
 .cselect-menu.compact .sort-option { justify-content: center; }
-/* Keep the generic settings button style off custom selects */
-.settings-item button:not(.sort-option):not(.cselect-trigger) {
-  font-size: 0.85rem;
-  padding: 4px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
-  color: var(--text);
-  cursor: pointer;
-}
-.settings-item button:not(.sort-option):not(.cselect-trigger):hover { background: var(--bg-secondary); }
 .label-in { animation: label-in var(--dur-fast) var(--ease-out); }
 @keyframes label-in { from { opacity: 0; transform: translateY(-3px); } }
 
@@ -620,7 +604,7 @@ html.suppress-transitions .sidebar { transition: none !important; }
 #sidebar-right .tree-row { display: flex; align-items: flex-start; cursor: pointer; font-size: 0.85rem; line-height: 1.25; }
 #sidebar-right .tree-toggler,
 #sidebar-right .tree-leaf-spacer { position: relative; width: 18px; height: 24px; flex-shrink: 0; }
-/* Opacity transition lives on the toggler only; the leaf spacer never changes opacity. */
+/* Opacity transition lives on the toggler only. */
 #sidebar-right .tree-toggler { transition: opacity var(--dur-base) var(--ease-in-out); }
 #sidebar-right .tree-row.closed > .tree-toggler::after {
   content: '';
@@ -667,8 +651,7 @@ html.suppress-transitions .sidebar { transition: none !important; }
   border-radius: var(--radius-xs);
   background: none;
   opacity: 0;
-  /* Opacity gets a longer, gentler fade so hover reveal reads as a
-     fade; colours still snap quickly. */
+  /* Opacity fades slowly for hover reveal; colours snap quickly. */
   transition:
     opacity var(--dur-base) var(--ease-in-out),
     background-color var(--dur-fast) var(--ease-out),
@@ -676,8 +659,7 @@ html.suppress-transitions .sidebar { transition: none !important; }
 }
 #sidebar-right:hover .tree-checkbox,
 #sidebar-right:hover .tree-radio { opacity: 1; }
-/* Touch has no hover, and mobile sheets never have hover: keep
-   checkboxes/radios and open-state togglers visible */
+/* Touch has no hover: keep checkboxes/radios and open-state togglers visible. */
 @media (hover: none), (width < 768px) {
   #sidebar-right .tree-checkbox,
   #sidebar-right .tree-radio,
@@ -688,17 +670,18 @@ html.suppress-transitions .sidebar { transition: none !important; }
 
 #sidebar-right .tree-row.checked .tree-checkbox,
 #sidebar-right .tree-row.indeterminate .tree-checkbox { background: var(--accent); border-color: var(--accent); }
-#sidebar-right .tree-row.checked .tree-checkbox::after {
+#sidebar-right .tree-row.checked .tree-checkbox::after,
+.lang-picker .lang-row input:checked + .lang-cb::after {
   content: '';
   position: absolute;
   left: 4px;
-  top: 2px;
   width: 4px;
-  height: 7px;
   border: solid #fff;
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
 }
+#sidebar-right .tree-row.checked .tree-checkbox::after { top: 2px; height: 7px; }
+.lang-picker .lang-row input:checked + .lang-cb::after { top: 1px; height: 8px; }
 #sidebar-right .tree-row.indeterminate .tree-checkbox::after {
   content: '';
   position: absolute;
@@ -749,7 +732,6 @@ html.suppress-transitions .sidebar { transition: none !important; }
   flex-wrap: wrap;
   min-width: 0;
 }
-.settings-item:hover { background: var(--bg-secondary); }
 .settings-item > label, .settings-item > span:first-child { min-width: 0; flex: 1 1 auto; }
 .settings-item select {
   font-size: 0.85rem;
@@ -855,13 +837,12 @@ html.suppress-transitions .sidebar { transition: none !important; }
 .detail-desc-list .detail-desc { margin-bottom: 6px; }
 .detail-desc-list .detail-desc:last-child { margin-bottom: 16px; }
 
+.formula-box, .sql-block { background: var(--bg-secondary); border-radius: var(--radius-lg); }
 .formula-box {
   display: block;
   position: relative;
   margin: 12px 0;
   padding: 20px 40px;
-  background: var(--bg-secondary);
-  border-radius: var(--radius-lg);
   font-size: 1.4em;
   text-align: center;
 }
@@ -900,9 +881,8 @@ html.suppress-transitions .sidebar { transition: none !important; }
   color: var(--text);
   border-radius: var(--radius-sm);
 }
-.formula-copy-menu button:hover { background: var(--bg-secondary); }
 
-.sql-block { background: var(--bg-secondary); border-radius: var(--radius-lg); position: relative; margin-bottom: 16px; }
+.sql-block { position: relative; margin-bottom: 16px; }
 .sql-block pre {
   font-family: var(--font-mono);
   font-size: 0.8rem;
@@ -913,8 +893,7 @@ html.suppress-transitions .sidebar { transition: none !important; }
   overflow-wrap: anywhere;
 }
 .sql-block > .formula-copy-btn { position: absolute; top: 8px; right: 8px; }
-/* Defined after .formula-copy-btn so it wins the cascade when combined
-   with it in markup (create modal close button) */
+/* After .formula-copy-btn so it wins the cascade for the modal close button. */
 .modal-close {
   position: absolute;
   top: 12px;
@@ -926,13 +905,12 @@ html.suppress-transitions .sidebar { transition: none !important; }
 }
 
 /* ---- 11. Tables: variables, units, SI prefixes ---- */
-.var-table, .units-table { max-width: 700px; }
+.var-table, .units-table, .link-list { max-width: 700px; }
 .var-table td:first-child, .units-table td:first-child { white-space: nowrap; }
 .si-prefix-table { margin-top: 16px; }
 .si-prefix-table tr.si-extra { display: none; }
 .si-prefix-table.si-expanded tr.si-extra { display: table-row; }
-/* Fixed, identical column widths so the registered-units table and the
-   SI-prefix table below it align; widths live on <col> elements. */
+/* Fixed, identical column widths so both tables align; widths live on <col> elements. */
 table[data-units-dynamic] { table-layout: fixed; }
 table[data-units-dynamic] .units-c1 { width: 46%; }
 table[data-units-dynamic] .units-c2 { width: 22%; }
@@ -979,8 +957,7 @@ tr.is-ref .units-ref-btn .ref-ic-active { display: inline-block; }
   table[data-units-dynamic] td:first-child { position: static; }
   .units-ref-btn {
     position: static;
-    /* Static positioning ignores offsets/transforms, so the absolute
-       top/right/translate from above are not restated. */
+    /* Absolute offsets/transforms above do not apply to static positioning. */
     float: right;
     margin-left: 6px;
     pointer-events: auto;
@@ -989,7 +966,7 @@ tr.is-ref .units-ref-btn .ref-ic-active { display: inline-block; }
   tr:not(.is-ref) .units-ref-btn:not(:disabled) .ref-ic-offer { display: inline-block; }
 }
 
-.link-list { list-style: decimal; padding-left: 22px; max-width: 700px; }
+.link-list { list-style: decimal; padding-left: 22px; }
 .link-list li { color: var(--text-secondary); padding: 4px 0; }
 .link-list a { color: var(--accent); word-break: break-all; }
 
@@ -1070,13 +1047,10 @@ tr.is-ref .units-ref-btn .ref-ic-active { display: inline-block; }
     border-top-right-radius: var(--radius-xxl);
     transform: translateY(100%);
     transition: transform var(--dur-base) var(--ease-in-out);
-    /* Clip the scrollbar into the rounded top corners so it never
-       paints outside the sheet */
+    /* Clip the scrollbar into the rounded top corners. */
     overflow: hidden;
   }
-  /* No !important here: the drag handler overrides transform inline
-     while following the finger, and important declarations would beat
-     any inline style */
+  /* Inline styles beat this (no !important) so the drag handler can follow the finger. */
   .sidebar.left.open,
   .sidebar.right.open { transform: translateY(0); }
   .sidebar.left.collapsed,
@@ -1102,8 +1076,7 @@ tr.is-ref .units-ref-btn .ref-ic-active { display: inline-block; }
     height: 44px;
     flex-shrink: 0;
     cursor: grab;
-    /* Sticky so the dismiss grip stays reachable while the sheet
-       content is scrolled */
+    /* Sticky so the dismiss grip stays reachable while scrolled. */
     position: sticky;
     top: 0;
     z-index: 2;
@@ -1151,11 +1124,13 @@ tr.is-ref .units-ref-btn .ref-ic-active { display: inline-block; }
   }
 }
 
-.dock-pill {
+.dock-pill, .dock-half {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
+}
+.dock-pill {
   width: calc(var(--dock-item) + var(--dock-pad));
   height: calc(60 * var(--dock-u));
   padding: calc(4 * var(--dock-u)) calc(6 * var(--dock-u)) calc(2 * var(--dock-u));
@@ -1185,8 +1160,7 @@ tr.is-ref .units-ref-btn .ref-ic-active { display: inline-block; }
   pointer-events: none;
 }
 
-/* display comes from .dock-pill (same element, and flex items blockify
-   anyway); nowrap is the initial flex-wrap value, so neither is restated. */
+/* display/nowrap come from .dock-pill; neither is restated. */
 .dock-split {
   flex-direction: row;
   padding: 0;
@@ -1208,10 +1182,6 @@ tr.is-ref .units-ref-btn .ref-ic-active { display: inline-block; }
 .dock-split:has(.dock-half.active)::after { display: none; }
 
 .dock-half {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
   flex: 1;
   height: 100%;
   padding: calc(4 * var(--dock-u)) 0 calc(2 * var(--dock-u));
@@ -1228,7 +1198,6 @@ tr.is-ref .units-ref-btn .ref-ic-active { display: inline-block; }
 /* Dock state: shared by pills and split halves */
 .dock-pill.open, .dock-half.open { color: var(--accent); }
 .dock-pill.open svg, .dock-half.open svg { stroke: var(--accent); }
-.dock-pill.active, .dock-half.active { background: var(--accent); color: #fff; }
 .dock-pill.active { border-color: var(--accent); }
 .dock-pill.active svg, .dock-half.active svg { stroke: #fff; }
 .dock-pill:active, .dock-half:active { background: var(--bg-secondary); }
@@ -1254,12 +1223,10 @@ tr.is-ref .units-ref-btn .ref-ic-active { display: inline-block; }
 .search-suggestions.open,
 .qty-results.open { animation: menu-in var(--dur-fast) var(--ease-out); transform-origin: top; }
 .settings-menu, .formula-copy-menu { transform-origin: top right; }
-/* Same drop-in entrance as other menus, but rigid: the whole menu
-   (frame + content) moves as one, so labels and carets never drift */
+/* Same drop-in entrance as other menus, but rigid so labels and carets never drift. */
 .settings-menu.open { animation-name: menu-in-drop; }
 
-/* Select menus: fade+slide out on close; .closing keeps the menu
-   rendered for the animation and is removed on animationend */
+/* Select menus fade+slide out on close; .closing keeps the menu rendered until animationend. */
 .dropdown-menu.sort-menu.closing {
   display: block;
   pointer-events: none;
@@ -1269,8 +1236,7 @@ tr.is-ref .units-ref-btn .ref-ic-active { display: inline-block; }
 .modal-overlay.open { animation: fade-in var(--dur-base) var(--ease-out); }
 .modal-overlay.open .modal-content { animation: modal-in var(--dur-slow) var(--ease-out); }
 
-/* Hover feedback: colours only, buttons never move or scale
-   (sort/cselect triggers get their own fuller transition above) */
+/* Hover feedback: colours only, buttons never move or scale. */
 .topbar-btn, .filter-btn, .formula-copy-btn, .search-cancel,
 .settings-link, .settings-item button:not(.sort-option):not(.cselect-trigger), .qty-chip-x, .btn-ghost {
   transition:
@@ -1300,8 +1266,7 @@ tr.is-ref .units-ref-btn .ref-ic-active { display: inline-block; }
 .diff-sliders input[type=range]:active::-webkit-slider-thumb { transform: scale(1.12); }
 .diff-sliders input[type=range]:active::-moz-range-thumb { transform: scale(1.12); }
 
-/* Icon feedback: .icon-play added on press, removed on animationend so
-   it completes even on early release; only icons move */
+/* .icon-play is added on press and removed on animationend; only icons move. */
 #dim-reset.icon-play svg, #qty-reset.icon-play svg, #diff-reset.icon-play svg,
 #tree-select-all.icon-play svg { animation: icon-rewind 0.45s ease-in; }
 #tree-deselect-all.icon-play svg { animation: icon-wiggle 0.4s ease-in-out; }
@@ -1402,7 +1367,6 @@ tr.is-ref .units-ref-btn .ref-ic-active { display: inline-block; }
   font-family: inherit;
   position: relative;
 }
-.topic-menu-item:hover { background: var(--bg-secondary); }
 .topic-menu-item .caret {
   width: 0;
   height: 0;
@@ -1415,7 +1379,6 @@ tr.is-ref .units-ref-btn .ref-ic-active { display: inline-block; }
 
 .lang-picker { display: flex; flex-direction: column; gap: 4px; padding: 4px 0; }
 .lang-picker .lang-row { display: flex; align-items: center; gap: 8px; padding: 6px; border-radius: var(--radius-sm); cursor: pointer; transition: background-color var(--dur-fast) var(--ease-out); }
-.lang-picker .lang-row:hover { background: var(--bg-secondary); }
 .lang-picker .lang-code { color: var(--text-secondary); font-size: 0.85em; margin-left: 4px; }
 .lang-picker .lang-cb {
   width: 16px;
@@ -1430,17 +1393,6 @@ tr.is-ref .units-ref-btn .ref-ic-active { display: inline-block; }
   transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
 }
 .lang-picker .lang-row input:checked + .lang-cb { background: var(--accent); border-color: var(--accent); }
-.lang-picker .lang-row input:checked + .lang-cb::after {
-  content: '';
-  position: absolute;
-  left: 4px;
-  top: 1px;
-  width: 4px;
-  height: 8px;
-  border: solid #fff;
-  border-width: 0 2px 2px 0;
-  transform: rotate(45deg);
-}
 .lang-picker input[type=checkbox] { position: absolute; opacity: 0; pointer-events: none; }
 
 .var-table .qty-symbol { display: inline-block; min-width: 1.5em; }

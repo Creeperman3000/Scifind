@@ -66,7 +66,7 @@ Toggle how dimensions are shown: `?dim_mode=<setting>`
 
 - **Dimensions** `dim` (default): M, L, T, I, Θ, N, J
 - **Variables** `var`: m, l, t, i, T, n, Iᵥ
-- **Units** `unit` (units): kg, m, s, A, K, mol, cd
+- **Units** `unit`: kg, m, s, A, K, mol, cd
 
 ## Configuration
 
@@ -80,4 +80,4 @@ All optional environment variables:
 | `SCIFIND_DEBUG`         | off                      | Flask debug mode (`1`/`true`/`yes`)             |
 | `SCIFIND_SECRET_KEY`    | auto-generated           | Session secret, stored in `instance/secret_key` |
 | `SCIFIND_MAX_UPLOAD_MB` | `32`                     | Max request body size                           |
-| `SCIFIND_GITHUB_REPO`   | `Creeperman3000/Scifind` | Repo slug used for new-locale issue links       |
+| `SCIFIND_GITHUB_REPO`   | `Creeperman3000/Scifind` | Repo slug used for reporting issues |

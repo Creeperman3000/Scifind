@@ -10,38 +10,38 @@
     return fetch(url, { method: 'POST', body: fd, headers: csrfHeader });
   }
   const t = (path, fallback) => {
-    const ui = window._localeUI || {};
-    const parts = path.split('.');
-    let cur = ui;
-    for (const p of parts) { if (cur && typeof cur === 'object' && p in cur) cur = cur[p]; else return fallback; }
+    let cur = window._localeUI || {};
+    for (const p of path.split('.')) {
+      if (cur && typeof cur === 'object' && p in cur) cur = cur[p]; else return fallback;
+    }
     return cur || fallback;
   };
 
-  const renderMathIn = (el) => { try { renderMathInElement(el,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],macros:window._KATEX_MACROS||{}}); } catch(e) {} };
-  const refreshMath = () => { if (typeof renderMathInContent === 'function') renderMathInContent(); };
+  /* Local math paint + global content/icons refresh in one call. */
+  function paintMath(el) {
+    try {
+      if (typeof renderMathInElement === 'function') renderMathInElement(el, { delimiters: [{ left: '$$', right: '$$', display: true }, { left: '$', right: '$', display: false }], macros: window._KATEX_MACROS || {} });
+    } catch (e) {}
+    if (typeof renderMathInContent === 'function') renderMathInContent();
+    refreshIcons();
+  }
   const copyText = (text, label) => {
     if (!(navigator.clipboard && navigator.clipboard.writeText)) return;
-    const copied = t('toast.copied', 'Copied');
     navigator.clipboard.writeText(text)
-      .then(() => showToast(copied + ' ' + label, 'success'))
+      .then(() => showToast(t('toast.copied', 'Copied') + ' ' + label, 'success'))
       .catch((e) => showToast(t('toast.copy_failed', 'Copy failed') + ': ' + e.message, 'error'));
   };
   function renderRowSymbols(root) {
     if (typeof katex === 'undefined') return;
     root.querySelectorAll('tr[data-symbol]').forEach((tr) => {
-      const sym = tr.dataset.symbol;
-      if (!sym) return;
+      if (!tr.dataset.symbol) return;
       const target = tr.querySelector('.qty-symbol');
-      if (target) katex.render(sym, target, { displayMode: false, throwOnError: false });
+      if (target) katex.render(tr.dataset.symbol, target, { displayMode: false, throwOnError: false });
     });
   }
-  const varTableHead = () => '<thead><tr>' +
-    [t('detail.quantity'), t('create.column_symbol_override'), t('create.column_name_override')]
-      .map((h) => '<th>' + escapeHtml(h) + '</th>').join('') + '</tr></thead>';
   function setHTML(el, html) {
     el.innerHTML = typeof html === 'string' ? html : '';
-    if (el) renderMathIn(el);
-    refreshIcons();
+    paintMath(el);
   }
 
   function loadTokenSidebar() {
@@ -60,15 +60,13 @@
         if (match) visible++;
       });
       var empty = section.nextElementSibling;
-      var collapsed = section.dataset.collapsed === '1';
       if (empty && empty.classList.contains('token-empty')) {
-        empty.style.display = (visible === 0 && !collapsed) ? 'block' : 'none';
+        empty.style.display = (visible === 0 && section.dataset.collapsed !== '1') ? 'block' : 'none';
       }
     });
   }
 
-  let previewSeq = 0, previewTimer = null;
-  let lastVariablesKey = '';
+  let previewSeq = 0, previewTimer = null, lastVariablesKey = '';
   function collectOverrides() {
     const fd = new FormData();
     document.querySelectorAll('#var-overrides input[name^="override["]').forEach((inp) => {
@@ -76,26 +74,8 @@
     });
     return fd;
   }
-  function variablesKey(vars) {
-    return (vars || []).map((v) => v.key || (v.id + '|' + (v.alias || ''))).join(',');
-  }
-  function overrideRow(key, symbol, displayName, alias, form, namePrefix, opts, occ) {
-    const symCell = symbol ? '<span class="qty-symbol"></span>' : '';
-    const occTag = occ ? ' <span class="qty-occ">#' + occ + '</span>' : '';
-    const cellBody = symCell + ' ' + escapeHtml(displayName) + (alias ? '[' + escapeHtml(alias) + ']' : '') + occTag;
-    const input = (field) => {
-      const seed = (opts && opts[field]) || {};
-      return '<input data-field="' + field + '" form="' + form + '" name="' + namePrefix + '[' + escapeHtml(key) + '][' + field + ']"'
-        + ' placeholder="' + escapeHtml(seed.placeholder || '') + '"'
-        + (seed.value ? ' value="' + escapeHtml(seed.value) + '"' : '')
-        + ' class="text-field">';
-    };
-    return '<tr data-symbol="' + escapeHtml(symbol) + '" data-key="' + escapeHtml(key) + '">'
-      + '<td class="qty-sym-cell">' + cellBody + '</td>'
-      + '<td>' + input('symbol') + '</td>'
-      + '<td>' + input('name') + '</td>'
-      + '</tr>';
-  }
+  const varKey = (v) => v.key || (v.id + '|' + (v.alias || ''));
+  const variablesKey = (vars) => (vars || []).map(varKey).join(',');
   function occurrenceIndices(vars) {
     const counts = {}, seen = {}, idx = {};
     for (const v of (vars || [])) {
@@ -105,57 +85,55 @@
     }
     return idx;
   }
+  /* One row builder shared by the live overrides table and every translate page. */
+  function overrideRow(key, symbol, displayName, alias, form, namePrefix, seeds, occ) {
+    const fields = ['symbol', 'name'];
+    let cells = '';
+    for (const field of fields) {
+      const seed = (seeds && seeds[field]) || {};
+      cells += '<td><input data-field="' + field + '" form="' + form + '" name="' + namePrefix + '[' + escapeHtml(key) + '][' + field + ']"'
+        + ' placeholder="' + escapeHtml(seed.placeholder || '') + '"'
+        + (seed.value ? ' value="' + escapeHtml(seed.value) + '"' : '')
+        + ' class="text-field"></td>';
+    }
+    return '<tr data-symbol="' + escapeHtml(symbol) + '" data-key="' + escapeHtml(key) + '">'
+      + '<td class="qty-sym-cell">' + (symbol ? '<span class="qty-symbol"></span> ' : '')
+      + escapeHtml(displayName) + (alias ? '[' + escapeHtml(alias) + ']' : '')
+      + (occ ? ' <span class="qty-occ">#' + occ + '</span>' : '') + '</td>'
+      + cells + '</tr>';
+  }
+  function varTable(rows) {
+    const head = [t('detail.quantity'), t('create.column_symbol_override'), t('create.column_name_override')]
+      .map((h) => '<th>' + escapeHtml(h) + '</th>').join('');
+    return '<table class="var-table"><thead><tr>' + head + '</tr></thead><tbody>' + rows + '</tbody></table>';
+  }
   function renderOverrideTable(vars) {
     const wrap = $('var-overrides');
     if (!wrap) return;
     const real = vars && vars.length ? vars : [];
-    const totalRows = Math.max(3, real.length);
     const occ = occurrenceIndices(real);
     let rows = '';
-    for (let i = 0; i < totalRows; i++) {
+    for (let i = 0; i < Math.max(3, real.length); i++) {
       const v = real[i];
-      if (v) {
-        rows += overrideRow(
-          v.key || (v.id + '|' + (v.alias || '')),
-          v.symbol || '',
-          localiseName(v.name, v.id),
-          v.alias,
-          'create-form',
-          'override',
-          {
-            symbol: { placeholder: '' },
-            name:   { placeholder: t('create.placeholder_name') },
-          },
-          occ[v.key]
-        );
-      } else {
-        rows += '<tr class="qty-row-placeholder">'
-          + '<td class="qty-sym-cell">&nbsp;</td>'
-          + '<td><input disabled class="text-field" placeholder=""></td>'.repeat(2)
-          + '</tr>';
-      }
+      rows += v ? overrideRow(varKey(v), v.symbol || '', localiseName(v.name, v.id), v.alias,
+          'create-form', 'override', { name: { placeholder: t('create.placeholder_name') } }, occ[v.key])
+        : '<tr class="qty-row-placeholder"><td class="qty-sym-cell">&nbsp;</td>'
+          + '<td><input disabled class="text-field" placeholder=""></td>'.repeat(2) + '</tr>';
     }
-    wrap.innerHTML = '<table class="var-table">' + varTableHead() + '<tbody>' + rows + '</tbody></table>';
+    wrap.innerHTML = varTable(rows);
     renderRowSymbols(wrap);
-    refreshMath();
+    paintMath(wrap);
   }
   function renderPreviewLaTeX(latex) {
-    const mathEl = $('formula-math');
-    const texEl = $('formula-tex');
+    const mathEl = $('formula-math'), texEl = $('formula-tex');
     if (mathEl) {
-      if (latex) {
-        mathEl.classList.remove('formula-placeholder');
-        mathEl.textContent = '$$' + latex + '$$';
-      } else {
-        mathEl.classList.add('formula-placeholder');
-        mathEl.textContent = '$$F = ma$$';
-      }
+      mathEl.classList.toggle('formula-placeholder', !latex);
+      mathEl.textContent = latex ? '$$' + latex + '$$' : '$$F = ma$$';
     }
     if (texEl) texEl.textContent = latex || 'F = ma';
   }
   function localiseName(value, fallback) {
-    if (!value) return fallback;
-    if (typeof value !== 'string' || !value.trim().startsWith('{')) return value;
+    if (!value || typeof value !== 'string' || !value.trim().startsWith('{')) return value || fallback;
     try {
       const obj = JSON.parse(value);
       const loc = (document.documentElement.lang || 'en-us').toLowerCase();
@@ -164,37 +142,38 @@
       return value;
     }
   }
+  function previewError(msg) {
+    $('formula-math').innerHTML = '<span class="formula-error">' + escapeHtml(msg) + '</span>';
+    $('formula-tex').textContent = '';
+    $('dim-display').innerHTML = escapeHtml(t('detail.dimensions')) + ': <span class="dim-latex">$\\varnothing$</span>';
+  }
+  function previewOk(data, eq) {
+    if (data.error) { previewError(data.error); return; }
+    if (!data.latex) { renderPreviewLaTeX(''); return; }
+    renderPreviewLaTeX(data.latex);
+    const dimEl = $('dim-display');
+    const dimLatex = data.dim_latex || '\\varnothing';
+    dimEl.innerHTML = escapeHtml(t('detail.dimensions')) + ': <span class="dim-latex"></span>';
+    dimEl.style.opacity = (!eq.trim() || dimLatex === '\\varnothing') ? '0.6' : '';
+    if (typeof katex !== 'undefined') katex.render(dimLatex, dimEl.querySelector('.dim-latex'), { displayMode: false, throwOnError: false });
+  }
   function updatePreview(eq) {
     clearTimeout(previewTimer);
     const seq = ++previewSeq;
     previewTimer = setTimeout(() => {
-      const dimEl = $('dim-display');
       const fd = collectOverrides();
       fd.set('equation', eq);
       postForm('/create/preview-render', fd)
         .then((r) => r.json())
         .then((data) => {
           if (seq !== previewSeq) return;
-          if (data.error) {
-            $('formula-math').innerHTML = '<span class="formula-error">' + escapeHtml(data.error) + '</span>';
-            $('formula-tex').textContent = '';
-            dimEl.innerHTML = escapeHtml(t('detail.dimensions')) + ': <span class="dim-latex">$\\varnothing$</span>';
-          } else if (data.latex) {
-            renderPreviewLaTeX(data.latex);
-            const dimLatex = data.dim_latex || '\\varnothing';
-            const muted = !eq.trim() || dimLatex === '\\varnothing';
-            dimEl.innerHTML = escapeHtml(t('detail.dimensions')) + ': <span class="dim-latex"></span>';
-            dimEl.style.opacity = muted ? '0.6' : '';
-            if (typeof katex !== 'undefined') katex.render(dimLatex, dimEl.querySelector('.dim-latex'), { displayMode: false, throwOnError: false });
-          } else {
-            renderPreviewLaTeX('');
-          }
+          previewOk(data, eq);
           const newKey = variablesKey(data.variables);
           if (newKey !== lastVariablesKey) {
             lastVariablesKey = newKey;
             renderOverrideTable(data.variables || []);
           }
-          refreshMath();
+          paintMath(document);
         })
         .catch((err) => {
           if (seq !== previewSeq) return;
@@ -203,39 +182,31 @@
     }, 200);
   }
 
-  function isSep(ch) { return !ch || /\s/.test(ch) || '()[]'.indexOf(ch) !== -1; }
   function insertAtCursor(text) {
     const ta = $('equation');
     const start = ta.selectionStart, end = ta.selectionEnd;
-    const before = ta.value.substring(0, start);
-    const after = ta.value.substring(end);
-    const padL = before.length && !isSep(before[before.length - 1]);
-    const padR = after.length && !isSep(after[0]);
-    const ins = (padL ? ' ' : '') + text + (padR ? ' ' : '');
+    const before = ta.value.substring(0, start), after = ta.value.substring(end);
+    const isSep = (ch) => !ch || /\s/.test(ch) || '()[]'.indexOf(ch) !== -1;
+    const ins = (before.length && !isSep(before[before.length - 1]) ? ' ' : '') + text + (after.length && !isSep(after[0]) ? ' ' : '');
     ta.value = before + ins + after;
-    const pos = start + ins.length - (padR ? 1 : 0);
-    ta.selectionStart = ta.selectionEnd = pos;
+    ta.selectionStart = ta.selectionEnd = start + ins.length - ((after.length && !isSep(after[0])) ? 1 : 0);
     ta.focus();
     updatePreview(ta.value);
   }
 
-  function syncTreeResetBtn(topicSelected) {
-    const btn = document.getElementById('tree-select-all');
-    if (btn) btn.classList.toggle('disabled', !topicSelected);
-  }
   window._treeSelectionChanged = function(id) { selectTopic(id); };
+  function loadBreadcrumb(topic) {
+    fetch('/create/breadcrumb' + (topic ? '?topic=' + encodeURIComponent(topic) : ''))
+      .then((r) => r.text())
+      .then((html) => setHTML($('topic-bar'), html));
+  }
   function selectTopic(id) {
     const hidden = $('topic');
     if (hidden) hidden.value = id || '';
     loadBreadcrumb(id);
-    syncTreeResetBtn(!!id);
+    const btn = document.getElementById('tree-select-all');
+    if (btn) btn.classList.toggle('disabled', !id);
     if (typeof window._setTreeSelection === 'function') window._setTreeSelection(id);
-  }
-  function loadBreadcrumb(topic) {
-    const url = '/create/breadcrumb' + (topic ? '?topic=' + encodeURIComponent(topic) : '');
-    fetch(url)
-      .then((r) => r.text())
-      .then((html) => setHTML($('topic-bar'), html));
   }
 
   function openModal() { $('sql-modal').classList.add('open'); }
@@ -254,34 +225,22 @@
     availableLanguages: [], // [{code, name}, ...]
   };
 
-  function currentPage() {
-    return flow.history[flow.history.length - 1] || null;
-  }
-  function pushPage(page) {
-    flow.history.push(page);
-    renderPage(page);
-  }
+  const currentPage = () => flow.history[flow.history.length - 1] || null;
+  function pushPage(page) { flow.history.push(page); renderPage(page); }
   function popPage() {
     if (flow.history.length <= 1) return;
     flow.history.pop();
     renderPage(currentPage());
   }
-  function langName(code) {
-    const e = flow.availableLanguages.find((l) => l.code === code);
-    return e ? e.name : code;
-  }
+  const langName = (code) => (flow.availableLanguages.find((l) => l.code === code) || {}).name || code;
   function validateEnglishFields() {
-    const fields = [
-      ['name_en', 'create.name'],
-      ['formula_id', 'create.formula_id'],
-      ['topic', 'create.topic'],
-      ['equation', 'create.equation'],
-    ];
-    return fields
+    return [['name_en', 'create.name'], ['formula_id', 'create.formula_id'], ['topic', 'create.topic'], ['equation', 'create.equation']]
       .filter(([id]) => { const el = $(id); return !(el && (el.value || '').trim()); })
       .map(([, key]) => t(key).toLowerCase());
   }
 
+  const backBtn = () => '<button class="btn-ghost btn-sm" type="button" data-action="flow-back">' + escapeHtml(t('create.back', 'Back')) + '</button>';
+  const continueBtn = (action) => '<button class="btn-primary btn-sm" type="button" data-action="' + action + '">' + escapeHtml(t('create.continue', 'Continue')) + '</button>';
   function renderPage(page) {
     if (!page) return;
     $('modal-step').dataset.kind = page.kind;
@@ -291,104 +250,53 @@
     refreshIcons();
   }
 
-  function setTitle(text) { $('modal-title').textContent = text; }
-  function setStep(html) { $('modal-step').innerHTML = html; }
-  function setActions(html) { $('modal-actions').innerHTML = html; }
-  function backButtonHtml() {
-    return '<button class="btn-ghost btn-sm" type="button" data-action="flow-back">' +
-      escapeHtml(t('create.back', 'Back')) + '</button>';
-  }
-
   function renderPickPage(page) {
-    setTitle(t('create.pick_languages_heading', 'Translate this formula into how many languages?'));
-    const hint = t('create.pick_languages_hint', 'English is always included.');
+    $('modal-title').textContent = t('create.pick_languages_heading', 'Translate this formula into how many languages?');
     const selected = new Set(page.selected || []);
-    let rows = '';
-    for (const lang of flow.availableLanguages) {
+    const rows = flow.availableLanguages.map((lang) => {
       const isEn = lang.code === 'en-us';
       const id = 'lang-' + escapeHtml(lang.code);
-      const checked = (isEn || selected.has(lang.code)) ? ' checked' : '';
-      const disabled = isEn ? ' disabled' : '';
-      rows +=
-        '<label class="lang-row" for="' + id + '">' +
-        '<input type="checkbox" id="' + id + '" data-lang-code="' + escapeHtml(lang.code) + '"' + checked + disabled + '>' +
-        '<span class="lang-cb"></span>' +
-        '<span class="lang-name">' + escapeHtml(lang.name) + '</span>' +
-        '<span class="lang-code">(' + escapeHtml(lang.code) + ')</span>' +
-        '</label>';
-    }
-    setStep(
-      '<p class="detail-desc">' + escapeHtml(hint) + '</p>' +
-      '<div class="lang-picker" id="lang-picker">' + rows + '</div>'
-    );
-    setActions(
-      '<button class="btn-primary btn-sm" type="button" data-action="flow-pick-langs-continue">' +
-        escapeHtml(t('create.continue', 'Continue')) +
-      '</button>'
-    );
+      const state = (isEn || selected.has(lang.code) ? ' checked' : '') + (isEn ? ' disabled' : '');
+      return '<label class="lang-row" for="' + id + '">'
+        + '<input type="checkbox" id="' + id + '" data-lang-code="' + escapeHtml(lang.code) + '"' + state + '>'
+        + '<span class="lang-cb"></span><span class="lang-name">' + escapeHtml(lang.name) + '</span>'
+        + '<span class="lang-code">(' + escapeHtml(lang.code) + ')</span></label>';
+    }).join('');
+    $('modal-step').innerHTML = '<p class="detail-desc">' + escapeHtml(t('create.pick_languages_hint', 'English is always included.')) + '</p>'
+      + '<div class="lang-picker" id="lang-picker">' + rows + '</div>';
+    $('modal-actions').innerHTML = continueBtn('flow-pick-langs-continue');
   }
 
   function renderTranslatePage(page) {
     const code = page.code;
-    setTitle(t('create.translate_heading', 'Translate to {lang}')
-      .replace('{lang}', langName(code) + ' (' + code + ')'));
+    $('modal-title').textContent = t('create.translate_heading', 'Translate to {lang}').replace('{lang}', langName(code) + ' (' + code + ')');
     const prior = flow.translations[code] || {};
     const occ = occurrenceIndices(flow.variables);
-    let qtyRows = '';
-    for (const v of flow.variables) {
-      const key = v.key || (v.id + '|' + (v.alias || ''));
+    const qtyTable = flow.variables.length ? varTable(flow.variables.map((v) => {
+      const key = varKey(v);
       const priorOv = (prior.overrides && prior.overrides[key]) || {};
-      qtyRows += overrideRow(
-        key,
-        v.symbol || '',
-        localiseName(v.name, v.id),
-        v.alias,
-        'create-form',
-        'tr_overrides[' + code + ']',
-        {
-          symbol: { placeholder: v.symbol || '', value: priorOv.symbol || '' },
-          name:   { placeholder: localiseName(v.name, v.id), value: priorOv.name || '' },
-        },
-        occ[key]
-      );
-    }
-    const qtyTable = qtyRows
-      ? '<table class="var-table">' + varTableHead() + '<tbody>' + qtyRows + '</tbody></table>'
-      : '';
-    const enName = ($('name_en').value || '').trim();
-    const enDesc = ($('description').value || '').trim();
+      return overrideRow(key, v.symbol || '', localiseName(v.name, v.id), v.alias, 'create-form', 'tr_overrides[' + code + ']',
+        { symbol: { placeholder: v.symbol || '', value: priorOv.symbol || '' }, name: { placeholder: localiseName(v.name, v.id), value: priorOv.name || '' } }, occ[key]);
+    }).join('')) : '';
     const copyBtn = (field) =>
-      '<button class="filter-btn" type="button" data-tr-copy="' + field + '" data-tr-copy-label="' + escapeHtml(t('create.' + field, field)) + '" title="' + escapeHtml(t('create.copy_from_english', 'Copy from English')) + '">' +
-      '<i data-lucide="copy" width="16" height="16"></i></button>';
-    setStep(
-      '<div class="translate-form">' +
-        '<div class="detail-desc"><div class="tr-label-row"><span>' + escapeHtml(t('create.name')) + '</span>' + copyBtn('name') + '</div>' +
-        '<input data-tr-field="name" name="tr[' + code + '][name]" class="text-field" autocomplete="off" placeholder="' + escapeHtml(enName) + '" value="' + escapeHtml(prior.name || '') + '">' +
-        '</div>' +
-        '<div class="detail-desc"><div class="tr-label-row"><span>' + escapeHtml(t('create.description')) + '</span>' + copyBtn('description') + '</div>' +
-        '<textarea data-tr-field="description" name="tr[' + code + '][description]" class="text-field auto-grow" rows="2" spellcheck="false" placeholder="' + escapeHtml(enDesc) + '">' + escapeHtml(prior.description || '') + '</textarea>' +
-        '</div>' +
-        qtyTable +
-      '</div>'
-    );
-    setActions(
-      backButtonHtml() +
-      '<button class="btn-primary btn-sm" type="button" data-action="flow-translate-continue">' +
-        escapeHtml(t('create.continue', 'Continue')) +
-      '</button>'
-    );
-
+      '<button class="filter-btn" type="button" data-tr-copy="' + field + '" data-tr-copy-label="' + escapeHtml(t('create.' + field, field)) + '" title="' + escapeHtml(t('create.copy_from_english', 'Copy from English')) + '">'
+      + '<i data-lucide="copy" width="16" height="16"></i></button>';
+    const fieldBlock = (field, control) =>
+      '<div class="detail-desc"><div class="tr-label-row"><span>' + escapeHtml(t('create.' + field)) + '</span>' + copyBtn(field) + '</div>' + control + '</div>';
+    $('modal-step').innerHTML = '<div class="translate-form">'
+      + fieldBlock('name', '<input data-tr-field="name" name="tr[' + code + '][name]" class="text-field" autocomplete="off" placeholder="' + escapeHtml(($('name_en').value || '').trim()) + '" value="' + escapeHtml(prior.name || '') + '">')
+      + fieldBlock('description', '<textarea data-tr-field="description" name="tr[' + code + '][description]" class="text-field auto-grow" rows="2" spellcheck="false" placeholder="' + escapeHtml(($('description').value || '').trim()) + '">' + escapeHtml(prior.description || '') + '</textarea>')
+      + qtyTable + '</div>';
+    $('modal-actions').innerHTML = backBtn() + continueBtn('flow-translate-continue');
     renderRowSymbols($('modal-step'));
-    $('modal-step').querySelectorAll('textarea').forEach(bindAutoGrow);
-    refreshMath();
+    $('modal-step').querySelectorAll('textarea').forEach(autoGrow);
+    paintMath(document);
   }
 
-  function renderSqlPage(page) {
-    setTitle('');
-    setStep('<h3>' + escapeHtml(t('create.formula_insert')) + '</h3><div id="sql-formula-wrap"></div><h3>' + escapeHtml(t('create.token_inserts')) + '</h3><div id="sql-token-wrap"></div>');
-
-    const fd = buildFinalFormData();
-    postForm('/create/build-sql', fd)
+  function renderSqlPage() {
+    $('modal-title').textContent = '';
+    $('modal-step').innerHTML = '<h3>' + escapeHtml(t('create.formula_insert')) + '</h3><div id="sql-formula-wrap"></div><h3>' + escapeHtml(t('create.token_inserts')) + '</h3><div id="sql-token-wrap"></div>';
+    postForm('/create/build-sql', buildFinalFormData())
       .then(async (r) => ({ ok: r.ok, body: await r.text() }))
       .then((out) => {
         if (!out.ok) {
@@ -396,23 +304,17 @@
           showToast(errEl ? errEl.dataset.error : t('create.parse_error'), 'error');
           return;
         }
-        const doc = new DOMParser().parseFromString(out.body, 'text/html');
-        const blocks = doc.querySelectorAll('.sql-block');
         const wrapMap = { 'formula-sql': $('sql-formula-wrap'), 'token-sql': $('sql-token-wrap') };
-        blocks.forEach((block) => {
+        (new DOMParser().parseFromString(out.body, 'text/html')).querySelectorAll('.sql-block').forEach((block) => {
           const pre = block.querySelector('pre');
-          if (!pre) return;
-          const wrap = wrapMap[pre.id];
+          const wrap = pre && wrapMap[pre.id];
           if (wrap) wrap.appendChild(block);
         });
         refreshIcons();
         flow.issueUrl = buildIssueUrl();
-        setActions(
-          backButtonHtml() +
-          '<a class="btn-primary btn-sm" id="open-issue-link" target="_blank" rel="noopener noreferrer" href="' + escapeHtml(flow.issueUrl) + '">' +
-            escapeHtml(t('create.translate_open_issue', 'Open GitHub issue')) +
-          '</a>'
-        );
+        $('modal-actions').innerHTML = backBtn()
+          + '<a class="btn-primary btn-sm" id="open-issue-link" target="_blank" rel="noopener noreferrer" href="' + escapeHtml(flow.issueUrl) + '">'
+          + escapeHtml(t('create.translate_open_issue', 'Open GitHub issue')) + '</a>';
       })
       .catch((err) => showToast(t('create.parse_error', 'Build failed') + ': ' + err.message, 'error'));
   }
@@ -423,11 +325,9 @@
       if (loc === 'en-us') continue;
       if (tr.name) fd.set('tr[' + loc + '][name]', tr.name);
       if (tr.description) fd.set('tr[' + loc + '][description]', tr.description);
-      if (tr.overrides) {
-        for (const [key, fields] of Object.entries(tr.overrides)) {
-          for (const [fld, val] of Object.entries(fields)) {
-            if (val) fd.set('tr_overrides[' + loc + '][' + key + '][' + fld + ']', val);
-          }
+      for (const [key, fields] of Object.entries(tr.overrides || {})) {
+        for (const [fld, val] of Object.entries(fields)) {
+          if (val) fd.set('tr_overrides[' + loc + '][' + key + '][' + fld + ']', val);
         }
       }
     }
@@ -435,27 +335,15 @@
   }
 
   function buildIssueUrl() {
-    const repo = (window._scifindRepo || 'Creeperman3000/Scifind');
-    const title = ($('name_en').value || '').trim();
-    const body = buildIssueBody();
-    const params =
-      '?title=' + encodeURIComponent(title) +
-      '&labels=' + encodeURIComponent('formula') +
-      '&body=' + encodeURIComponent(body);
-    return 'https://github.com/' + repo + '/issues/new' + params;
-  }
-  function buildIssueBody() {
+    const repo = window._scifindRepo || 'Creeperman3000/Scifind';
+    const labels = document.querySelectorAll('#modal-step pre');
     const parts = [];
-    const sqlBlocks = document.querySelectorAll('#modal-step pre');
-    sqlBlocks.forEach((pre) => {
-      const label = pre.id === 'formula-sql' ? t('create.formula_sql', 'Formula SQL') : t('create.token_sql', 'Token SQL');
-      parts.push('### ' + label);
-      parts.push('```sql');
-      parts.push(pre.textContent);
-      parts.push('```');
-      parts.push('');
+    labels.forEach((pre) => {
+      parts.push('### ' + (pre.id === 'formula-sql' ? t('create.formula_sql', 'Formula SQL') : t('create.token_sql', 'Token SQL')));
+      parts.push('```sql', pre.textContent, '```', '');
     });
-    return parts.join('\n').trimEnd() + '\n';
+    return 'https://github.com/' + repo + '/issues/new?title=' + encodeURIComponent(($('name_en').value || '').trim())
+      + '&labels=' + encodeURIComponent('formula') + '&body=' + encodeURIComponent(parts.join('\n').trimEnd() + '\n');
   }
 
   function startCreateFlow() {
@@ -489,14 +377,9 @@
     const page = currentPage();
     if (!page || page.kind !== 'pick') return;
     const checked = [...document.querySelectorAll('#lang-picker input[type=checkbox]:checked:not([disabled])')]
-      .map((el) => el.dataset.langCode)
-      .filter((c) => c);
+      .map((el) => el.dataset.langCode).filter(Boolean);
     page.selected = checked;
-    if (!checked.length) {
-      pushPage({ kind: 'sql' });
-      return;
-    }
-    pushPage({ kind: 'translate', code: checked[0], queue: checked.slice(1) });
+    pushPage(checked.length ? { kind: 'translate', code: checked[0], queue: checked.slice(1) } : { kind: 'sql' });
   }
 
   function onTranslateContinue() {
@@ -504,33 +387,51 @@
     if (!page || page.kind !== 'translate') return;
     captureTranslationForm(page.code);
     const next = page.queue[0];
-    if (next) {
-      pushPage({ kind: 'translate', code: next, queue: page.queue.slice(1) });
-    } else {
-      pushPage({ kind: 'sql' });
-    }
+    pushPage(next ? { kind: 'translate', code: next, queue: page.queue.slice(1) } : { kind: 'sql' });
   }
 
   function captureTranslationForm(code) {
     const step = $('modal-step');
-    const nameEl = step.querySelector('[data-tr-field="name"]');
-    const descEl = step.querySelector('[data-tr-field="description"]');
-    const overrides = {};
+    const entry = {}, overrides = {};
+    const nameEl = step.querySelector('[data-tr-field="name"]'), descEl = step.querySelector('[data-tr-field="description"]');
     step.querySelectorAll('tr[data-key]').forEach((tr) => {
-      const key = tr.dataset.key;
       const fields = {};
       tr.querySelectorAll('input[data-field]').forEach((inp) => {
         if (inp.value) fields[inp.dataset.field] = inp.value;
       });
-      if (Object.keys(fields).length) overrides[key] = fields;
+      if (Object.keys(fields).length) overrides[tr.dataset.key] = fields;
     });
-    const entry = {};
     if (nameEl && nameEl.value.trim()) entry.name = nameEl.value.trim();
     if (descEl && descEl.value.trim()) entry.description = descEl.value.trim();
     if (Object.keys(overrides).length) entry.overrides = overrides;
     if (Object.keys(entry).length) flow.translations[code] = entry;
     else delete flow.translations[code];
   }
+
+  const flowActions = {
+    'close-modal': closeModal,
+    'continue-to-sql': startCreateFlow,
+    'flow-pick-langs-continue': onPickLangsContinue,
+    'flow-translate-continue': onTranslateContinue,
+    'flow-back': () => {
+      const page = currentPage();
+      if (page && page.kind === 'translate') captureTranslationForm(page.code);
+      popPage();
+    },
+    'copy-formula-sql': () => { const pre = $('formula-sql'); if (pre) copyText(pre.textContent, 'SQL'); },
+    'copy-token-sql': () => { const pre = $('token-sql'); if (pre) copyText(pre.textContent, 'SQL'); },
+    'toggle-token-section': (el) => {
+      const list = $(el.dataset.target);
+      if (!list) return;
+      const collapsed = list.dataset.collapsed === '1';
+      list.dataset.collapsed = collapsed ? '0' : '1';
+      const icon = el.querySelector('.token-section-icon');
+      if (icon) {
+        icon.innerHTML = '<i data-lucide="' + (collapsed ? 'chevron-up' : 'chevron-down') + '" width="16" height="16"></i>';
+        refreshIcons();
+      }
+    },
+  };
 
   document.addEventListener('click', (e) => {
     const tokenItem = e.target.closest('.qty-result[data-insert]');
@@ -546,10 +447,8 @@
 
     const crumbNode = e.target.closest('.topic-current[data-id]');
     if (crumbNode && !crumbNode.classList.contains('has-menu')) {
-      const bar = $('topic-bar');
-      const parents = [...bar.querySelectorAll('.topic-current[data-id]')];
-      const idx = parents.indexOf(crumbNode);
-      const parent = parents[idx - 1];
+      const parents = [...$('topic-bar').querySelectorAll('.topic-current[data-id]')];
+      const parent = parents[parents.indexOf(crumbNode) - 1];
       selectTopic(parent ? parent.dataset.id : '');
       return;
     }
@@ -565,7 +464,6 @@
       return;
     }
 
-    const action = e.target.closest('[data-action]');
     const trCopy = e.target.closest('[data-tr-copy]');
     if (trCopy) {
       const field = trCopy.dataset.trCopy;
@@ -573,37 +471,8 @@
       if (target) copyText(target.value || target.placeholder || '', trCopy.dataset.trCopyLabel || field);
       return;
     }
-    if (!action) return;
-    switch (action.dataset.action) {
-      case 'close-modal': closeModal(); break;
-      case 'continue-to-sql': startCreateFlow(); break;
-      case 'flow-pick-langs-continue': onPickLangsContinue(); break;
-      case 'flow-translate-continue': onTranslateContinue(); break;
-      case 'flow-back': {
-        const page = currentPage();
-        if (page && page.kind === 'translate') captureTranslationForm(page.code);
-        popPage();
-        break;
-      }
-      case 'copy-formula-sql':
-      case 'copy-token-sql': {
-        const pre = $(action.dataset.action === 'copy-formula-sql' ? 'formula-sql' : 'token-sql');
-        if (pre) copyText(pre.textContent, 'SQL');
-        break;
-      }
-      case 'toggle-token-section': {
-        const list = $(action.dataset.target);
-        if (!list) break;
-        const collapsed = list.dataset.collapsed === '1';
-        list.dataset.collapsed = collapsed ? '0' : '1';
-        const icon = action.querySelector('.token-section-icon');
-        if (icon) {
-          icon.innerHTML = '<i data-lucide="' + (collapsed ? 'chevron-up' : 'chevron-down') + '" width="16" height="16"></i>';
-          refreshIcons();
-        }
-        break;
-      }
-    }
+    const actionEl = e.target.closest('[data-action]');
+    if (actionEl && flowActions[actionEl.dataset.action]) flowActions[actionEl.dataset.action](actionEl, e);
   });
 
   $('sidebar-left-inner').addEventListener('input', (e) => {
@@ -611,13 +480,15 @@
   });
 
   $('var-overrides').addEventListener('input', (e) => {
-    if (e.target.name && e.target.name.startsWith('override[')) {
-      updatePreview($('equation').value);
-    }
+    if (e.target.name && e.target.name.startsWith('override[')) updatePreview($('equation').value);
   });
 
+  /* Hover-intent submenu: one open/close timer pair, viewport-clamped. */
   let openSub = null, openItem = null, openTimer = 0, closeTimer = 0;
-  let pendingSub = null, pendingItem = null;
+  function closeSubmenuNow() {
+    if (openSub) openSub.style.display = '';
+    openSub = openItem = null;
+  }
   function openSubmenuNow(item, sub) {
     if (!item || !openSub || !openSub.contains(item)) closeSubmenuNow();
     const rect = item.getBoundingClientRect();
@@ -629,54 +500,42 @@
     if (sr.bottom > window.innerHeight) sub.style.top = (window.innerHeight - sr.height - 4) + 'px';
     openSub = sub; openItem = item;
   }
-  function closeSubmenuNow() {
-    if (openSub) openSub.style.display = '';
-    openSub = openItem = null;
-  }
-  function scheduleOpen(item, sub) {
-    clearTimeout(openTimer); clearTimeout(closeTimer);
-    pendingItem = item; pendingSub = sub;
-    openTimer = setTimeout(() => { if (pendingSub === sub) openSubmenuNow(item, sub); }, 150);
-  }
-  function scheduleClose() {
-    clearTimeout(closeTimer);
-    closeTimer = setTimeout(closeSubmenuNow, 250);
+  const clearHoverTimers = () => { clearTimeout(openTimer); clearTimeout(closeTimer); };
+  function submenuFromEvent(e) {
+    const item = e.target.closest('.topic-menu-item');
+    return item && item.querySelector(':scope > .topic-submenu') ? { item, sub: item.querySelector(':scope > .topic-submenu') } : null;
   }
   $('topic-bar').addEventListener('mouseover', (e) => {
-    const item = e.target.closest('.topic-menu-item');
-    if (!item) return;
-    const sub = item.querySelector(':scope > .topic-submenu');
-    if (!sub) return;
-    if (pendingItem === item) { clearTimeout(closeTimer); return; }
-    scheduleOpen(item, sub);
+    const found = submenuFromEvent(e);
+    if (!found) return;
+    clearTimeout(closeTimer);
+    clearTimeout(openTimer);
+    openTimer = setTimeout(() => openSubmenuNow(found.item, found.sub), 150);
   });
   $('topic-bar').addEventListener('mouseout', (e) => {
-    const item = e.target.closest('.topic-menu-item');
-    if (!item) return;
-    if (!item.querySelector(':scope > .topic-submenu')) return;
+    const found = submenuFromEvent(e);
+    if (!found) return;
     const to = e.relatedTarget;
-    if (to && (item.contains(to) || (openSub && openSub.contains(to)))) return;
+    if (to && (found.item.contains(to) || (openSub && openSub.contains(to)))) return;
     clearTimeout(openTimer);
-    scheduleClose();
+    clearTimeout(closeTimer);
+    closeTimer = setTimeout(closeSubmenuNow, 250);
   });
   document.addEventListener('mouseover', (e) => {
-    const sub = e.target.closest('.topic-submenu');
-    if (!sub || sub !== openSub) return;
-    clearTimeout(closeTimer);
+    const sub = e.target.closest && e.target.closest('.topic-submenu');
+    if (sub && sub === openSub) clearTimeout(closeTimer);
   });
   document.addEventListener('mouseout', (e) => {
-    if (!openSub) return;
-    if (!openSub.contains(e.target)) return;
+    if (!openSub || !openSub.contains(e.target)) return;
     const to = e.relatedTarget;
-    if (to && openSub.contains(to)) return;
-    if (to && openItem && openItem.contains(to)) return;
-    if (to && pendingItem && pendingItem.contains(to)) return;
-    scheduleClose();
+    if (to && (openSub.contains(to) || (openItem && openItem.contains(to)))) return;
+    clearTimeout(closeTimer);
+    closeTimer = setTimeout(closeSubmenuNow, 250);
   });
 
   function closeAllMenus() {
-    clearTimeout(openTimer); clearTimeout(closeTimer);
-    openSub = openItem = pendingSub = pendingItem = null;
+    clearHoverTimers();
+    openSub = openItem = null;
     const bar = $('topic-bar');
     bar.querySelectorAll('.topic-children-menu').forEach((m) => m.classList.remove('open'));
     bar.querySelectorAll('.topic-submenu').forEach((m) => m.style.display = '');
@@ -692,33 +551,31 @@
   idInput.addEventListener('input', () => { idInput.dataset.manual = idInput.value !== slugify(nameInput.value); });
 
   const diffInput = $('difficulty'), diffFill = $('diff-fill-create'), diffDisplay = $('diff-display');
-  function updateDiffFill() {
-    const pct = ((diffInput.value - diffInput.min) / (diffInput.max - diffInput.min)) * 100;
-    diffFill.style.width = pct + '%';
-  }
-  diffInput.addEventListener('input', () => { diffDisplay.textContent = diffInput.value + '/10'; updateDiffFill(); });
-  updateDiffFill();
+  diffInput.addEventListener('input', () => {
+    diffDisplay.textContent = diffInput.value + '/10';
+    diffFill.style.width = ((diffInput.value - diffInput.min) / (diffInput.max - diffInput.min)) * 100 + '%';
+  });
+  diffFill.style.width = ((diffInput.value - diffInput.min) / (diffInput.max - diffInput.min)) * 100 + '%';
 
+  /* Grows to fit content; binds once so translate-page textareas reuse it. */
   function autoGrow(ta) {
     if (!ta) return;
-    ta.style.height = 'auto';
-    ta.style.height = ta.scrollHeight + 'px';
-  }
-  function bindAutoGrow(ta) {
-    if (!ta) return;
-    autoGrow(ta);
-    ta.addEventListener('input', () => autoGrow(ta));
+    const grow = () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
+    if (!ta.dataset.bound) {
+      ta.dataset.bound = '1';
+      ta.addEventListener('input', grow);
+    }
+    grow();
   }
 
   function init() {
     loadTokenSidebar();
     loadBreadcrumb('');
-    syncTreeResetBtn(false);
+    const resetBtn = document.getElementById('tree-select-all');
+    if (resetBtn) resetBtn.classList.add('disabled');
     renderOverrideTable([]);
     $('equation').addEventListener('input', (e) => updatePreview(e.target.value));
-    bindAutoGrow($('equation'));
-    bindAutoGrow($('description'));
-    bindAutoGrow($('links'));
+    [$('equation'), $('description'), $('links')].forEach(autoGrow);
     const sidebarRight = $('sidebar-right');
     if (sidebarRight) sidebarRight.addEventListener('click', (e) => {
       if (e.target.closest('#tree-select-all')) {

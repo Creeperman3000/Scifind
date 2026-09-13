@@ -6,23 +6,9 @@
 
 <div class="detail-desc">{{ _('detail.quantity') }}</div>
 
-{% if q.breadcrumbs %}
-<div class="breadcrumb-bar">
-{% for crumb in q.breadcrumbs %}
-  {% if not loop.first %} &gt; {% endif %}
-  <a href="/quantities?ids={{ crumb.id }}">{{ crumb.name }}</a>
-{% endfor %}
-</div>
-{% endif %}
+{{ breadcrumbs(q.breadcrumbs) }}
 
-<div class="detail-meta">
-  {% if dim_latex %}
-  <span>{{ _('detail.dimensions') }}: ${{ dim_latex }}$</span>
-  {% endif %}
-  {% if q.difficulty %}
-    <span>{{ _('detail.difficulty') }}: {{ q.difficulty }}/10</span>
-  {% endif %}
-</div>
+{{ detail_meta(dim_latex, q.difficulty) }}
 
 {{ description_paras(q.description) }}
 
@@ -50,37 +36,10 @@
 </div>
 {% endif %}
 
-{% if primary_formulas %}
-<div class="detail-section">
-  <h3>{{ _('detail.primary_formulas') }}</h3>
-  <div class="formula-grid">
-  {% for f in primary_formulas %}
-    {{ formula_card('/formula/' ~ f.id, f.latex, _(f.name)) }}
-  {% endfor %}
-  </div>
-</div>
-{% endif %}
+{{ formula_section(_('detail.primary_formulas'), primary_formulas) }}
 
-{% if nonprimary_formulas %}
-<div class="detail-section">
-  <h3>{{ _('detail.also_appears_in') }}</h3>
-  <div class="formula-grid">
-  {% for f in nonprimary_formulas %}
-    {{ formula_card('/formula/' ~ f.id, f.latex, _(f.name)) }}
-  {% endfor %}
-  </div>
-</div>
-{% endif %}
+{{ formula_section(_('detail.also_appears_in'), nonprimary_formulas) }}
 
-{% if related_formulas %}
-<div class="detail-section">
-  <h3>{{ _('detail.related_formulas') }}</h3>
-  <div class="formula-grid">
-  {% for r in related_formulas %}
-    {{ formula_card('/formula/' ~ r.id, r.latex, _(r.name), relation=_('relation.' ~ r.relation_type)) }}
-  {% endfor %}
-  </div>
-</div>
-{% endif %}
+{{ formula_section(_('detail.related_formulas'), related_formulas) }}
 
 {% endblock %}

@@ -10,6 +10,71 @@
 </div>
 {%- endmacro %}
 
+{% macro entity_card(href, symbol, name, relation=None) -%}
+<div class="formula-card">
+  <a href="{{ href }}">
+    <div class="formula-eqn">
+      {% if symbol %}<span class="latex-observe" data-latex="{{ symbol }}"></span>{% else %}{{ name }}{% endif %}
+    </div>
+    <div class="formula-name">{{ name }}</div>
+    {%- if relation %}
+    <div class="formula-relation-label">{{ relation }}</div>
+    {%- endif %}
+  </a>
+</div>
+{%- endmacro %}
+
+{% macro formula_grid(items, id_attr='id') -%}
+<div class="formula-grid">
+{% for f in items %}
+  {{ formula_card('/formula/' ~ f[id_attr], f.latex, _(f.name), relation=_('relation.' ~ f.relation_type) if f.relation_type else None) }}
+{% endfor %}
+</div>
+{%- endmacro %}
+
+{% macro formula_section(title, items, id_attr='id') -%}
+{% if items %}
+<div class="detail-section">
+  <h3>{{ title }}</h3>
+  {{ formula_grid(items, id_attr) }}
+</div>
+{% endif %}
+{%- endmacro %}
+
+{% macro breadcrumbs(crumbs, tail_href=None, tail_name=None, base='/quantities') -%}
+{% if crumbs or tail_href %}
+<div class="breadcrumb-bar">
+{% for crumb in crumbs %}
+  {% if not loop.first %} &gt; {% endif %}
+  <a href="{{ base }}?ids={{ crumb.id }}">{{ crumb.name }}</a>
+{% endfor %}
+{% if tail_href %}{% if crumbs %} &gt; {% endif %}<a href="{{ tail_href }}">{{ tail_name }}</a>{% endif %}
+</div>
+{% endif %}
+{%- endmacro %}
+
+{% macro detail_meta(dim_latex=None, difficulty=None) -%}
+{% if dim_latex or difficulty %}
+<div class="detail-meta">
+  {% if dim_latex %}<span>{{ _('detail.dimensions') }}: ${{ dim_latex }}$</span>{% endif %}
+  {% if difficulty %}<span>{{ _('detail.difficulty') }}: {{ difficulty }}/10</span>{% endif %}
+</div>
+{% endif %}
+{%- endmacro %}
+
+{% macro links_list(links) -%}
+{% if links %}
+<div class="detail-section">
+  <h3>{{ _('detail.links') }}</h3>
+  <ol class="link-list">
+  {% for url in links %}
+    <li><a href="{{ url }}" target="_blank" rel="noopener noreferrer">{{ url }}</a></li>
+  {% endfor %}
+  </ol>
+</div>
+{% endif %}
+{%- endmacro %}
+
 {% macro description_paras(description_json) -%}
 {% if description_json %}
 <div class="detail-desc-list">
@@ -18,6 +83,14 @@
 {% endfor %}
 </div>
 {% endif %}
+{%- endmacro %}
+
+{% macro ref_btn(fixed_ref, uid, is_ref) -%}
+{% if not fixed_ref %}<button type="button" class="units-ref-btn filter-btn" data-action="units-ref-pick" data-unit-id="{{ uid }}" title="{{ _('detail.reference_unit') }}" aria-label="{{ _('detail.reference_unit') }}" aria-pressed="{{ 'true' if is_ref else 'false' }}"{{ ' disabled' if is_ref }}><span class="ref-ic ref-ic-offer"><i data-lucide="circle" width="14" height="14"></i></span><span class="ref-ic ref-ic-active"><i data-lucide="circle-dot" width="14" height="14"></i></span></button>{% endif %}
+{%- endmacro %}
+
+{% macro conv_cell(is_ref, conv) -%}
+{% if is_ref %}&ndash;{% elif conv %}<span class="latex-observe" data-latex="{{ conv }}"></span>{% else %}&ndash;{% endif %}
 {%- endmacro %}
 
 {% macro units_table(units, table_data, si_prefix_sections, fixed_ref=False) -%}
@@ -36,9 +109,9 @@
     <tbody>
     {% for u in units %}
       <tr data-unit-id="{{ u.id }}"{% if u.is_ref %} class="is-ref"{% endif %}>
-        <td>${{ u.symbol_latex }}$ {{ u.name_html }}{% if not fixed_ref %}<button type="button" class="units-ref-btn filter-btn" data-action="units-ref-pick" data-unit-id="{{ u.id }}" title="{{ _('detail.reference_unit') }}" aria-label="{{ _('detail.reference_unit') }}" aria-pressed="{{ 'true' if u.is_ref else 'false' }}"{{ ' disabled' if u.is_ref }}><span class="ref-ic ref-ic-offer"><i data-lucide="circle" width="14" height="14"></i></span><span class="ref-ic ref-ic-active"><i data-lucide="circle-dot" width="14" height="14"></i></span></button>{% endif %}</td>
+        <td>${{ u.symbol_latex }}$ {{ u.name_html }}{{ ref_btn(fixed_ref, u.id, u.is_ref) }}</td>
         <td>{{ u.system or _('unit.system_any') }}</td>
-        <td class="uv-conv">{% set conv = u.latex_by_ref.get(table_data.ref) %}{% if u.is_ref %}&ndash;{% elif conv %}<span class="latex-observe" data-latex="{{ conv }}"></span>{% else %}&ndash;{% endif %}</td>
+        <td class="uv-conv">{{ conv_cell(u.is_ref, u.latex_by_ref.get(table_data.ref)) }}</td>
       </tr>
     {% endfor %}
     </tbody>
@@ -51,9 +124,9 @@
       <tbody>
       {% for p in section.payload %}
         <tr data-unit-id="{{ p.id }}" class="{% if p.collapsed %}si-extra{% endif %}{% if p.is_ref %} is-ref{% endif %}">
-          <td>${{ p.symbol_latex }}$ {% if p.link_unit_id %}<a href="/unit/{{ p.link_unit_id }}">{{ p.name }}</a>{% else %}{{ p.name | safe }}{% endif %}{% if not fixed_ref %}<button type="button" class="units-ref-btn filter-btn" data-action="units-ref-pick" data-unit-id="{{ p.id }}" title="{{ _('detail.reference_unit') }}" aria-label="{{ _('detail.reference_unit') }}" aria-pressed="{{ 'true' if p.is_ref else 'false' }}"{{ ' disabled' if p.is_ref }}><span class="ref-ic ref-ic-offer"><i data-lucide="circle" width="14" height="14"></i></span><span class="ref-ic ref-ic-active"><i data-lucide="circle-dot" width="14" height="14"></i></span></button>{% endif %}</td>
+          <td>${{ p.symbol_latex }}$ {% if p.link_unit_id %}<a href="/unit/{{ p.link_unit_id }}">{{ p.name }}</a>{% else %}{{ p.name | safe }}{% endif %}{{ ref_btn(fixed_ref, p.id, p.is_ref) }}</td>
           <td>{% if p.system_key %}{{ _(p.system_key) }}{% endif %}</td>
-          <td class="uv-conv">{% set conv = p.latex_by_ref.get(table_data.ref) %}{% if p.is_ref %}&ndash;{% elif conv %}<span class="latex-observe" data-latex="{{ conv }}"></span>{% else %}&ndash;{% endif %}</td>
+          <td class="uv-conv">{{ conv_cell(p.is_ref, p.latex_by_ref.get(table_data.ref)) }}</td>
         </tr>
       {% endfor %}
         <tr class="si-toggle-row" data-action="toggle-si-prefixes" aria-expanded="false" title="{{ _('detail.si_show_all') }}" data-more="{{ _('detail.si_show_all') }}" data-less="{{ _('detail.si_show_less') }}">

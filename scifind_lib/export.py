@@ -14,7 +14,7 @@ from scifind_lib.parser import parse_equation, quantity_token_key
 
 QTY_OVERRIDE_FIELDS = ("symbol_overwrite", "name_overwrite")  # schema order
 _QTY_OVERRIDE_ALIASES = {"symbol_overwrite": "symbol", "name_overwrite": "name"}
-FORMULA_COLUMNS = ["id", "name", "topic", "difficulty", "description", "links"]
+FORMULA_COLUMNS = ["id", "name", "topic_id", "difficulty", "description", "links"]
 TOKEN_COLUMNS = [
     "formula_id", "position", "token_kind", "quantity_id", "constant_id",
     "operator_id", "value", "symbol_overwrite", "name_overwrite",  # schema order
@@ -72,6 +72,8 @@ def build_i18n_override_value(overrides, tr_overrides_by_loc, field, key):
 def token_row_values(formula_id, pos, tok, overrides, tr_overrides_by_loc):
     """Value list (parallel to TOKEN_COLUMNS) for one parsed token."""
     kind = tok["token_kind"]
+    if kind == "paren":
+        raise ValueError("unbalanced parentheses")
     if kind == "number":
         return [formula_id, pos, "number", None, None, None, tok["value"], None, None]
     if kind == "quantity":
@@ -84,8 +86,6 @@ def token_row_values(formula_id, pos, tok, overrides, tr_overrides_by_loc):
     if kind == "constant":
         return [formula_id, pos, "constant", None, tok["constant_id"], None, None, None, None]
     op_id = tok["operator_id"]
-    if op_id in ("paren_open", "paren_close"):
-        raise ValueError("unbalanced parentheses")
     return [formula_id, pos, "operator", None, None, op_id, None, None, None]
 
 
@@ -108,25 +108,23 @@ def build_create_sql(
 
     tokens = parse_equation(conn, equation)
     overrides = overrides or {}
-    translations = translations or {}
 
     name_json = json.dumps({"en-us": name_en.strip()}, ensure_ascii=False)
     desc_json = json.dumps({"en-us": description}, ensure_ascii=False) if description else None
     links_json = json.dumps(links, ensure_ascii=False) if links else None
     tr_overrides_by_loc = {}
-    if translations:
-        for loc, tr in translations.items():
-            if not isinstance(tr, dict) or loc == "en-us":
-                continue
-            t_name = tr.get("name")
-            if t_name:
-                name_json = merge_locale_value(name_json, t_name.strip(), loc)
-            t_desc = tr.get("description")
-            if t_desc:
-                desc_json = merge_locale_value(desc_json, t_desc, loc)
-            t_ov = tr.get("overrides") or {}
-            if t_ov:
-                tr_overrides_by_loc[loc] = t_ov
+    for loc, tr in (translations or {}).items():
+        if not isinstance(tr, dict) or loc == "en-us":
+            continue
+        t_name = tr.get("name")
+        if t_name:
+            name_json = merge_locale_value(name_json, t_name.strip(), loc)
+        t_desc = tr.get("description")
+        if t_desc:
+            desc_json = merge_locale_value(desc_json, t_desc, loc)
+        t_ov = tr.get("overrides") or {}
+        if t_ov:
+            tr_overrides_by_loc[loc] = t_ov
 
     formula_sql = insert_statement(
         "formula", FORMULA_COLUMNS,
@@ -149,19 +147,19 @@ def build_create_sql(
 
 
 EXPORT_TABLE_ORDER = [
-    "formula", "formula_token", "formula_relation",
+    "topic", "formula", "formula_token", "formula_relation",
     "operator", "constant", "compound_unit", "quantity", "unit",
+    "si_prefix", "slug_override", "dimension_filter_operator", "app_config",
 ]
 
 EXPORT_TABLE_COLUMNS = {
-    "formula": ["id", "name", "topic", "difficulty", "description", "links"],
-    "formula_token": [
-        "formula_id", "position", "token_kind",
-        "quantity_id", "constant_id", "operator_id",
-        "value", "symbol_overwrite", "name_overwrite",
-    ],
+    "topic": ["id", "parent_id", "name", "name_genative", "position"],
+    "formula": FORMULA_COLUMNS,
+    "formula_token": TOKEN_COLUMNS,
     "formula_relation": ["formula_id", "related_id", "relation_type", "description"],
-    "operator": ["id", "symbol", "arity", "precedence", "associativity", "operator_type"],
+    "operator": ["id", "symbol", "aliases", "arity", "precedence",
+                 "associativity", "type",
+                 "latex_template", "dim_spec"],
     "constant": ["id", "name", "symbol", "difficulty", "description",
                  "links", "value", "quantity_id", "unit_id", "compound_unit_id"],
     "compound_unit": [
@@ -169,14 +167,18 @@ EXPORT_TABLE_COLUMNS = {
         "system", "is_base",
     ],
     "quantity": [
-        "id", "name", "symbol", "symbol_overwrite", "topic",
+        "id", "name", "symbol", "symbol_overwrite", "topic_id",
         "difficulty", "description", "links",
-        "hidden",
+        "hidden", "dim_symbol", "dim_position",
     ],
+    "si_prefix": ["id", "name", "symbol"],
+    "slug_override": ["unit_id", "prefix", "exponent", "slug"],
+    "dimension_filter_operator": ["operator_id", "position"],
+    "app_config": ["key", "value"],
     "unit": [
         "id", "name", "symbol", "quantity_id", "system", "is_base",
-        "reference_unit_id", "factor", "is_factor_reciprocal",
-        "constant_id", "constant_operator_id", "offset",
+        "reference_unit_id", "factor_numerator", "factor_denominator",
+        "constant_id", "constant_power", "constant_shift", "offset",
     ],
 }
 
@@ -187,11 +189,20 @@ def _iter_export_tables(conn):
         columns = list(EXPORT_TABLE_COLUMNS[table])
         if table == "quantity":
             insert_at = columns.index("hidden") + 1
-            columns[insert_at:insert_at] = dimension_columns()
+            columns[insert_at:insert_at] = dimension_columns(conn)
         rows = conn.execute(
             f"SELECT {','.join(columns)} FROM {table} ORDER BY rowid"
         ).fetchall()
         yield table, columns, [[r[c] for c in columns] for r in rows]
+
+
+def _csv_text(columns, rows):
+    """CSV text (header + rows) for one table."""
+    text = io.StringIO()
+    writer = csv.writer(text)
+    writer.writerow(columns)
+    writer.writerows(rows)
+    return text.getvalue()
 
 
 def export_to_csv(conn):
@@ -199,9 +210,7 @@ def export_to_csv(conn):
     buffer = io.StringIO()
     for table, columns, rows in _iter_export_tables(conn):
         buffer.write(f"=== {table} ===\n")
-        writer = csv.writer(buffer)
-        writer.writerow(columns)
-        writer.writerows(rows)
+        buffer.write(_csv_text(columns, rows))
         buffer.write("\n")
     return buffer.getvalue()
 
@@ -211,10 +220,7 @@ def export_to_csv_directory(conn, directory):
     out_dir = Path(directory)
     out_dir.mkdir(parents=True, exist_ok=True)
     for table, columns, rows in _iter_export_tables(conn):
-        with open(out_dir / f"{table}.csv", "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(columns)
-            writer.writerows(rows)
+        (out_dir / f"{table}.csv").write_text(_csv_text(columns, rows), encoding="utf-8")
 
 
 def export_to_csv_zip(conn):
@@ -222,11 +228,7 @@ def export_to_csv_zip(conn):
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for table, columns, rows in _iter_export_tables(conn):
-            text = io.StringIO()
-            writer = csv.writer(text)
-            writer.writerow(columns)
-            writer.writerows(rows)
-            zf.writestr(f"{table}.csv", text.getvalue())
+            zf.writestr(f"{table}.csv", _csv_text(columns, rows))
     return buffer.getvalue()
 
 
@@ -236,8 +238,7 @@ def export_to_xlsx(conn, output):
     workbook = Workbook()
     for i, (table, columns, rows) in enumerate(_iter_export_tables(conn)):
         sheet = workbook.active if i == 0 else workbook.create_sheet(title=table[:31])
-        if i == 0:
-            sheet.title = table[:31]
+        sheet.title = table[:31]
         sheet.append(columns)
         for row in rows:
             sheet.append(row)
@@ -302,7 +303,3 @@ def export_to_sql(conn):
             out.append(insert_statement(table, columns, row) + "\n")
     out.append("\nCOMMIT;\n")
     return "".join(out)
-
-# Single source of truth: export reuses the canonical token column order.
-EXPORT_TABLE_COLUMNS["formula_token"] = TOKEN_COLUMNS
-EXPORT_TABLE_COLUMNS["formula"] = FORMULA_COLUMNS
