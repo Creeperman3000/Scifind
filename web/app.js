@@ -618,6 +618,18 @@
   function openSidebar(side) { setSidebarOpen(side, true); }
   function closeSidebar(side) { setSidebarOpen(side, false); }
 
+  /* Shared overlay closer for the shortcuts Esc chain. */
+  function closeAllOverlays() {
+    var closed = false;
+    function shut(el) { if (el && el.classList.contains('open')) { el.classList.remove('open'); closed = true; } }
+    (window._morphSelects || []).forEach(function(ctrl) {
+      if (ctrl.isOpen()) { ctrl.close(); ctrl.trigger.focus(); closed = true; }
+    });
+    ['formula-sql-modal', 'sql-modal', 'search-suggestions', 'qty-results', 'formula-copy-menu', 'settings-menu'].forEach(function(id) { shut($(id)); });
+    return closed;
+  }
+  window._closeOverlays = closeAllOverlays;
+
   function syncBackdrop() {
     var bp = $('sidebar-backdrop');
     if (!bp) return;

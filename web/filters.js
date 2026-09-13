@@ -376,15 +376,6 @@
       return ctrl;
     };
 
-    document.addEventListener('keydown', function(e) {
-      if (e.key !== 'Escape') return;
-      window._morphSelects.forEach(function(ctrl) {
-        if (ctrl.isOpen()) { ctrl.close(); ctrl.trigger.focus(); }
-      });
-      var modal = $('formula-sql-modal');
-      if (modal && modal.classList.contains('open')) modal.classList.remove('open');
-    });
-
     /* Wraps a native <select> in a custom dropdown; the hidden native
        stays the source of truth and dispatches 'change'. */
     function chevronSvg() {

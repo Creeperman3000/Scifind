@@ -162,7 +162,9 @@
       "cancel_search": "Zrušit hledání",
       "drag_dismiss": "Zavřete tažením",
       "close": "Zavřít",
-      "copy": "Kopírovat"
+      "copy": "Kopírovat",
+      "shortcuts": "Klávesové zkratky",
+      "focus_search": "Hledat"
     },
     "create": {
       "title": "Vytvořit vzorec",
@@ -195,6 +197,24 @@
       "pick_languages_hint": "en-us je vždy zahrnuto",
       "translate_heading": "Přeložit do {lang}",
       "translate_open_issue": "Otevřít GitHub issue"
+    },
+    "shortcut": {
+      "section_global": "Obecné",
+      "press": "Stiskni",
+      "section_filters": "Filtry",
+      "section_lists": "Výsledky a detaily",
+      "section_copy": "Kopírovat vzorec jako",
+      "section_clear": "Vymazat filtr",
+      "help_toggle": "Zobrazit či skrýt tento dialog",
+      "go_home": "Domů",
+      "list_move": "Pohyb nahoru / dolů",
+      "list_horizontal": "Pohyb doleva / doprava",
+      "list_open": "Otevřít",
+      "create_continue": "Pokračovat na SQL",
+      "tree_pick": "rozbalit / zvýraznit",
+      "tree_toggle": "přepnout zaškrtnutí",
+      "tree_exit": "znovu rozbalit a skončit",
+      "esc_close": "Zavřít dialog, nabídku či zvýraznění, nebo vymazat hledání"
     }
   }
 }

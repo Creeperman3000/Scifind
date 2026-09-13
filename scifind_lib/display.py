@@ -331,6 +331,7 @@ def _quantity_units_table_uncached(conn, quantity_id, system, ref_unit_id=None, 
         "label": section["label"],
         "payload": [{
             "id": r["payload_id"],
+            "exp": r.get("exp"),
             "symbol_latex": Markup(r["symbol_latex"]),
             "name": r["name"],
             "system_key": r.get("system_key"),

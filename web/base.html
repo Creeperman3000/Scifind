@@ -134,7 +134,7 @@
       <colgroup><col class="units-c1"><col class="units-c2"><col class="units-c3"></colgroup>
       <tbody>
       {% for p in section.payload %}
-        <tr data-unit-id="{{ p.id }}" class="{% if p.collapsed %}si-extra{% endif %}{% if p.is_ref %} is-ref{% endif %}">
+        <tr data-unit-id="{{ p.id }}"{% if p.exp is defined and p.exp is not none %} data-exp="{{ p.exp }}"{% endif %} class="{% if p.collapsed %}si-extra{% endif %}{% if p.is_ref %} is-ref{% endif %}">
           <td>${{ p.symbol_latex }}$ {% if p.link_unit_id %}<a href="/unit/{{ p.link_unit_id }}">{{ p.name }}</a>{% else %}{{ p.name | safe }}{% endif %}{{ ref_btn(fixed_ref, p.id, p.is_ref) }}</td>
           <td>{% if p.system_key %}{{ _(p.system_key) }}{% endif %}</td>
           <td class="uv-conv">{{ conv_cell(p.is_ref, p.latex_by_ref.get(table_data.ref)) }}</td>
@@ -196,7 +196,7 @@
 
   <div class="topbar">
     <div class="topbar-left">
-{% block sidebar_left_btn %}      <button class="topbar-btn" data-action="toggle-sidebar-left" title="{{ _('tooltip.toggle_sidebar') }}" aria-label="{{ _('tooltip.toggle_sidebar') }}">
+{% block sidebar_left_btn %}      <button class="topbar-btn" data-action="toggle-sidebar-left" title="{{ _('tooltip.toggle_sidebar') }}" aria-label="{{ _('tooltip.toggle_sidebar') }}" aria-keyshortcuts="[">
         <span id="left-sidebar-icon"><i data-lucide="panel-left-close" width="18" height="18"></i></span>
       </button>{% endblock %}
       <a href="/" class="topbar-logo">
@@ -217,7 +217,7 @@
           <span class="search-icon">
             <i data-lucide="search" width="16" height="16"></i>
           </span>
-          <input type="text" name="q" placeholder="{{ _('search.placeholder') }}" value="{{ request.args.get('q', '') if request.path == '/search' else '' }}" autocomplete="off" aria-label="{{ _('search.placeholder') }}">
+          <input type="text" name="q" placeholder="{{ _('search.placeholder') }}" value="{{ request.args.get('q', '') if request.path == '/search' else '' }}" autocomplete="off" aria-label="{{ _('search.placeholder') }}" aria-keyshortcuts="/">
           <button type="button" class="search-cancel" data-action="exit-search" aria-label="{{ _('tooltip.cancel_search') }}">
             <i data-lucide="x" width="16" height="16"></i>
           </button>
@@ -227,7 +227,7 @@
     </div>
     <div class="topbar-right">
       <div class="settings-wrap">
-        <button class="topbar-btn" data-action="toggle-settings" title="{{ _('tooltip.settings') }}" aria-label="{{ _('tooltip.settings') }}">
+        <button class="topbar-btn" data-action="toggle-settings" title="{{ _('tooltip.settings') }}" aria-label="{{ _('tooltip.settings') }}" aria-keyshortcuts="Control+,">
           <i data-lucide="settings" width="18" height="18"></i>
         </button>
         <div class="dropdown-menu settings-menu" id="settings-menu">
@@ -285,9 +285,13 @@
             <label for="setting-report">{{ _('settings.found_bug') }}</label>
             <button type="button" data-action="open-bug-report">{{ _('settings.report_bug') }}</button>
           </div>
+          <div class="settings-item">
+            <span>{{ _('tooltip.shortcuts') }}</span>
+            <button type="button" data-action="open-shortcuts" aria-keyshortcuts="?">{{ _('shortcut.press') }} ?</button>
+          </div>
         </div>
       </div>
-{% block sidebar_right_btn %}      <button class="topbar-btn" data-action="toggle-sidebar-right" title="{{ _('tooltip.toggle_tree') }}" aria-label="{{ _('tooltip.toggle_tree') }}">
+{% block sidebar_right_btn %}      <button class="topbar-btn" data-action="toggle-sidebar-right" title="{{ _('tooltip.toggle_tree') }}" aria-label="{{ _('tooltip.toggle_tree') }}" aria-keyshortcuts="]">
         <span id="right-sidebar-icon"><i data-lucide="panel-right-close" width="18" height="18"></i></span>
       </button>{% endblock %}
     </div>
@@ -405,6 +409,7 @@
       <div class="main-inner">
         {% block content %}{% endblock %}
       </div>
+      <div class="shortcut-pending" id="shortcut-pending" aria-hidden="true"></div>
     </div>
 
 {% block sidebar_right %}
@@ -455,6 +460,18 @@
     </button>
   </div>
 
+  <div class="modal-overlay" id="shortcuts-modal" role="dialog" aria-modal="true" aria-labelledby="shortcuts-title">
+    <div class="modal-content shortcuts-content">
+      <button class="modal-close formula-copy-btn" type="button" aria-label="{{ _('tooltip.close') }}" data-action="close-shortcuts">
+        <i data-lucide="x" width="16" height="16"></i>
+      </button>
+      <h2 id="shortcuts-title">{{ _('tooltip.shortcuts') }}</h2>
+      <div class="modal-body">
+        <div class="shortcuts-sections" id="shortcuts-sections"></div>
+      </div>
+    </div>
+  </div>
+
   <script>
     window._csrfToken = {{ csrf_token()|tojson }};
     window._dimensionSymbols = {{ dimension_symbol_list|tojson|safe }};
@@ -466,5 +483,6 @@
   <script defer src="{{ static_v('filters.js') }}"></script>
   <script defer src="{{ static_v('detail.js') }}"></script>
   <script defer src="{{ static_v('app.js') }}"></script>
+  <script defer src="{{ static_v('shortcuts.js') }}"></script>
 </body>
 </html>

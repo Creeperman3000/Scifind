@@ -148,7 +148,9 @@
       "cancel_search": "Cancel search",
       "drag_dismiss": "Drag to dismiss",
       "close": "Close",
-      "copy": "Copy"
+      "copy": "Copy",
+      "shortcuts": "Keyboard shortcuts",
+      "focus_search": "Focus search"
     },
     "create": {
       "title": "Create Formula",
@@ -181,6 +183,26 @@
       "pick_languages_hint": "en-us is always included",
       "translate_heading": "Translate to {lang}",
       "translate_open_issue": "Open GitHub issue"
+    },
+    "shortcut": {
+      "section_global": "Global",
+      "press": "Press",
+      "section_filters": "Filters",
+      "section_lists": "Results & details",
+      "section_copy": "Copy formula as",
+      "section_clear": "Clear filter",
+      "help_toggle": "Show or hide this dialog",
+      "go_home": "Home",
+      "list_move": "Move up / down",
+      "list_horizontal": "Move left / right",
+      "list_open": "Open",
+      "create_continue": "Continue to SQL",
+      "tree_pick": "expand / highlight",
+      "tree_toggle": "toggle checkbox",
+      "tree_exit": "re-expand & exit",
+      "esc_close": "Close dialog, menu or highlight, or clear search",
+      "dot_go": "Go…",
+      "dot_menu": "Show available keys"
     }
   }
 }

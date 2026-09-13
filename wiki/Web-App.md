@@ -68,6 +68,17 @@ Toggle how dimensions are shown: `?dim_mode=<setting>`
 - **Variables** `var`: m, l, t, i, T, n, Iᵥ
 - **Units** `unit`: kg, m, s, A, K, mol, cd
 
+## Keyboard shortcuts
+
+Press `?` anywhere (or Settings → Keyboard shortcuts) for the full in-app reference. Summary:
+
+- Global: `/` / `Ctrl+K` search, `[` / `]` (`Ctrl+B` / `Ctrl+Shift+B`) sidebars, `g f` / `g q` (`Alt+1` / `Alt+2`) switch views, `Esc` closes/clears/cancels a pending `g`/`f`/`c` prefix (5s hint pill).
+- Filters (`f` prefix, list pages): `f q` quantity, `f d` dimension picker (`m`/`l`/`t`/`i`/`h`/`n`/`j` or `1`–`7`; `e` prefix or `Shift` then `l`/`g`/`e` for ≤/≥/=; `f d f` fills empty dimensions with 0, `f d b` toggles base quantities), `f s` sort (`q`/`i`/`n`/`d`/`D`/`t`/`T`), `f r` difficulty, `f t` tree walker (`1`–`9` drill, `Enter` toggles, `Esc` re-expands; `f t d` deselects all topics). Picker targets show blue key badges.
+- Results & details: `j`/`k`/`↑`/`↓` move up/down (blue highlight), `h`/`l`/`←`/`→` move left/right, `Enter` opens, `Tab` focuses links, `m` loads more.
+- Copy formula as (`c` prefix): `c l`/`c u`/`c p`/`c v` copy LaTeX/Unicode/PNG/SVG, `c s` formula SQL.
+- Clear filter (`c` prefix): `c a` clear all, `c q`/`c d`/`c r`/`c t` clear one filter.
+- Create: `Ctrl+Enter` continues to SQL, `e` focuses the equation field.
+
 ## Configuration
 
 All optional environment variables:

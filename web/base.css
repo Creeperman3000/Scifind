@@ -632,6 +632,7 @@ html.suppress-transitions .sidebar { transition: none !important; }
   position: relative;
   flex: 1;
   min-width: 0;
+  align-self: center;
   padding: 2px 8px 2px 24px;
   word-break: break-word;
   overflow-wrap: break-word;
@@ -788,8 +789,8 @@ html.suppress-transitions .sidebar { transition: none !important; }
   display: flex;
   flex-direction: column;
 }
-.modal-content > #modal-title { flex-shrink: 0; margin: 0 0 12px; }
-.modal-content > #modal-step { flex: 1; overflow-y: auto; min-height: 0; }
+.modal-content > #modal-title, .modal-content > #shortcuts-title { flex-shrink: 0; margin: 0 0 12px; }
+.modal-content > #modal-step, .modal-content > .modal-body { flex: 1; overflow-y: auto; min-height: 0; }
 .modal-content > .modal-footer { flex-shrink: 0; margin-top: 16px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
@@ -982,11 +983,13 @@ tr.is-ref .units-ref-btn .ref-ic-active { display: inline-block; }
 /* ---- 12. Scrollbars ---- */
 :is(
   .sidebar-scroll, .main, .qty-results, .search-suggestions,
-  .cselect-menu, .topic-children-menu, .topic-submenu, #modal-step
+  .cselect-menu, .topic-children-menu, .topic-submenu, #modal-step,
+  .modal-content, .modal-body
 )::-webkit-scrollbar { width: 6px; }
 :is(
   .sidebar-scroll, .main, .qty-results, .search-suggestions,
-  .cselect-menu, .topic-children-menu, .topic-submenu, #modal-step
+  .cselect-menu, .topic-children-menu, .topic-submenu, #modal-step,
+  .modal-content, .modal-body
 )::-webkit-scrollbar-thumb { background: var(--border); border-radius: var(--radius-xs); }
 
 /* ---- 13. Responsive: tablet overlay sidebar ---- */
@@ -1419,3 +1422,102 @@ tr.is-ref .units-ref-btn .ref-ic-active { display: inline-block; }
 
 #description, #links { margin-top: 8px; }
 #var-overrides-section { margin-top: 12px; }
+
+/* ---- 17. Keyboard shortcuts ---- */
+kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.8em;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.modal-content.shortcuts-content { height: auto; }
+.shortcuts-sections { text-align: left; }
+.shortcuts-table { width: 100%; max-width: 700px; border-collapse: collapse; font-size: 0.9rem; }
+.shortcuts-table td { padding: 4px 12px 4px 0; vertical-align: middle; text-align: left; }
+.shortcuts-table td:first-child { white-space: nowrap; width: 1%; text-align: left; }
+.shortcuts-table td:last-child { text-align: left; }
+.shortcuts-table .shortcuts-head-row td { padding: 16px 0 4px; }
+.shortcuts-table tbody:first-child .shortcuts-head-row td { padding-top: 0; }
+.shortcuts-table h3 { margin: 0; }
+.kb-hint {
+  padding: 0 6px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-xs);
+  background: var(--accent-ring);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.6;
+  white-space: nowrap;
+  pointer-events: none;
+  position: absolute;
+  right: 0;
+  margin: 0;
+}
+.filter-dim-row, #science-tree .tree-row { position: relative; }
+.filter-dim-row .kb-hint {
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+#science-tree .kb-hint { right: 8px; top: 2px; }
+.shortcut-pending {
+  position: sticky;
+  /* -20px cancels .main's bottom padding so the stuck panel sits flush. */
+  bottom: -20px;
+  z-index: 250;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 20px;
+  flex-wrap: wrap;
+  align-self: stretch;
+  flex-shrink: 0;
+  margin: 12px -24px 0;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+  padding: 12px 24px calc(12px + env(safe-area-inset-bottom));
+  font-size: 0.8rem;
+  text-align: center;
+}
+.shortcut-pending.open { display: flex; }
+@media (width < 768px) {
+  /* The fixed dock floats above the panel: keep the panel behind it
+     (dock stays clickable) with its bottom padding inside, clearing it. */
+  .shortcut-pending {
+    z-index: 65;
+    padding-bottom: calc(24px + var(--dock-height) + env(safe-area-inset-bottom));
+  }
+}
+.shortcut-pending .pending-opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  line-height: 1.5;
+}
+/* Visible keyboard focus for roving result navigation */
+.formula-card a:focus-visible,
+tbody[data-list-container] a:focus-visible,
+#main-content .detail-section table a:focus-visible,
+#main-content .detail-section .link-list a:focus-visible,
+.load-more-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.formula-card.kb-current,
+tbody[data-list-container] tr.kb-current,
+#main-content .detail-section table tbody tr.kb-current,
+#main-content .detail-section .link-list li.kb-current,
+#science-tree .tree-row.kb-current {
+  background: var(--accent-ring);
+  border-color: var(--accent);
+}
