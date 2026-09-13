@@ -818,6 +818,15 @@ html.suppress-transitions .sidebar { transition: none !important; }
 .formula-card .formula-name { font-size: 0.85rem; color: var(--accent); text-align: center; margin-top: auto; }
 .formula-card .formula-relation-label { font-size: 0.75rem; color: var(--text-secondary); text-align: center; margin-top: 4px; }
 
+.load-more-bar { display: flex; flex-direction: column; align-items: center; gap: 8px; margin: 20px 0 8px; }
+.load-more-info { font-size: 0.8rem; color: var(--text-secondary); }
+.load-more-btn { display: inline-grid; justify-items: center; white-space: nowrap; }
+.load-more-btn > span { grid-area: 1 / 1; }
+.load-more-btn [data-lm-busy] { visibility: hidden; }
+.load-more-btn[data-loading] [data-lm-idle] { visibility: hidden; }
+.load-more-btn[data-loading] [data-lm-busy] { visibility: visible; }
+.load-more-btn[data-loading] { opacity: 0.6; pointer-events: none; }
+
 .breadcrumb-bar { font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 12px; padding: 6px 0; overflow: visible; }
 .breadcrumb-bar a { color: var(--text-secondary); }
 .breadcrumb-bar a:hover { color: var(--accent); }

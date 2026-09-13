@@ -6,6 +6,7 @@ import logging
 
 from markupsafe import Markup
 
+from scifind_lib.db import in_clause, process_cached
 from scifind_lib.i18n import (
     localise,
     locale_accusative_names,
@@ -79,7 +80,8 @@ def si_prefix_factor(exp):
     return 10 ** int(exp)
 
 
-def _prefix_stems(conn, locale="en-us"):
+@process_cached("prefix_stems")
+def _prefix_stems_uncached(conn, locale="en-us"):
     stems = {}
     for r in conn.execute("SELECT id, name FROM si_prefix").fetchall():
         name = localise(r["name"], locale) or localise(r["name"], "en-us")
@@ -87,19 +89,34 @@ def _prefix_stems(conn, locale="en-us"):
     return stems
 
 
-def _slug_specials(conn):
+def _prefix_stems(conn, locale="en-us"):
+    return dict(_prefix_stems_uncached(conn, locale))
+
+
+@process_cached("slug_specials")
+def _slug_specials_uncached(conn):
     return {(r["unit_id"], r["prefix"], int(r["exponent"])): r["slug"]
             for r in conn.execute(
                 "SELECT unit_id, prefix, exponent, slug FROM slug_override").fetchall()}
 
 
-def _visible_exponents(conn):
+def _slug_specials(conn):
+    return dict(_slug_specials_uncached(conn))
+
+
+@process_cached("si_visible_exponents")
+def _visible_exponents_uncached(conn):
     row = conn.execute(
         "SELECT value FROM app_config WHERE key = 'si_visible_exponents'").fetchone()
     return {int(v) for v in json.loads(row["value"])}
 
 
-def _si_base_exponent(conn, base_id):
+def _visible_exponents(conn):
+    return set(_visible_exponents_uncached(conn))
+
+
+@process_cached("si_base_exponent")
+def _si_base_exponent_uncached(conn, base_id):
     for r in conn.execute(
         "SELECT unit FROM compound_unit "
         "WHERE quantity_id = 'mass' AND system = 'SI' AND is_base = 1").fetchall():
@@ -107,6 +124,10 @@ def _si_base_exponent(conn, base_id):
             if uid == base_id and prefix is not None:
                 return int(prefix)
     return 0
+
+
+def _si_base_exponent(conn, base_id):
+    return _si_base_exponent_uncached(conn, base_id)
 
 
 def _is_dimensionless(conn, quantity_id):
@@ -274,29 +295,41 @@ def _tag_compound_row(row, conn, locale="en-us"):
     return tagged
 
 
-def compound_unit_by_slug(conn, slug, quantity_id=None):
+@process_cached("compound_slug_map")
+def _compound_slug_map_uncached(conn, locale="en-us", only_base=False):
+    slug_map = {}
+    sql = "SELECT * FROM compound_unit" + (" WHERE is_base = 1" if only_base else "")
+    for row in conn.execute(sql).fetchall():
+        d = dict(row)
+        if slug := compound_unit_slug(conn, d.get("quantity_id"), d.get("unit"), locale):
+            slug_map.setdefault(slug, {"kind": "compound_unit", **d, "id": slug})
+    return slug_map
+
+
+def _compound_slug_map(conn, locale="en-us", only_base=False):
+    """{slug: row} for compound units (no hard-coded ids)."""
+    return dict(_compound_slug_map_uncached(conn, locale, only_base))
+
+
+def compound_unit_by_slug(conn, slug, quantity_id=None, locale="en-us"):
     """One compound_unit row matching a computed slug (or None)."""
     if not slug:
         return None
-    query = "SELECT * FROM compound_unit"
-    args = ()
-    if quantity_id:
-        query += " WHERE quantity_id = ?"
-        args = (quantity_id,)
-    for row in conn.execute(query, args).fetchall():
-        tagged = _tag_compound_row(row, conn)
-        if tagged["id"] == slug:
+    hit = _compound_slug_map(conn, locale).get(slug)
+    if hit is not None:
+        return dict(hit) if quantity_id is None or hit.get("quantity_id") == quantity_id else None
+    for row in conn.execute("SELECT * FROM compound_unit" + (" WHERE quantity_id = ?" if quantity_id else ""),
+                            (quantity_id,) if quantity_id else ()).fetchall():
+        if (tagged := _tag_compound_row(row, conn, locale))["id"] == slug:
             return tagged
     return None
 
 
-def compound_slug_is_base(conn, slug):
+def compound_slug_is_base(conn, slug, locale="en-us"):
     """True if the compound_unit matching `slug` has is_base = 1."""
     if not slug:
         return False
-    rows = conn.execute(
-        "SELECT quantity_id, unit FROM compound_unit WHERE is_base = 1").fetchall()
-    return any(compound_unit_slug(conn, r["quantity_id"], r["unit"]) == slug for r in rows)
+    return slug in _compound_slug_map(conn, locale, only_base=True)
 
 
 def unit_by_id(conn, unit_id):
@@ -327,6 +360,31 @@ def select_base_unit_with_fallback(conn, quantity_id, system):
     """select_base_unit, falling back to SI if the chosen system has no base for this quantity."""
     return (select_base_unit(conn, quantity_id, system)
             or (select_base_unit(conn, quantity_id, "SI") if system != "SI" else None))
+
+
+def select_base_units_batched(conn, quantity_ids, system, locale="en-us"):
+    """{quantity_id: base row} for many quantities with ≤4 queries (no N+1)."""
+    qids = list(dict.fromkeys(quantity_ids))
+    if not qids:
+        return {}
+
+    def _load(ids, sys):
+        marks, params = in_clause(ids)
+        q = f"SELECT * FROM {{}} WHERE quantity_id IN ({marks}) AND system = ? AND is_base = 1"
+        found = {}
+        for r in conn.execute(q.format("compound_unit"), params + (sys,)).fetchall():
+            d = {"kind": "compound_unit", **dict(r)}
+            if slug := compound_unit_slug(conn, d.get("quantity_id"), d.get("unit"), locale):
+                found.setdefault(d["quantity_id"], {**d, "id": slug})
+        for r in conn.execute(q.format("unit"), params + (sys,)).fetchall():
+            found.setdefault(r["quantity_id"], {"kind": "unit", **dict(r)})
+        return found
+
+    base_by_quantity = _load(qids, system)
+    if missing := [qid for qid in qids if qid not in base_by_quantity]:
+        if system != "SI":
+            base_by_quantity.update({k: v for k, v in _load(missing, "SI").items() if k not in base_by_quantity})
+    return base_by_quantity
 
 
 def unit_name_callback(names):

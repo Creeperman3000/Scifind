@@ -21,7 +21,7 @@ from scifind_lib.i18n import (  # noqa: F401
     load_locale_config, wrap_symbol_in_latex,
 )
 from scifind_lib.tree import (  # noqa: F401
-    all_tree_ids, compress_selection, expand_selection, load_tree, topic_name,
+    compress_selection, expand_selection, load_tree, topic_name,
     topic_name_map, topic_path, topic_tree_order, walk_tree,
 )
 from scifind_lib.units import (  # noqa: F401

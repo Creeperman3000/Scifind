@@ -5,7 +5,12 @@
 <h2>{{ heading }}</h2>
 
 {% if formulas %}
-{{ formula_grid(formulas) }}
+<div class="formula-grid" data-list-container>
+{% for f in formulas %}
+  {{ formula_card('/formula/' ~ f['id'], f.latex, _(f.name), relation=_('relation.' ~ f.relation_type) if f.relation_type else None) }}
+{% endfor %}
+</div>
+{{ load_more_bar(pagination) }}
 {% else %}
 <p>{{ _('detail.formulas_no_results') }}</p>
 {% endif %}

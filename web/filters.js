@@ -301,8 +301,22 @@
   });
 
   (function() {
-    var allQuantities = window._allQuantities || [];
+    var allQuantities = [];
     window._qtySelected = [];
+    var _qtyLoading = false;
+    function ensureQuantities(cb) {
+      if (allQuantities.length || _qtyLoading) { if (cb && allQuantities.length) cb(); return; }
+      _qtyLoading = true;
+      fetch('/api/quantities-filter', { headers: { 'Accept': 'application/json' } })
+        .then(function(r) { return r.ok ? r.json() : null; })
+        .then(function(data) {
+          _qtyLoading = false;
+          if (data && data.quantities) { allQuantities = data.quantities; }
+          if (cb) cb();
+        })
+        .catch(function() { _qtyLoading = false; if (cb) cb(); });
+    }
+    window._ensureQuantities = ensureQuantities;
 
     window._renderLatex = function(text) {
       if (typeof katex === 'undefined') return escapeHtml(text);
@@ -477,34 +491,44 @@
     window.renderQtyChips = function() {
       var chipsEl = $('qty-chips');
       if (!chipsEl) return;
-      chipsEl.innerHTML = window._qtySelected.map(function(qid) {
-        var q = allQuantities.find(function(x) { return x.id === qid; });
+      var qty_by_id = {};
+      allQuantities.forEach(function(x) { qty_by_id[x.id] = x; });
+      var html = window._qtySelected.map(function(qid) {
+        var q = qty_by_id[qid];
         var label = q ? (q.symbol || q.name || q.id) : qid;
         return '<span class="qty-chip" data-qty="' + escapeHtml(qid) + '">' + window._renderLatex(label) +
           '<span class="qty-chip-x" data-action="remove-qty-chip" data-qty="' + escapeHtml(qid) + '">' +
           '<i data-lucide="x" width="12" height="12"></i></span></span>';
       }).join('');
-      refreshIcons();
+      if (chipsEl._lastChipsHtml !== html) {
+        chipsEl.innerHTML = html;
+        chipsEl._lastChipsHtml = html;
+        refreshIcons();
+      }
     };
 
     window.renderQtyResults = function(query) {
       var resultsEl = $('qty-results');
       if (!resultsEl) return;
-      var q = (query || '').toLowerCase().trim();
-      var matches = allQuantities.filter(function(item) {
-        return !q || ['name', 'symbol', 'id'].some(function(k) {
-          return String(item[k] || '').toLowerCase().indexOf(q) !== -1;
-        });
-      }).slice(0, 30);
-      if (!matches.length) { resultsEl.classList.remove('open'); resultsEl.innerHTML = ''; return; }
-      resultsEl.classList.add('open');
-      resultsEl.innerHTML = matches.map(function(item) {
-        var sel = window._qtySelected.indexOf(item.id) !== -1 ? ' selected' : '';
-        return '<div class="qty-result' + sel + '" data-action="add-qty-chip" data-qty="' +
-          escapeHtml(item.id) + '" tabindex="0">' +
-          '<span class="qty-result-sym">' + (item.symbol ? window._renderLatex(item.symbol) : '') + '</span>' +
-          '<span class="qty-result-name">' + escapeHtml(item.name || item.id) + '</span></div>';
-      }).join('');
+      function _render() {
+        var q = (query || '').toLowerCase().trim();
+        var matches = allQuantities.filter(function(item) {
+          return !q || ['name', 'symbol', 'id'].some(function(k) {
+            return String(item[k] || '').toLowerCase().indexOf(q) !== -1;
+          });
+        }).slice(0, 30);
+        if (!matches.length) { resultsEl.classList.remove('open'); resultsEl.innerHTML = ''; return; }
+        resultsEl.classList.add('open');
+        resultsEl.innerHTML = matches.map(function(item) {
+          var sel = window._qtySelected.indexOf(item.id) !== -1 ? ' selected' : '';
+          return '<div class="qty-result' + sel + '" data-action="add-qty-chip" data-qty="' +
+            escapeHtml(item.id) + '" tabindex="0">' +
+            '<span class="qty-result-sym">' + (item.symbol ? window._renderLatex(item.symbol) : '') + '</span>' +
+            '<span class="qty-result-name">' + escapeHtml(item.name || item.id) + '</span></div>';
+        }).join('');
+      }
+      if (!allQuantities.length) { ensureQuantities(_render); return; }
+      _render();
     };
 
     /* Single refresh point for chips+results+filter application. */
@@ -538,7 +562,11 @@
     resetQtySearch();
     var qtyInput = $('qty-search');
     if (qtyInput) {
-      qtyInput.addEventListener('input', function() { window.renderQtyResults(qtyInput.value); });
+      var _qtyDebounce = null;
+      qtyInput.addEventListener('input', function() {
+        clearTimeout(_qtyDebounce);
+        _qtyDebounce = setTimeout(function() { window.renderQtyResults(qtyInput.value); }, 120);
+      });
       qtyInput.addEventListener('focus', function() {
         if (qtyInput.value.trim() || qtyInput._userInteracted) window.renderQtyResults(qtyInput.value);
       });
@@ -584,6 +612,8 @@
     var url = new URL(window.location);
     var sp = url.searchParams;
     ['subbranch', 'topic', 'id', 'exclude_all'].forEach(function(k) { sp.delete(k); });
+    /* Filter changes restart the list from the first chunk. */
+    ['page', 'per_page', 'all'].forEach(function(k) { sp.delete(k); });
     /* `q` belongs to /search; never leak a stray value into other pages. */
     if (url.pathname !== '/search') sp.delete('q');
 

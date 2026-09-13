@@ -157,10 +157,17 @@
     dimEl.style.opacity = (!eq.trim() || dimLatex === '\\varnothing') ? '0.6' : '';
     if (typeof katex !== 'undefined') katex.render(dimLatex, dimEl.querySelector('.dim-latex'), { displayMode: false, throwOnError: false });
   }
+  let _lastPreviewEq = null;
   function updatePreview(eq) {
     clearTimeout(previewTimer);
+    const trimmed = (eq || '').trim();
+    if (!trimmed || trimmed === _lastPreviewEq) {
+      if (!trimmed) { previewSeq++; renderPreviewLaTeX(''); }
+      return;
+    }
     const seq = ++previewSeq;
     previewTimer = setTimeout(() => {
+      _lastPreviewEq = trimmed;
       const fd = collectOverrides();
       fd.set('equation', eq);
       postForm('/create/preview-render', fd)

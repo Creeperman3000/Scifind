@@ -9,7 +9,7 @@
 <thead>
 <tr><th>{{ _('detail.quantity') }}</th><th>{{ _('detail.unit') }}</th></tr>
 </thead>
-<tbody>
+<tbody data-list-container>
 {% for q in quantities %}
 <tr>
   <td><span class="latex-observe" data-latex="{{ q.symbol }}"></span> <a href="/quantity/{{ q.id }}">{{ _(q.name) }}</a></td>
@@ -18,6 +18,7 @@
 {% endfor %}
 </tbody>
 </table>
+{{ load_more_bar(pagination) }}
 {% else %}
 <p>{{ _('detail.quantities_no_results') }}</p>
 {% endif %}

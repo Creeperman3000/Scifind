@@ -108,7 +108,7 @@
     }
   }
 
-  /* Content height changes after the fact (KaTeX renders lazily), so
+  /* Content height changes after the fact (KaTeX renders), so
      re-check the overflow padding whenever it does. */
   (function() {
     if (typeof ResizeObserver === 'undefined') return;
@@ -137,6 +137,20 @@
     return w;
   }
   function updateDimNameFits() {
+    /* At most one layout pass per frame + 150ms trailing. */
+    var now = Date.now(), wait = 150 - (now - (updateDimNameFits._last || 0));
+    if (updateDimNameFits._raf) return;
+    if (wait > 0) {
+      if (!updateDimNameFits._timer) updateDimNameFits._timer = setTimeout(function() {
+        updateDimNameFits._timer = null; updateDimNameFits._last = Date.now(); _updateDimNameFitsInner();
+      }, wait);
+      return;
+    }
+    updateDimNameFits._raf = requestAnimationFrame(function() {
+      updateDimNameFits._raf = null; updateDimNameFits._last = Date.now(); _updateDimNameFitsInner();
+    });
+  }
+  function _updateDimNameFitsInner() {
     var rows = $$('.filter-dim-row');
     if (!rows.length) return;
     /* Un-hide first: .no-dim-name uses display:none which measures as 0. */
@@ -158,9 +172,6 @@
     _dimNameState.hidden = shouldHide;
     rows.forEach(function(row) { row.classList.toggle('no-dim-name', shouldHide); });
   }
-
-  var _latexObserver = null;
-  var _latexObserved = new WeakSet();
 
   function renderLatexEl(el) {
     if (!el || !el.parentNode || typeof katex === 'undefined') return;
@@ -191,34 +202,10 @@
   window.renderLatexEl = renderLatexEl;
   window.renderLatexIn = renderLatexIn;
 
-  /* Lazily render .latex-observe nodes as they near the viewport. */
-  function observeLatexIn(root) {
-    if (!root) return;
-    if (typeof IntersectionObserver === 'undefined') {
-      renderLatexIn(root);
-      return;
-    }
-    if (!_latexObserver) {
-      _latexObserver = new IntersectionObserver(function(entries) {
-        entries.forEach(function(e) {
-          if (e.isIntersecting) {
-            renderLatexEl(e.target);
-            _latexObserver.unobserve(e.target);
-          }
-        });
-      }, { rootMargin: '1500px 0px', threshold: 0 });
-    }
-    root.querySelectorAll('.latex-observe').forEach(function(n) {
-      if (_latexObserved.has(n)) return;
-      _latexObserved.add(n);
-      _latexObserver.observe(n);
-    });
-  }
-
   function renderMathInContent() {
     var root = document.querySelector('#main-content');
     if (!root) return;
-    if (typeof katex !== 'undefined') observeLatexIn(root);
+    if (typeof katex !== 'undefined') renderLatexIn(root);
     if (typeof renderMathInElement === 'function') {
       try { renderMathInElement(root, {
         delimiters: [{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],
@@ -338,14 +325,42 @@
   window._navigateTo = navigateTo;
 
   /* Preserve current filter params across SPA link clicks (except q,
-     which only belongs to /search); link params win on conflict. */
+     which only belongs to /search, and list paging, which always
+     restarts from the first chunk); link params win on conflict. */
   function mergeLinkQs(href) {
     var parts = href.split('?');
     var params = new URLSearchParams(window.location.search);
     params.delete('q');
-    if (parts[1]) new URLSearchParams(parts[1]).forEach(function(v, k) { params.set(k, v); });
+    ['page', 'per_page', 'all'].forEach(function(k) { params.delete(k); });
+    if (parts[1]) new URLSearchParams(parts[1]).forEach(function(v, k) {
+      if (k === 'page' || k === 'per_page' || k === 'all') return;
+      params.set(k, v);
+    });
     var qs = params.toString();
     return parts[0] + (qs ? '?' + qs : '');
+  }
+
+  /* Address bar untouched, so a reload restarts from chunk one. */
+  function loadMoreChunk(btn) {
+    if (!btn || btn.dataset.loading) return;
+    var more_bar = btn.closest('[data-load-more]');
+    var list_container = document.querySelector('[data-list-container]');
+    if (!more_bar || !list_container) return;
+    btn.dataset.loading = '1';
+    fetch(btn.getAttribute('href')).then(function(r) {
+      if (!r.ok) throw new Error('load more failed');
+      return r.text();
+    }).then(function(html) {
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      var items = doc.querySelector('[data-list-container]');
+      if (items) list_container.insertAdjacentHTML('beforeend', items.innerHTML);
+      var next = doc.querySelector('[data-load-more]');
+      if (next) more_bar.innerHTML = next.innerHTML;
+      else btn.remove();
+      renderLatexIn(list_container);
+      refreshIcons();
+      updateOverflowPadding();
+    }).catch(function() { delete btn.dataset.loading; });
   }
 
   (function() {
@@ -364,30 +379,34 @@
       searchInput.value = s.heading;
       navigateTo('/' + s.kind + '/' + s.id);
     }
+    var _suggestController = null, _suggestCache = new Map();
     function fetchSuggestions(q) {
       if (!suggestionsEl) return;
       if (!q) { closeSuggestions(); return; }
-      fetch('/api/search-suggestions?q=' + encodeURIComponent(q))
+      if (_suggestCache.has(q)) { renderSuggestions(_suggestCache.get(q)); return; }
+      if (_suggestController) _suggestController.abort();
+      var ctrl = _suggestController = new AbortController();
+      fetch('/api/search-suggestions?q=' + encodeURIComponent(q), { signal: ctrl.signal })
         .then(function(r) { return r.json(); })
         .then(function(data) {
-          closeSuggestions();
-          (data.suggestions || []).forEach(function(s) {
-            var div = document.createElement('div');
-            div.className = 'search-suggestion';
-            div.tabIndex = -1;
-            var headingSpan = document.createElement('span');
-            headingSpan.textContent = s.heading;
-            var kindSpan = document.createElement('span');
-            kindSpan.className = 'ss-kind';
-            kindSpan.textContent = s.kind;
-            div.appendChild(headingSpan);
-            div.appendChild(kindSpan);
-            div.addEventListener('click', function() { goSuggestion(s); });
-            suggestionsEl.appendChild(div);
-          });
-          if (suggestionsEl.innerHTML) suggestionsEl.classList.add('open');
+          if (ctrl.signal.aborted) return;
+          _suggestCache.set(q, data);
+          if (_suggestCache.size > 50) _suggestCache.delete(_suggestCache.keys().next().value);
+          renderSuggestions(data);
         })
-        .catch(closeSuggestions);
+        .catch(function(err) { if (!err || err.name !== 'AbortError') closeSuggestions(); });
+    }
+    function renderSuggestions(data) {
+      closeSuggestions();
+      (data.suggestions || []).forEach(function(s) {
+        var div = document.createElement('div');
+        div.className = 'search-suggestion'; div.tabIndex = -1;
+        div.innerHTML = '<span></span><span class="ss-kind"></span>';
+        div.children[0].textContent = s.heading; div.children[1].textContent = s.kind;
+        div.addEventListener('click', function() { goSuggestion(s); });
+        suggestionsEl.appendChild(div);
+      });
+      if (suggestionsEl.innerHTML) suggestionsEl.classList.add('open');
     }
 
     function moveHighlight(items, dir) {
@@ -432,6 +451,12 @@
     }
 
     document.body.addEventListener('click', function(e) {
+      var moreBtn = e.target.closest('[data-load-more-btn]');
+      if (moreBtn) {
+        e.preventDefault();
+        loadMoreChunk(moreBtn);
+        return;
+      }
       var link = e.target.closest('a');
       if (!link) return;
       var href = link.getAttribute('href');
@@ -516,9 +541,6 @@
     document.documentElement.classList.remove('suppress-transitions');
     syncContent(window.location.href);
 
-    window._initLatexObserver = function() {
-      if (typeof katex !== 'undefined') observeLatexIn($('main-content'));
-    };
     layoutConstantValues();
     var mainContentEl = $('main-content');
     if (mainContentEl) {
@@ -539,7 +561,21 @@
       layoutConstantValues();
     });
   }
+  window._bootTopicTree = function() {
+    try {
+      if (typeof ensureTopicTree === 'function') ensureTopicTree();
+      if (typeof restoreAllFromUrl === 'function') restoreAllFromUrl();
+      else {
+        if (typeof restoreTreeFromUrl === 'function') restoreTreeFromUrl();
+        if (typeof syncFilterStates === 'function') syncFilterStates();
+      }
+    } catch (e) {}
+    try { refreshIcons(); } catch (e) {}
+  };
+
   initPage();
+  if (document.readyState === 'complete') window._bootTopicTree();
+  else window.addEventListener('load', window._bootTopicTree);
 
   function currentBreakpoint() {
     var w = window.innerWidth;

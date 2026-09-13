@@ -147,6 +147,10 @@
       "where_dimensions_are": "kde rozměry jsou",
       "all": "Všechny"
     },
+    "list": {
+      "load_more": "Načíst další",
+      "loading": "Načítání…"
+    },
     "toast": {
       "copied": "Zkopírováno",
       "copy_failed": "Kopírování selhalo"

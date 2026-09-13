@@ -32,6 +32,17 @@
 </div>
 {%- endmacro %}
 
+{% macro load_more_bar(pagination) -%}
+{% if pagination and pagination.total %}
+<div class="load-more-bar" data-load-more>
+  <div class="load-more-info">{{ [pagination.page * pagination.per_page, pagination.total] | min }} / {{ pagination.total }}</div>
+  {% if not pagination.show_all and pagination.page < pagination.total_pages %}
+  <a class="btn-primary load-more-btn" href="{{ page_url(pagination.page + 1) }}" data-load-more-btn><span data-lm-idle>{{ _('list.load_more') }}</span><span data-lm-busy>{{ _('list.loading') }}</span></a>
+  {% endif %}
+</div>
+{% endif %}
+{%- endmacro %}
+
 {% macro formula_section(title, items, id_attr='id') -%}
 {% if items %}
 <div class="detail-section">
@@ -167,15 +178,15 @@
   <script>(function(){try{var t=localStorage.getItem('sf-theme');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
   <title>{% block title %}Scifind{% endblock %}</title>
   <link rel="icon" type="image/svg+xml" href="{{ static_v('favicon.svg') }}">
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.css">
   <script>window._KATEX_MACROS = {};</script>
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/katex.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.17.0/dist/contrib/auto-render.min.js"
-    onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],macros:window._KATEX_MACROS});document.documentElement.classList.add('katex-ready');if(typeof renderQtyChips==='function')renderQtyChips();if(typeof _initLatexObserver==='function')_initLatexObserver();"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],macros:window._KATEX_MACROS});document.documentElement.classList.add('katex-ready');if(typeof renderQtyChips==='function')renderQtyChips();"
     onerror="document.documentElement.classList.add('katex-ready');"></script>
-  <script src="{{ static_v('tree.js') }}"></script>
-  <link rel="preconnect" href="https://unpkg.com">
-  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+  <script defer src="{{ static_v('tree.js') }}" onload="if(typeof window._bootTopicTree==='function')window._bootTopicTree()"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/lucide@0.469.0/dist/umd/lucide.min.js" onload="if(typeof refreshIcons==='function')refreshIcons()"></script>
   <link rel="stylesheet" href="{{ static_v('base.css') }}">
   {% block styles %}{% endblock %}
 </head>
@@ -451,10 +462,9 @@
     window._availableSorts = {{ available_sorts|tojson|safe }};
     window._defaultSort = {{ default_sort|tojson|safe }};
     window._topicTreeData = {{ tree_json|tojson|safe }};
-    window._allQuantities = {{ all_quantities_for_filter|tojson|default('[]')|safe }};
   </script>
-  <script src="{{ static_v('filters.js') }}"></script>
-  <script src="{{ static_v('detail.js') }}"></script>
-  <script src="{{ static_v('app.js') }}"></script>
+  <script defer src="{{ static_v('filters.js') }}"></script>
+  <script defer src="{{ static_v('detail.js') }}"></script>
+  <script defer src="{{ static_v('app.js') }}"></script>
 </body>
 </html>

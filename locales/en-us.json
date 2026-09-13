@@ -133,6 +133,10 @@
       "where_dimensions_are": "where dimensions are",
       "all": "All"
     },
+    "list": {
+      "load_more": "Load more",
+      "loading": "Loading…"
+    },
     "toast": {
       "copied": "Copied",
       "copy_failed": "Copy failed"

@@ -1,6 +1,8 @@
 """Unified data-access layer."""
 
 import json
+import re
+import unicodedata
 from dataclasses import dataclass, field
 from itertools import groupby
 
@@ -420,21 +422,42 @@ def fetch_all_formulas(conn):
         " FROM formula f ORDER BY f.topic_id, f.difficulty, f.id")
 
 
-def fetch_formulas_filtered(conn, topic=None, diff_min=None, diff_max=None):
-    """Formulas filtered by topic and/or difficulty range (CLI + list pages)."""
-    where, params = [], []
-    if topic:
-        where.append("f.topic_id = ?")
-        params.append(topic)
+def _topic_diff_where(alias, topic_ids, diff_min, diff_max, extra=()):
+    """Shared WHERE builder for topic/difficulty list pre-filters."""
+    where, params = list(extra), []
+    if topic_ids:
+        marks, vals = in_clause(list(topic_ids))
+        where.append(f"{alias}.topic_id IN ({marks})")
+        params.extend(vals)
     if diff_min is not None and diff_max is not None:
-        # BETWEEN with equal bounds ≡ equality, so no special case needed.
-        where.append("f.difficulty BETWEEN ? AND ?")
+        where.append(f"{alias}.difficulty BETWEEN ? AND ?")
         params.extend([diff_min, diff_max])
-    sql = ("SELECT f.id, json_extract(f.name, '$.en-us') AS name_en,"
+    return where, params
+
+
+def fetch_formulas_filtered(conn, topic=None, diff_min=None, diff_max=None,
+                              topic_ids=None):
+    """Formulas filtered by topic and/or difficulty range (CLI + list pages)."""
+    ids = topic_ids or ([topic] if topic else None)
+    where, params = _topic_diff_where("f", ids, diff_min, diff_max)
+    sql = ("SELECT f.id, f.name, json_extract(f.name, '$.en-us') AS name_en,"
            " f.topic_id AS topic_id, f.difficulty FROM formula f")
     if where:
         sql += " WHERE " + " AND ".join(where)
     return _all(conn, sql + " ORDER BY f.topic_id, f.difficulty, f.id", params)
+
+
+def fetch_quantities_filtered(conn, topic_ids=None, diff_min=None, diff_max=None,
+                               include_hidden=False):
+    """Quantities filtered by topic/difficulty in SQL (base dimensions first)."""
+    where, params = _topic_diff_where("q", topic_ids, diff_min, diff_max,
+                                      [] if include_hidden else ["q.hidden = 0"])
+    cols = ", ".join(f"q.{c}" for c in dimension_columns(conn))
+    sql = (f"SELECT DISTINCT q.id, q.name, q.symbol, {_NAME_EN},"
+           f" q.topic_id AS topic_id, q.difficulty, {cols} FROM quantity q")
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    return sort_quantities_base_first(_all(conn, sql, params), conn)
 
 
 def fetch_units_with_quantity(conn, quantity_id=None):
@@ -511,12 +534,54 @@ _SEARCH_SOURCES = (
 )
 
 
-def search_entities(conn, query, limit=30, locale=DEFAULT_LOCALE):
-    """Search entity names, symbols, and IDs via SQL LIKE substring match; hidden quantities never appear."""
-    if not query or not query.strip():
-        return []
-    needle = query.strip().lower()
-    like_pattern = f"%{needle}%"
+def _fts_available(conn):
+    try:
+        return bool(conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='entity_fts'"
+        ).fetchone())
+    except Exception:
+        return False
+
+
+_FTS_COLS = "kind,id,name_en,name_cs,name_uk,symbol,entity_id"
+_FTS_NAME = "coalesce(json_extract(name,'$.en-us'),''),coalesce(json_extract(name,'$.cs-cz'),''),coalesce(json_extract(name,'$.en-uk'),'')"
+
+
+def ensure_entity_fts(conn):
+    """Create + backfill entity_fts when missing/empty (idempotent)."""
+    if _fts_available(conn):
+        try:
+            if conn.execute("SELECT count(*) FROM entity_fts").fetchone()[0] > 0:
+                return
+        except Exception:
+            return
+    else:
+        try:
+            conn.execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS entity_fts USING fts5("
+                "kind, id UNINDEXED, name_en, name_cs, name_uk, symbol,"
+                " entity_id UNINDEXED, tokenize = 'unicode61 remove_diacritics 1')")
+        except Exception:
+            return
+    try:
+        conn.execute("DELETE FROM entity_fts")
+        for kind, symbol_sql, extra in (("formula", "''", ""), ("quantity", "coalesce(symbol,'')", " WHERE hidden = 0"),
+                                 ("unit", "coalesce(symbol,'')", ""), ("constant", "coalesce(symbol,'')", "")):
+            conn.execute(f"INSERT INTO entity_fts({_FTS_COLS}) SELECT '{kind}',id,{_FTS_NAME},{symbol_sql},id FROM {kind}{extra}")
+        conn.commit()
+    except Exception:
+        pass
+
+
+def _fts_query_text(query):
+    """Sanitize user query into an FTS5 prefix query (terms ANDed, prefix on last)."""
+    folded = "".join(ch for ch in unicodedata.normalize("NFKD", query.strip().lower()) if not unicodedata.combining(ch))
+    if not (terms := [t for t in re.findall(r"\w+", folded, re.UNICODE) if t.strip("_")]):
+        return None
+    return " AND ".join([f'"{t}"' for t in terms[:-1]] + [f'"{terms[-1]}"*'])
+
+
+def _search_entities_like(conn, needle, like_pattern, limit, locale):
     locale_clauses = [
         f"LOWER(json_extract(name, '$.{loc}')) LIKE ?"
         for loc in SEARCHABLE_LOCALES
@@ -530,10 +595,56 @@ def search_entities(conn, query, limit=30, locale=DEFAULT_LOCALE):
     rows = conn.execute(
         f"SELECT * FROM ({' UNION ALL '.join(union_parts)})", params
     ).fetchall()
+    hits = [(r["kind"], r["id"], localise(r["raw_name"], locale)) for r in rows]
+    hits.sort(key=lambda hit: (hit[2].strip().lower() != needle, len(hit[2])))
+    return hits[:limit] if limit is not None else hits
 
-    out = [(r["kind"], r["id"], localise(r["raw_name"], locale)) for r in rows]
-    out.sort(key=lambda hit: (hit[2].strip().lower() != needle, len(hit[2])))
-    return out[:limit] if limit is not None else out
+
+def search_entities(conn, query, limit=30, locale=DEFAULT_LOCALE):
+    """Full-text search over entity names/symbols/ids."""
+    if not query or not query.strip():
+        return []
+    needle = query.strip().lower()
+    like_pattern = f"%{needle}%"
+    # Single-char queries stay on LIKE (FTS prefix noise + plan requirement).
+    if len(needle) < 2 or not _fts_available(conn):
+        return _search_entities_like(conn, needle, like_pattern, limit, locale)
+    fts_q = _fts_query_text(query)
+    if not fts_q:
+        return _search_entities_like(conn, needle, like_pattern, limit, locale)
+    try:
+        rows = conn.execute(
+            "SELECT kind, entity_id AS id, rank FROM entity_fts"
+            " WHERE entity_fts MATCH ? ORDER BY rank LIMIT ?",
+            (fts_q, (limit or 30) * 3),
+        ).fetchall()
+    except Exception:
+        return _search_entities_like(conn, needle, like_pattern, limit, locale)
+    if not rows:
+        return _search_entities_like(conn, needle, like_pattern, limit, locale)
+    ids_by_kind: dict = {}
+    for r in rows:
+        ids_by_kind.setdefault(r["kind"], []).append(r["id"])
+    hidden_quantity_ids = set()
+    if ids_by_kind.get("quantity"):
+        marks, vals = in_clause(ids_by_kind["quantity"])
+        hidden_quantity_ids = {rr["id"] for rr in conn.execute(
+            f"SELECT id FROM quantity WHERE id IN ({marks}) AND hidden = 1", vals).fetchall()}
+    name_by_entity = {}
+    for kind, ids in ids_by_kind.items():
+        marks, vals = in_clause(ids)
+        for rr in conn.execute(f"SELECT id, name AS raw_name FROM {kind} WHERE id IN ({marks})", vals).fetchall():
+            name_by_entity[(kind, rr["id"])] = rr["raw_name"]
+    hits, seen = [], set()
+    for r in rows:
+        key = (r["kind"], r["id"])
+        if key in seen or r["id"] in hidden_quantity_ids or key not in name_by_entity:
+            continue
+        seen.add(key)
+        hits.append((r["kind"], r["id"], localise(name_by_entity[key], locale)))
+        if limit is not None and len(hits) >= limit:
+            break
+    return hits
 
 
 def suggest_entities(conn, query, limit=8, locale=DEFAULT_LOCALE):

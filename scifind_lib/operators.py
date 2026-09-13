@@ -3,6 +3,8 @@
 import json
 import re
 
+from scifind_lib.db import process_cached
+
 DIM_TOLERANCE = 1e-9
 
 class OperatorDefinition:
@@ -36,8 +38,13 @@ class OperatorDefinition:
 
 OPERATOR_COLUMNS = "id, symbol, aliases, arity, precedence, associativity, type, latex_template, dim_spec"
 
-def load_operators(conn):
+@process_cached("operators")
+def _load_operators_uncached(conn):
     return {r["id"]: OperatorDefinition(dict(r)) for r in conn.execute(f"SELECT {OPERATOR_COLUMNS} FROM operator")}
+
+
+def load_operators(conn):
+    return dict(_load_operators_uncached(conn))
 
 def alias_to_id_map(operators):
     mapping = {}

@@ -197,3 +197,67 @@ CREATE INDEX IF NOT EXISTS idx_formula_relation_related ON formula_relation(rela
 CREATE INDEX IF NOT EXISTS idx_formula_relation_type    ON formula_relation(relation_type);
 CREATE INDEX IF NOT EXISTS idx_unit_quantity            ON unit(quantity_id);
 CREATE INDEX IF NOT EXISTS idx_compound_unit_quantity   ON compound_unit(quantity_id);
+-- Full-text search over entity names/symbols/ids (FTS5, maintained by triggers).
+CREATE VIRTUAL TABLE IF NOT EXISTS entity_fts USING fts5(
+    kind, id UNINDEXED, name_en, name_cs, name_uk, symbol, entity_id UNINDEXED,
+    tokenize = 'unicode61 remove_diacritics 1'
+);
+CREATE TRIGGER IF NOT EXISTS trg_fts_formula_ai AFTER INSERT ON formula BEGIN
+    INSERT INTO entity_fts(kind, id, name_en, name_cs, name_uk, symbol, entity_id)
+    VALUES ('formula', new.id, coalesce(json_extract(new.name, '$.en-us'), ''), coalesce(json_extract(new.name, '$.cs-cz'), ''), coalesce(json_extract(new.name, '$.en-uk'), ''), '', new.id);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_fts_formula_ad AFTER DELETE ON formula BEGIN
+    DELETE FROM entity_fts WHERE kind = 'formula' AND entity_id = old.id;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_fts_formula_au AFTER UPDATE ON formula BEGIN
+    DELETE FROM entity_fts WHERE kind = 'formula' AND entity_id = old.id;
+    INSERT INTO entity_fts(kind, id, name_en, name_cs, name_uk, symbol, entity_id)
+    VALUES ('formula', new.id, coalesce(json_extract(new.name, '$.en-us'), ''), coalesce(json_extract(new.name, '$.cs-cz'), ''), coalesce(json_extract(new.name, '$.en-uk'), ''), '', new.id);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_fts_quantity_ai AFTER INSERT ON quantity BEGIN
+    INSERT INTO entity_fts(kind, id, name_en, name_cs, name_uk, symbol, entity_id)
+    VALUES ('quantity', new.id, coalesce(json_extract(new.name, '$.en-us'), ''), coalesce(json_extract(new.name, '$.cs-cz'), ''), coalesce(json_extract(new.name, '$.en-uk'), ''), coalesce(new.symbol, ''), new.id);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_fts_quantity_ad AFTER DELETE ON quantity BEGIN
+    DELETE FROM entity_fts WHERE kind = 'quantity' AND entity_id = old.id;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_fts_quantity_au AFTER UPDATE ON quantity BEGIN
+    DELETE FROM entity_fts WHERE kind = 'quantity' AND entity_id = old.id;
+    INSERT INTO entity_fts(kind, id, name_en, name_cs, name_uk, symbol, entity_id)
+    VALUES ('quantity', new.id, coalesce(json_extract(new.name, '$.en-us'), ''), coalesce(json_extract(new.name, '$.cs-cz'), ''), coalesce(json_extract(new.name, '$.en-uk'), ''), coalesce(new.symbol, ''), new.id);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_fts_unit_ai AFTER INSERT ON unit BEGIN
+    INSERT INTO entity_fts(kind, id, name_en, name_cs, name_uk, symbol, entity_id)
+    VALUES ('unit', new.id, coalesce(json_extract(new.name, '$.en-us'), ''), coalesce(json_extract(new.name, '$.cs-cz'), ''), coalesce(json_extract(new.name, '$.en-uk'), ''), coalesce(new.symbol, ''), new.id);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_fts_unit_ad AFTER DELETE ON unit BEGIN
+    DELETE FROM entity_fts WHERE kind = 'unit' AND entity_id = old.id;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_fts_unit_au AFTER UPDATE ON unit BEGIN
+    DELETE FROM entity_fts WHERE kind = 'unit' AND entity_id = old.id;
+    INSERT INTO entity_fts(kind, id, name_en, name_cs, name_uk, symbol, entity_id)
+    VALUES ('unit', new.id, coalesce(json_extract(new.name, '$.en-us'), ''), coalesce(json_extract(new.name, '$.cs-cz'), ''), coalesce(json_extract(new.name, '$.en-uk'), ''), coalesce(new.symbol, ''), new.id);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_fts_constant_ai AFTER INSERT ON constant BEGIN
+    INSERT INTO entity_fts(kind, id, name_en, name_cs, name_uk, symbol, entity_id)
+    VALUES ('constant', new.id, coalesce(json_extract(new.name, '$.en-us'), ''), coalesce(json_extract(new.name, '$.cs-cz'), ''), coalesce(json_extract(new.name, '$.en-uk'), ''), coalesce(new.symbol, ''), new.id);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_fts_constant_ad AFTER DELETE ON constant BEGIN
+    DELETE FROM entity_fts WHERE kind = 'constant' AND entity_id = old.id;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_fts_constant_au AFTER UPDATE ON constant BEGIN
+    DELETE FROM entity_fts WHERE kind = 'constant' AND entity_id = old.id;
+    INSERT INTO entity_fts(kind, id, name_en, name_cs, name_uk, symbol, entity_id)
+    VALUES ('constant', new.id, coalesce(json_extract(new.name, '$.en-us'), ''), coalesce(json_extract(new.name, '$.cs-cz'), ''), coalesce(json_extract(new.name, '$.en-uk'), ''), coalesce(new.symbol, ''), new.id);
+END;
+-- Composite/covering indexes for list, filter, and detail queries (no per-row scans).
+CREATE INDEX IF NOT EXISTS idx_formula_token_qty_kind_fid ON formula_token(quantity_id, token_kind, formula_id);
+CREATE INDEX IF NOT EXISTS idx_formula_token_kind_const ON formula_token(token_kind, constant_id);
+CREATE INDEX IF NOT EXISTS idx_formula_token_fid_pos ON formula_token(formula_id, position);
+CREATE INDEX IF NOT EXISTS idx_unit_qty_sys_base ON unit(quantity_id, system, is_base);
+CREATE INDEX IF NOT EXISTS idx_unit_sys_base ON unit(system, is_base);
+CREATE INDEX IF NOT EXISTS idx_quantity_topic_diff ON quantity(topic_id, difficulty);
+CREATE INDEX IF NOT EXISTS idx_formula_topic_diff ON formula(topic_id, difficulty);
+CREATE INDEX IF NOT EXISTS idx_quantity_hidden ON quantity(hidden);
+CREATE INDEX IF NOT EXISTS idx_constant_quantity ON constant(quantity_id);
+CREATE INDEX IF NOT EXISTS idx_quantity_dim_symbol ON quantity(dim_symbol);

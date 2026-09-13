@@ -276,13 +276,8 @@ def _op_node(op, args, wrap):
     return node
 
 
-def reduce_rpn_to_tree(conn, tokens):
-    """Reduce a token stream to an expression tree (relational chains fold n-ary)."""
-    operators = load_operators(conn)
-    qty_map = bulk_entity_rows(conn, "quantity", "id, name, symbol",
-                               {t["quantity_id"] for t in tokens if t["token_kind"] == "quantity"})
-    const_map = bulk_entity_rows(conn, "constant", "id, symbol",
-                                 {t["constant_id"] for t in tokens if t["token_kind"] == "constant"})
+def reduce_rpn_to_tree_preloaded(tokens, operators, qty_map, const_map):
+    """Reduce tokens using preloaded operator/entity maps (no DB queries)."""
     stack = []
     for tok in tokens:
         kind = tok["token_kind"]
@@ -311,3 +306,13 @@ def reduce_rpn_to_tree(conn, tokens):
     if len(stack) > 1:
         raise ValueError(f"RPN did not reduce: {len(stack)} items left on stack")
     return stack[0]
+
+
+def reduce_rpn_to_tree(conn, tokens):
+    """Reduce a token stream to an expression tree (relational chains fold n-ary)."""
+    operators = load_operators(conn)
+    qty_map = bulk_entity_rows(conn, "quantity", "id, name, symbol",
+                               {t["quantity_id"] for t in tokens if t["token_kind"] == "quantity"})
+    const_map = bulk_entity_rows(conn, "constant", "id, symbol",
+                                 {t["constant_id"] for t in tokens if t["token_kind"] == "constant"})
+    return reduce_rpn_to_tree_preloaded(tokens, operators, qty_map, const_map)

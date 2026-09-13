@@ -3,10 +3,11 @@
 import logging
 from fractions import Fraction
 
-from scifind_lib.db import in_clause
+from scifind_lib.db import cached_process, in_clause, process_cached
 from scifind_lib.i18n import localise, with_subscript, wrap_symbol_in_latex
 from scifind_lib.operators import (
     apply_dim_spec,
+    load_operators,
     operand_info,
     render_template,
     template_arity,
@@ -17,6 +18,7 @@ from scifind_lib.parser import (
     parse_equation,
     quantity_token_key,
     reduce_rpn_to_tree,
+    reduce_rpn_to_tree_preloaded,
 )
 from scifind_lib.units import (
     format_compound_unit_symbol,
@@ -34,10 +36,10 @@ _FILTER_COMPARISONS = {
 
 
 def _dim_id_rows(conn):
-    return conn.execute(
+    rows = cached_process("dim_id_rows", lambda: [dict(r) for r in conn.execute(
         "SELECT dim_symbol, id FROM quantity "
-        "WHERE dim_symbol IS NOT NULL ORDER BY dim_position"
-    ).fetchall()
+        "WHERE dim_symbol IS NOT NULL ORDER BY dim_position").fetchall()])
+    return [dict(r) for r in rows]
 
 
 def dimension_symbols(conn):
@@ -46,7 +48,7 @@ def dimension_symbols(conn):
 
 
 def dimension_columns(conn):
-    return [f"dim_{s}" for s in dimension_symbols(conn)]
+    return [f"dim_{r['dim_symbol']}" for r in _dim_id_rows(conn)]
 
 
 def dimension_column_for(symbol):
@@ -58,11 +60,11 @@ def dimension_quantity_ids(conn):
     return {r["dim_symbol"]: r["id"] for r in _dim_id_rows(conn)}
 
 
+@process_cached("filter_ops")
 def filter_ops(conn):
     """Dimension filter operator ids from dimension_filter_operator (position order)."""
     return tuple(r["operator_id"] for r in conn.execute(
-        "SELECT operator_id FROM dimension_filter_operator ORDER BY position"
-    ).fetchall())
+        "SELECT operator_id FROM dimension_filter_operator ORDER BY position").fetchall())
 
 
 def format_dimension_number(n):
@@ -209,8 +211,8 @@ def compute_all_formula_dimensions(conn, formula_ids=None):
             for fid in formula_ids}
 
 
-def build_dimension_symbol_triplet(conn):
-    """(variable_map, unit_map, dim_map) for the dimension display."""
+@process_cached("dimension_triplet")
+def _dimension_triplet_uncached(conn):
     qty_map = dimension_quantity_ids(conn)
     by_id = {}
     if qty_map:
@@ -235,6 +237,12 @@ def build_dimension_symbol_triplet(conn):
         if sym:
             unit_map[symbol] = sym
     return variable_map, unit_map, dim_map
+
+
+def build_dimension_symbol_triplet(conn):
+    """Cached (variable_map, unit_map, dim_map) for the dimension display."""
+    var_map, unit_map, dim_map = _dimension_triplet_uncached(conn)
+    return dict(var_map), dict(unit_map), dict(dim_map)
 
 
 def _latex_quantity(node, locale):
@@ -351,6 +359,34 @@ def render_formula_latex(conn, formula_id, locale="en-us"):
         return ""
     tree = reduce_rpn_to_tree(conn, tokens)
     return _latex_node(tree, locale) if tree is not None else ""
+
+
+def render_formulas_latex_batched(conn, formula_ids, locale="en-us"):
+    """{formula_id: latex} for many formulas with 3 queries total (no N+1)."""
+    fids = list(dict.fromkeys(formula_ids))
+    if not fids:
+        return {}
+    marks, params = in_clause(fids)
+    tokens_by_formula: dict = {fid: [] for fid in fids}
+    for r in conn.execute(
+            f"SELECT * FROM formula_token WHERE formula_id IN ({marks})"
+            " ORDER BY formula_id, position", params).fetchall():
+        tokens_by_formula.setdefault(r["formula_id"], []).append(dict(r))
+    operators = load_operators(conn)
+    all_tokens = [t for toks in tokens_by_formula.values() for t in toks]
+    qty_map = bulk_entity_rows(conn, "quantity", "id, name, symbol",
+        {t["quantity_id"] for t in all_tokens if t.get("token_kind") == "quantity" and t.get("quantity_id")})
+    const_map = bulk_entity_rows(conn, "constant", "id, symbol",
+        {t["constant_id"] for t in all_tokens if t.get("token_kind") == "constant" and t.get("constant_id")})
+    latex_by_id = {}
+    for fid in fids:
+        try:
+            tree = reduce_rpn_to_tree_preloaded(tokens_by_formula.get(fid, []), operators, qty_map, const_map)
+            latex_by_id[fid] = _latex_node(tree, locale) if tree is not None else ""
+        except Exception as exc:
+            logger.warning("formula %s: %s", fid, exc)
+            latex_by_id[fid] = ""
+    return latex_by_id
 
 
 def _empty_preview(error=""):

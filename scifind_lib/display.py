@@ -9,6 +9,7 @@ from markupsafe import Markup
 
 from scifind_lib.constants import SUPERSCRIPT_DIGITS, is_slug
 from scifind_lib.conversion import UnitGraph, precompute_latex_map
+from scifind_lib.db import cached_process, db_cache_key
 from scifind_lib.i18n import localise, with_subscript, wrap_symbol_in_latex
 from scifind_lib.fetch import (
     fetch_compound_units,
@@ -279,7 +280,15 @@ def _compound_entries(conn, quantity_id, base, locale, tr, skip_ids):
 
 
 def quantity_units_table(conn, quantity_id, system, ref_unit_id=None, *, tr):
-    """Unit-table rows shared by /quantity/<id> and /unit/<id>."""
+    """Unit-table payload for quantity/unit pages."""
+    locale = g.locale
+    if db_cache_key() is None:
+        return _quantity_units_table_uncached(conn, quantity_id, system, ref_unit_id, tr=tr)
+    return dict(cached_process(("units_table", quantity_id, system, locale, ref_unit_id),
+        lambda: _quantity_units_table_uncached(conn, quantity_id, system, ref_unit_id, tr=tr)))
+
+
+def _quantity_units_table_uncached(conn, quantity_id, system, ref_unit_id=None, *, tr):
     locale = g.locale
     base = select_base_unit_with_fallback(conn, quantity_id, system)
 

@@ -13,8 +13,10 @@ import secrets
 import sqlite3
 import sys
 import time
-from pathlib import Path
 
+from collections import deque
+from pathlib import Path
+from urllib.parse import urlencode
 from flask import Flask, render_template, request, g, Response, redirect, session, url_for
 from markupsafe import Markup
 
@@ -26,12 +28,15 @@ if str(_PROJECT_DIR) not in sys.path:
 from scifind_lib.db import (
     database_has_formula_table,
     database_path,
+    db_cache_key,
     initialize_database,
     open_database,
+    process_cached,
 )
 from scifind_lib.formula import (
     build_dimension_symbol_triplet,
     format_dimensions_latex,
+    render_formulas_latex_batched,
 )
 from scifind_lib.i18n import load_locale_config, localise, locale_sibilants, wrap_symbol_in_latex
 from scifind_lib.fetch import (
@@ -42,13 +47,17 @@ from scifind_lib.fetch import (
     MAX_DIFFICULTY,
     MIN_DIFFICULTY,
     QUANTITY_SORT_KEYS,
+    QuantityFilter,
     SEARCH_SORT_KEYS,
+    ensure_entity_fts,
     fetch_all_quantities,
+    fetch_formulas_filtered,
     fetch_quantities_by_ids,
+    fetch_quantities_filtered,
     parse_filter_state,
 )
 from scifind_lib.tree import (
-    all_tree_ids,
+    build_tree_indices,
     compress_selection,
     expand_selection,
     load_tree,
@@ -60,7 +69,7 @@ from scifind_lib.tree import (
 from scifind_lib.constants import SUPERSCRIPT_DIGITS, is_slug
 from scifind_lib.formula import dimension_symbols, dimension_quantity_ids
 
-from scifind_lib.conversion import UnitGraph, convert_value
+from scifind_lib.conversion import UnitGraph, convert_value, validate_graph
 from scifind_lib.formula import (
     compute_all_formula_dimensions,
     compute_compound_unit_dimensions,
@@ -113,6 +122,7 @@ from scifind_lib.units import (
     compound_unit_by_slug,
     parse_compound_unit,
     select_base_unit_with_fallback,
+    select_base_units_batched,
     unit_by_id,
 )
 from scifind_lib.operators import operand_info, render_template as render_op_template
@@ -229,16 +239,21 @@ def _topic_tree_data(tree, name_map, compressed, exclude_all=False, ids_provided
     return [conv(r) for r in tree] if tree else []
 
 
-def _attach_breadcrumbs(row, locale):
-    tree = load_tree(get_db())
-    name_map = topic_name_map(tree, locale)
-    topic = row.get("topic_id")
-    topic_path_ids = topic_path(tree, topic)
-    if topic_path_ids:
-        row["breadcrumbs"] = [{"id": n, "name": name_map.get(n, n)} for n in topic_path_ids]
-    else:
-        row["breadcrumbs"] = []
+def _attach_breadcrumbs(row, locale, _tree=None, _name_map=None, _parent_map=None):
+    tree = _tree if _tree is not None else load_tree(get_db())
+    name_map = _name_map if _name_map is not None else topic_name_map(tree, locale)
+    ids = topic_path(tree, row.get("topic_id"), _parent_map=_parent_map)
+    row["breadcrumbs"] = [{"id": n, "name": name_map.get(n, n)} for n in ids] if ids else []
     return row
+
+
+def _attach_breadcrumbs_batched(rows, locale, tree, name_map=None, parent_map=None):
+    """Attach breadcrumbs to many rows with one tree + name-map load (no N+1)."""
+    name_map = name_map if name_map is not None else topic_name_map(tree, locale)
+    parent_map = parent_map if parent_map is not None else build_tree_indices(tree)["parent"]
+    for row in rows:
+        _attach_breadcrumbs(row, locale, _tree=tree, _name_map=name_map, _parent_map=parent_map)
+    return rows
 
 
 def _passes_topic_difficulty(item, topic_filter, fs):
@@ -254,10 +269,16 @@ def _list_base(request_args, allowed_sorts, default_sort):
     conn = get_db()
     fs = parse_filter_state(request_args, conn)
     tree = load_tree(conn)
-    compressed = compress_selection(tree, fs.ids)
+    # Single index build shared by compress + expand + breadcrumbs.
+    indices = build_tree_indices(tree)
+    compressed = compress_selection(tree, fs.ids, _indices=indices)
+    valid = set(indices["id_to_node"])
     raw_sort = request_args.get("sort")
     sort_key = raw_sort if raw_sort in allowed_sorts else default_sort
-    topic_filter = expand_selection(tree, [i for i in fs.ids if i in all_tree_ids(tree)])
+    topic_filter = expand_selection(
+        tree, [i for i in fs.ids if i in valid], _indices=indices)
+    g._list_base_cache = {"tree": tree, "fs": fs, "compressed": compressed,
+                          "indices": indices}
     return conn, fs, tree, compressed, sort_key, topic_filter
 
 
@@ -308,10 +329,14 @@ def _render_list_heading(view_label, tree, compressed, fs, conn, locale):
     )
 
 
-def _op_symbols(conn):
-    """{operator_id: symbol} for dimension filter ops, from the operator table."""
+@process_cached("op_symbols")
+def _op_symbols_uncached(conn):
     return {r["id"]: (r["symbol"] or r["id"])
             for r in conn.execute("SELECT id, symbol FROM operator").fetchall()}
+
+
+def _op_symbols(conn):
+    return dict(_op_symbols_uncached(conn))
 
 
 def _heading_from_compressed(view_label, compressed, tree, locale, fs, conn,
@@ -446,10 +471,12 @@ def _inject_csrf_token():
     return {"csrf_token": _ensure_csrf_token}
 
 
-_RATE_LIMIT_BUCKETS = {}
+_RATE_LIMIT_BUCKETS: dict = {}
+_RATE_LIMIT_MAX_BUCKETS = 10000
 
 
 def _rate_limit(bucket, max_per_minute):
+    """Sliding-window limiter."""
     try:
         max_n = int(max_per_minute)
     except (TypeError, ValueError):
@@ -460,10 +487,13 @@ def _rate_limit(bucket, max_per_minute):
     cutoff = now - 60.0
     window = _RATE_LIMIT_BUCKETS.get(bucket)
     if window is None:
-        window = []
+        window = deque()
         _RATE_LIMIT_BUCKETS[bucket] = window
+        # Bound memory: evict oldest-inserted buckets past the cap.
+        while len(_RATE_LIMIT_BUCKETS) > _RATE_LIMIT_MAX_BUCKETS:
+            _RATE_LIMIT_BUCKETS.pop(next(iter(_RATE_LIMIT_BUCKETS)))
     while window and window[0] < cutoff:
-        window.pop(0)
+        window.popleft()
     if len(window) >= max_n:
         return (f"Rate limit exceeded for {bucket}", 429)
     window.append(now)
@@ -572,6 +602,15 @@ def static_v(filename):
     return f"{url}?v={v}" if v else url
 
 
+@app.template_global()
+def page_url(page):
+    """Current path with all query args preserved and ``page`` overridden (no-JS fallback)."""
+    args = request.args.to_dict()
+    args["page"] = page
+    qs = urlencode(args)
+    return f"{request.path}?{qs}" if qs else request.path
+
+
 @app.before_request
 def detect_locale():
     locales = _available_locales()
@@ -604,17 +643,44 @@ _NOT_INITIALISED = (
 )
 
 
+_GRAPH_VALIDATED_KEY = None
+
+
+def _validate_graph_once():
+    """Validate the unit graph once per DB file version."""
+    global _GRAPH_VALIDATED_KEY
+    if (key := db_cache_key()) == _GRAPH_VALIDATED_KEY and key is not None:
+        return
+    conn = open_database()
+    try:
+        validate_graph(conn)
+    finally:
+        conn.close()
+    _GRAPH_VALIDATED_KEY = key
+
+
 def _bootstrap_database():
     conn = open_database()
     try:
         if not database_has_formula_table(conn):
             initialize_database()
             logger.info("Database initialised at %s", database_path())
+        try:
+            ensure_entity_fts(conn)
+        except Exception as exc:
+            logger.warning("FTS ensure failed: %s", exc)
     finally:
         conn.close()
+    # Fail fast so a broken seed never serves traffic.
+    try:
+        _validate_graph_once()
+    except Exception as exc:
+        raise RuntimeError(f"Unit reference graph broken: {exc}. Fix seed.sql before serving traffic.") from exc
 
 
 _bootstrap_database()
+
+
 
 
 def get_db():
@@ -654,60 +720,78 @@ def _get_dimension_caches():
     return g.dim_caches
 
 
+_SKIP_GLOBALS_PREFIXES = ("/api/", "/export", "/create/token-sidebar", "/create/breadcrumb")
+
+
 @app.context_processor
 def inject_globals():
+    return _inject_globals_inner()
+
+
+def _inject_globals_inner():
     locale = g.get("locale", "en-us")
+    path = request.path or ""
+    # Skip heavy globals for API/export/partial endpoints (no base.html render).
+    if path.startswith(_SKIP_GLOBALS_PREFIXES):
+        sort_context = _sort_context_for(path, request.args.get("sort"))
+        return dict(
+            tree_json=[], diff_min=1, diff_max=10,
+            current_view="formulas", dim_filter={}, dim_mode="dim",
+            qty_mode="and",
+            dim_symbols={}, dim_qty_names={}, dimension_symbol_list=[],
+            available_locales=[], locale_ui={},
+            sort=sort_context["sort"], available_sorts=sort_context["available_sorts"],
+            default_sort=sort_context["default_sort"],
+        )
     try:
         conn = get_db()
     except sqlite3.OperationalError as exc:
         logger.warning("Database unavailable: %s", exc)
         conn = None
-    tree = load_tree(conn) if conn is not None else []
-    if conn is not None:
-        from scifind_lib.conversion import UnitGraphError, validate_graph
-        try:
-            validate_graph(conn)
-        except UnitGraphError as exc:
-            logger.error("Unit graph integrity violated: %s", exc)
-            raise RuntimeError(f"Unit reference graph broken: {exc}. Fix seed.sql before serving traffic.") from exc
-    fs = parse_filter_state(request.args, conn)
+    # Reuse the list-page setup when the view already computed it (avoids 2x
+    # load_tree + parse_filter_state + compress_selection per list page).
+    cached_base = g.get("_list_base_cache", None)
+    if cached_base is not None and conn is not None:
+        tree, fs, compressed = cached_base["tree"], cached_base["fs"], cached_base["compressed"]
+    else:
+        tree = load_tree(conn) if conn is not None else []
+        if conn is not None:
+            fs = parse_filter_state(request.args, conn)
+            indices = (cached_base or {}).get("indices") or build_tree_indices(tree)
+            compressed = compress_selection(tree, fs.ids, _indices=indices)
+        else:
+            fs = QuantityFilter()
+            compressed = set()
     name_map = topic_name_map(tree, locale)
-    compressed = compress_selection(tree, fs.ids)
 
-    quantities_for_filter, dim_qty_names = [], {}
+    # Filter quantity chips are loaded lazily via /api/quantities-filter.
+    dim_qty_names = {}
     caches = {"var": {}, "unit": {}, "dim": {}}
     if conn is not None:
-        try:
-            quantities_for_filter = [
-                {"id": q["id"], "name": localise(q["name"], locale), "symbol": q["symbol"] or ""}
-                for q in fetch_all_quantities(conn)
-            ]
-        except sqlite3.OperationalError as exc:
-            logger.warning("Quantity table unavailable: %s", exc)
         caches = _get_dimension_caches()
         try:
             qty_ids = dimension_quantity_ids(conn)
-            placeholders = ",".join("?" * len(qty_ids))
-            qid_to_name = {q["id"]: localise(q["name"], locale) for q in conn.execute(
-                f"SELECT id, name FROM quantity WHERE id IN ({placeholders})",
-                tuple(qty_ids.values())).fetchall()}
-            dim_qty_names = {sym: qid_to_name.get(qid, "") for sym, qid in qty_ids.items()}
+            if qty_ids:
+                placeholders = ",".join("?" * len(qty_ids))
+                qid_to_name = {q["id"]: localise(q["name"], locale) for q in conn.execute(
+                    f"SELECT id, name FROM quantity WHERE id IN ({placeholders})",
+                    tuple(qty_ids.values())).fetchall()}
+                dim_qty_names = {sym: qid_to_name.get(qid, "") for sym, qid in qty_ids.items()}
         except sqlite3.OperationalError as exc:
             logger.warning("Base dimension names unavailable: %s", exc)
 
     dim_mode = g.get("dim_mode", "dim")
-    sort_context = _sort_context_for(request.path, request.args.get("sort"))
+    sort_context = _sort_context_for(path, request.args.get("sort"))
 
     return dict(
         tree_json=_topic_tree_data(tree, name_map, compressed, fs.exclude_all, ids_provided=fs.ids_provided),
         diff_min=fs.diff_min,
         diff_max=fs.diff_max,
-        current_view="quantities" if request.path == "/quantities"
-            or request.path.startswith(("/quantity/", "/unit/")) else "formulas",
+        current_view="quantities" if path == "/quantities"
+            or path.startswith(("/quantity/", "/unit/")) else "formulas",
         dim_filter=fs.dimension_filter,
         dim_mode=fs.dim_mode,
         qty_mode=fs.quantity_mode,
-        all_quantities_for_filter=quantities_for_filter,
         dim_symbols=caches.get(dim_mode, caches.get("dim", {})),
         dim_qty_names=dim_qty_names,
         dimension_symbol_list=dimension_symbols(conn) if conn else [],
@@ -1005,12 +1089,14 @@ def _dim_latex(conn, dimensions):
 
 
 def _with_latex(conn, rows, locale, id_key="id"):
-    """Attach rendered formula latex to each row dict (in place)."""
-    out = []
-    for r in rows:
-        r = dict(r)
-        r["latex"] = render_formula_latex(conn, r[id_key], locale=locale) or ""
-        out.append(r)
+    """Attach rendered formula latex to each row dict (batched, 3 queries)."""
+    out = [dict(r) for r in rows]
+    if not out:
+        return out
+    latex_map = render_formulas_latex_batched(
+        conn, [r.get(id_key) for r in out if r.get(id_key)], locale=locale)
+    for r in out:
+        r["latex"] = latex_map.get(r.get(id_key), "") or ""
     return out
 
 
@@ -1174,6 +1260,9 @@ def _enrich_search_hits(conn, hits, locale, meta_by_kind=None):
     detail_keys = {"formula": "detail.formula", "quantity": "detail.quantity",
                    "unit": "detail.unit", "constant": "detail.constant"}
 
+    formula_ids = [ent_id for kind, ent_id, _ in hits if kind == "formula"]
+    latex_map = render_formulas_latex_batched(conn, formula_ids, locale=locale) \
+        if formula_ids else {}
     enriched = []
     for kind, ent_id, display_name in hits:
         if kind not in meta:
@@ -1182,7 +1271,7 @@ def _enrich_search_hits(conn, hits, locale, meta_by_kind=None):
         item = {"kind": kind, "id": ent_id, "href": f"/{kind}/{ent_id}",
                 "relation": _(detail_keys[kind])}
         if kind == "formula":
-            item["latex"] = render_formula_latex(conn, ent_id, locale)
+            item["latex"] = latex_map.get(ent_id, "")
             item["name"] = display_name or item_meta.get("name_en") or ent_id
         else:
             item["symbol"] = item_meta.get("symbol") or ""
@@ -1194,16 +1283,78 @@ def _enrich_search_hits(conn, hits, locale, meta_by_kind=None):
     return enriched
 
 
+def _json_cached(payload, max_age):
+    resp = app.response_class(response=json.dumps(payload), mimetype="application/json")
+    resp.headers["Cache-Control"] = f"public, max-age={max_age}"
+    return resp
+
+
 @app.route("/api/search-suggestions")
 def search_suggestions():
     query = request.args.get("q", "").strip()[:SUGGEST_QUERY_MAX_LENGTH]
     locale = getattr(g, "locale", DEFAULT_LOCALE)
     suggestions = search_entities(get_db(), query, limit=8, locale=locale)
-    return {"suggestions": [
-        {"id": s[1], "kind": s[0], "heading": s[2] or s[1]} for s in suggestions
-    ]}
+    return _json_cached({"suggestions": [
+        {"id": s[1], "kind": s[0], "heading": s[2] or s[1]} for s in suggestions]}, 60)
 
 
+@app.route("/api/quantities-filter")
+def quantities_filter_data():
+    """Lazy filter data for the quantity chips."""
+    locale = getattr(g, "locale", DEFAULT_LOCALE)
+    try:
+        rows = fetch_all_quantities(get_db())
+    except sqlite3.OperationalError:
+        rows = []
+    return _json_cached({"quantities": [
+        {"id": q["id"], "name": localise(q["name"], locale), "symbol": q["symbol"] or ""} for q in rows]}, 3600)
+
+
+
+DEFAULT_PER_PAGE = 100
+MAX_PER_PAGE = 500
+
+
+def _pagination_params(args):
+    if (args.get("all") or "") in ("1", "true", "yes") or (args.get("per_page") or "").strip().lower() in ("all", "0"):
+        return 1, None, True
+    try:
+        per_page = max(1, min(int(args.get("per_page") or DEFAULT_PER_PAGE), MAX_PER_PAGE))
+    except (TypeError, ValueError):
+        per_page = DEFAULT_PER_PAGE
+    try:
+        page = max(int(args.get("page") or 1), 1)
+    except (TypeError, ValueError):
+        page = 1
+    return page, per_page, False
+
+
+def _paginate_list(items, page, per_page, show_all):
+    total = len(items)
+    if show_all or per_page is None:
+        return items, {"page": 1, "per_page": total or 1, "total": total, "total_pages": 1, "show_all": True}
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    page = max(1, min(page, total_pages))
+    start = (page - 1) * per_page
+    return items[start:start + per_page], {"page": page, "per_page": per_page,
+                                           "total": total, "total_pages": total_pages, "show_all": False}
+
+
+def _prefiltered(conn, fetch_fn, fetch_all_fn, fs, topic_filter, extra_blocked=False):
+    """SQL topic/difficulty pre-filter when no Python post-filter needs full rows."""
+    if not extra_blocked and not fs.has_dimension_filter and not fs.quantity_ids \
+            and (topic_filter or fs.diff_min > MIN_DIFFICULTY or fs.diff_max < MAX_DIFFICULTY):
+        return [dict(r) for r in fetch_fn(conn, topic_ids=topic_filter or None,
+                                          diff_min=fs.diff_min, diff_max=fs.diff_max)]
+    return [dict(r) for r in fetch_all_fn(conn)]
+
+
+def _page_batch(rows, locale, tree):
+    page, per_page, show_all = _pagination_params(request.args)
+    page_items, pagination = _paginate_list(rows, page, per_page, show_all)
+    _attach_breadcrumbs_batched(page_items, locale, tree,
+        parent_map=g.get("_list_base_cache", {}).get("indices", {}).get("parent"))
+    return page_items, pagination
 
 
 @app.route("/quantities")
@@ -1221,35 +1372,28 @@ def all_quantities():
 
     dim_qty_ids = set(dimension_quantity_ids(conn).values()) if fs.base_quantity_only else None
     system = g.unit_system
-    filtered = []
-    for row in fetch_all_quantities(conn):
-        quantity = dict(row)
-        _attach_breadcrumbs(quantity, locale)
-
-        if not _passes_topic_difficulty(quantity, topic_filter, fs):
-            continue
-        if fs.has_dimension_filter and not dimension_matches(quantity, fs.dimension_filter, fs.dim_mode, conn):
-            continue
-        if fs.quantity_ids and quantity["id"] not in fs.quantity_ids:
-            continue
-        if dim_qty_ids is not None and quantity["id"] not in dim_qty_ids:
-            continue
-
-        cu = select_base_unit_with_fallback(conn, quantity["id"], system)
-        quantity["default_unit_html"], quantity["default_unit_symbol_latex"] = render_compound_unit(cu, locale)
-        filtered.append(quantity)
-
-    filtered = sort_quantities(conn, filtered, sort_key, locale)
+    all_rows = _prefiltered(conn, fetch_quantities_filtered, fetch_all_quantities,
+                            fs, topic_filter, extra_blocked=dim_qty_ids is not None)
+    pre = [q for q in all_rows if _passes_topic_difficulty(q, topic_filter, fs)
+           and (not fs.has_dimension_filter or dimension_matches(q, fs.dimension_filter, fs.dim_mode, conn))
+           and (not fs.quantity_ids or q["id"] in fs.quantity_ids)
+           and (dim_qty_ids is None or q["id"] in dim_qty_ids)]
+    page_items, pagination = _page_batch(sort_quantities(conn, pre, sort_key, locale), locale, tree)
+    base_map = select_base_units_batched(conn, [q["id"] for q in page_items], system)
+    for quantity in page_items:
+        quantity["default_unit_html"], quantity["default_unit_symbol_latex"] = render_compound_unit(
+            base_map.get(quantity["id"]), locale)
 
     heading = _("detail.base_quantities") if fs.base_quantity_only else _render_list_heading(
         _("detail.quantities"), tree, compressed, fs, conn, locale,
     )
     return render_template(
         "quantities.html",
-        quantities=filtered,
+        quantities=page_items,
         heading=heading,
         sort=sort_key,
         available_sorts=QUANTITY_SORT_KEYS,
+        pagination=pagination,
     )
 
 
@@ -1265,37 +1409,34 @@ def all_formulas():
         return _empty_list_response("formulas.html", "formulas",
                                     "detail.formulas_no_results", sort_key, FORMULA_SORT_KEYS)
 
-    formulas = [dict(formula) for formula in fetch_all_formulas(conn)]
-    formulas = [formula for formula in formulas if _passes_topic_difficulty(formula, topic_filter, fs)]
+    formulas = _prefiltered(conn, fetch_formulas_filtered, fetch_all_formulas, fs, topic_filter)
+    formulas = [f for f in formulas if _passes_topic_difficulty(f, topic_filter, fs)]
 
     if fs.has_dimension_filter:
-        formula_ids = {formula["id"] for formula in formulas}
-        dim_map = compute_all_formula_dimensions(conn, formula_ids)
-        formulas = [
-            formula for formula in formulas
-            if dimension_matches(dim_map.get(formula["id"], {}), fs.dimension_filter, fs.dim_mode, conn)
-        ]
+        dim_map = compute_all_formula_dimensions(conn, {f["id"] for f in formulas})
+        formulas = [f for f in formulas
+                    if dimension_matches(dim_map.get(f["id"], {}), fs.dimension_filter, fs.dim_mode, conn)]
 
     if fs.quantity_ids:
         matching_ids = fetch_formulas_with_quantities(conn, fs.quantity_ids, fs.quantity_mode)
         if matching_ids is not None:
-            formulas = [formula for formula in formulas if formula["id"] in matching_ids]
+            formulas = [f for f in formulas if f["id"] in matching_ids]
 
-    formulas = sort_formulas(conn, formulas, sort_key, locale)
-
-    for formula in formulas:
-        _attach_breadcrumbs(formula, locale)
-        formula["latex"] = render_formula_latex(conn, formula["id"], locale=locale)
+    page_items, pagination = _page_batch(sort_formulas(conn, formulas, sort_key, locale), locale, tree)
+    latex_map = render_formulas_latex_batched(conn, [f["id"] for f in page_items], locale=locale)
+    for formula in page_items:
+        formula["latex"] = latex_map.get(formula["id"], "") or ""
 
     heading = _render_list_heading(
         _("nav.formulas"), tree, compressed, fs, conn, locale,
     )
     return render_template(
         "formulas.html",
-        formulas=formulas,
+        formulas=page_items,
         heading=heading,
         sort=sort_key,
         available_sorts=FORMULA_SORT_KEYS,
+        pagination=pagination,
     )
 
 
