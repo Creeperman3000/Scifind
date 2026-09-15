@@ -2,13 +2,7 @@
 {% block title %}{{ _(formula.name) }}{% endblock %}
 {% block content %}
 
-<h2>{{ _(formula.name) }}</h2>
-
-<div class="detail-desc">{{ _('detail.formula') }}</div>
-
-{{ breadcrumbs(formula.breadcrumbs, base='/formulas') }}
-
-{{ detail_meta(dim_latex, formula.difficulty) }}
+{{ detail_header(None, _(formula.name), _('detail.formula'), formula.breadcrumbs, base='/formulas', dim_latex=dim_latex, difficulty=formula.difficulty) }}
 
 <div class="formula-box">
   <div id="formula-math">$${{ latex }}$$</div>

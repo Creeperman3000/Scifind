@@ -2,24 +2,14 @@
 'use strict';
 
 (function() {
-  function $(id) { return document.getElementById(id); }
-  function qsa(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
+  function $(id) { return window.SFUtils.byId(id); }
+  function qsa(sel, root) { return window.SFUtils.bySel(sel, root); }
   function vis(sel, root) { return qsa(sel, root).filter(function(el) { return el.offsetParent !== null; }); }
   function reveal(el) { if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' }); return el; }
 
-  function t(path, fallback) {
-    var cur = window._localeUI || {};
-    var parts = String(path).split('.');
-    for (var i = 0; i < parts.length; i++) {
-      if (cur && typeof cur === 'object' && parts[i] in cur) cur = cur[parts[i]];
-      else return fallback;
-    }
-    return cur || fallback;
-  }
+  function t(path, fallback) { return window.SFUtils.t(path, fallback); }
 
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>]/g, function(c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; });
-  }
+  function escapeHtml(s) { return window.SFUtils.escapeHtml(s); }
 
   var SEQ_MS = 5000;
   var pending = null;
@@ -87,13 +77,7 @@
     return true;
   }
 
-  function sidebarClosed(side) {
-    var el = $('sidebar-' + side);
-    if (!el) return true;
-    if (el.getAttribute('data-open') === '0') return true;
-    if (window.innerWidth >= 1024) return el.classList.contains('collapsed');
-    return !el.classList.contains('open');
-  }
+  function sidebarClosed(side) { return !window.SFUtils.sidebarOpenAttr(side); }
 
   function ensureSidebar(side, fn) {
     if (!sidebarClosed(side)) { fn(); return; }
@@ -111,11 +95,7 @@
 
   function gotoView(view) {
     hidePending();
-    var url = new URL(window.location);
-    url.searchParams.delete('q'); /* q only belongs to /search */
-    var qs = url.searchParams.toString();
-    var target = (view === 'quantities' ? '/quantities' : '/formulas') +
-      (qs ? '?' + qs : '');
+    var target = window.SFUtils.viewUrl(view, true);
     if (typeof window._navigateTo === 'function') window._navigateTo(target);
     else window.location.href = target;
   }
@@ -773,8 +753,10 @@
     if (COPY_FORMATS[k]) {
       if ($('formula-tex') && typeof copyFormula === 'function') copyFormula(COPY_FORMATS[k][0]);
     } else if (k === 's') {
-      if ($('formula-sql-modal') && typeof openFormulaSqlModal === 'function') {
-        openFormulaSqlModal();
+      if ($('formula-sql-modal')) {
+        var _m = $('formula-copy-menu');
+        if (_m) _m.classList.remove('open');
+        window.SFUtils.setModal('formula-sql-modal', true);
       }
     } else if (CLEAR_IDS[k]) {
       clearFilters(CLEAR_IDS[k]);
@@ -798,7 +780,7 @@
     if ($('formula-tex') && typeof copyFormula === 'function') {
       Object.keys(COPY_FORMATS).forEach(function(k) { opts.push([k, COPY_FORMATS[k][1]]); });
     }
-    if ($('formula-sql-modal') && typeof openFormulaSqlModal === 'function') {
+    if ($('formula-sql-modal')) {
       opts.push(['s', 'SQL']);
     }
     if (isListView()) {
@@ -1073,15 +1055,10 @@
 
   /* ---- Escape chain ---- */
   function exitSearchLike() {
-    var si = document.querySelector('.topbar-search input[name="q"]');
     var url = new URL(window.location);
     var hadQ = url.searchParams.has('q');
-    url.searchParams.delete('q');
-    var clean = url.pathname + (url.searchParams.toString() ? '?' + url.searchParams.toString() : '');
-    if (si) { si.value = ''; si.blur(); }
-    if (typeof window.syncSearchCancel === 'function') window.syncSearchCancel();
-    var topbar = document.querySelector('.topbar');
-    if (topbar) topbar.classList.remove('expand-search');
+    var clean = window.SFUtils.stripQFromUrl(url);
+    window.SFUtils.clearSearchInput(true);
     if (hadQ) {
       if (url.pathname === '/search' && typeof window._navigateTo === 'function') {
         window._navigateTo(clean);

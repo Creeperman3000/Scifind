@@ -1,19 +1,41 @@
-"""Equation tokeniser + shunting-yard-to-RPN + RPN-to-tree.
-
-All operator behavior comes from the ``operator`` table via
-:mod:`scifind_lib.operators`; this module has no operator-specific branches.
-"""
+"""Equation tokeniser + shunting-yard-to-RPN + RPN-to-tree (no operator-specific branches)."""
 
 from dataclasses import dataclass, field
 from typing import Optional
 
-from scifind_lib.db import in_clause
+from scifind_lib.db import keyed_rows
 from scifind_lib.operators import alias_to_id_map, load_operators
 
 
 def quantity_token_key(quantity_id, label, pos):
     """Stable key linking a quantity token to its per-occurrence overrides."""
     return f"{quantity_id}|{label or ''}|{pos}"
+
+
+def check_equation_length(equation, max_length):
+    """Return (equation, error) enforcing a max length (shared web/CLI rule)."""
+    if len(equation or "") > max_length:
+        return None, f"equation exceeds {max_length} characters"
+    return equation, None
+
+
+def parse_bracket_keys(pairs, prefix, nparts, fields=None):
+    """Parse ``prefix[a][b]...`` keys; blanks omitted, last non-blank wins."""
+    parsed, pre = {}, prefix + "["
+    for key, values in pairs:
+        if not key.startswith(pre) or not key.endswith("]"):
+            continue
+        parts = key[len(pre):-1].split("][")
+        if len(parts) != nparts or (fields and parts[-1] not in fields):
+            continue
+        value = next((v for v in reversed(values) if v and v.strip()), "")
+        if not value:
+            continue
+        node = parsed
+        for part in parts[:-1]:
+            node = node.setdefault(part, {})
+        node[parts[-1]] = value.strip()
+    return parsed
 
 
 def _scan_number(equation, pos, length):
@@ -241,11 +263,9 @@ class FormulaNode:
 
 def bulk_entity_rows(conn, table, columns, ids):
     """{id: row} for `ids` in a single query (empty input → {})."""
-    if not (ids := set(ids)):
+    if not (id_set := set(ids)):
         return {}
-    marks, params = in_clause(ids)
-    rows = conn.execute(f"SELECT {columns} FROM {table} WHERE id IN ({marks})", params)
-    return {r["id"]: dict(r) for r in rows}
+    return keyed_rows(conn, f"SELECT {columns} FROM {table} WHERE id IN ({{}})", id_set)
 
 
 def _leaf_node(kind, tok, row, wrap):

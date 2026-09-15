@@ -4,6 +4,7 @@ import json
 import logging
 
 from scifind_lib.constants import LOCALE_DIR
+from scifind_lib.util import safe_json_dict
 
 logger = logging.getLogger("scifind.i18n")
 
@@ -29,37 +30,21 @@ def localise(value, locale, default="en-us"):
     if not value:
         return ""
     if isinstance(value, dict):
-        d = value
+        translations = value
     else:
-        s = value.strip()
-        if not s.startswith("{"):
-            return s
-        try:
-            d = json.loads(s)
-        except (json.JSONDecodeError, TypeError) as exc:
-            logger.warning("localise: bad JSON for locale %r: %s", locale, exc)
+        stripped = value.strip()
+        if not stripped.startswith("{"):
+            return stripped
+        translations = safe_json_dict(stripped, default="")
+        if not translations:
+            logger.warning("localise: bad JSON for locale %r", locale)
             return ""
-        if not isinstance(d, dict):
-            logger.warning("localise: non-object JSON for locale %r", locale)
-            return ""
-    return d.get(locale) or d.get(default) or ""
-
-
-def localise_english(value):
-    return localise(value, "en-us")
+    return translations.get(locale) or translations.get(default) or ""
 
 
 def locale_unit_words(locale):
     config = load_locale_config(locale)
     return config.get("unitWords", load_locale_config("en-us").get("unitWords", {}))
-
-
-def locale_quantities_special(locale):
-    return load_locale_config(locale).get("quantitiesSpecial", [])
-
-
-def locale_accusative_names(locale):
-    return load_locale_config(locale).get("accusativeNames", {})
 
 
 def locale_sibilants(locale):
@@ -94,10 +79,10 @@ def wrap_symbol_in_latex(symbol):
     if not symbol:
         return ""
     trailing = symbol[-1] if symbol[-1].isspace() else ""
-    s = symbol.strip()
-    if not s or (s.startswith("\\mathrm{") and s.endswith("}")):
-        return s + trailing
-    return f"\\mathrm{{{s}}}" + trailing
+    stripped = symbol.strip()
+    if not stripped or (stripped.startswith("\\mathrm{") and stripped.endswith("}")):
+        return stripped + trailing
+    return f"\\mathrm{{{stripped}}}" + trailing
 
 
 def with_subscript(sym, label):

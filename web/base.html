@@ -1,7 +1,13 @@
-{% macro formula_card(href, latex, name, relation=None) -%}
+{% macro card(href, latex=None, symbol=None, name=None, relation=None) -%}
 <div class="formula-card">
   <a href="{{ href }}">
+    {% if latex is not none %}
     <div class="formula-eqn latex-observe" data-latex="{{ latex }}"></div>
+    {% else %}
+    <div class="formula-eqn">
+      {% if symbol %}<span class="latex-observe" data-latex="{{ symbol }}"></span>{% else %}{{ name }}{% endif %}
+    </div>
+    {% endif %}
     <div class="formula-name">{{ name }}</div>
     {%- if relation %}
     <div class="formula-relation-label">{{ relation }}</div>
@@ -10,18 +16,12 @@
 </div>
 {%- endmacro %}
 
+{% macro formula_card(href, latex, name, relation=None) -%}
+{{ card(href, latex=latex, name=name, relation=relation) }}
+{%- endmacro %}
+
 {% macro entity_card(href, symbol, name, relation=None) -%}
-<div class="formula-card">
-  <a href="{{ href }}">
-    <div class="formula-eqn">
-      {% if symbol %}<span class="latex-observe" data-latex="{{ symbol }}"></span>{% else %}{{ name }}{% endif %}
-    </div>
-    <div class="formula-name">{{ name }}</div>
-    {%- if relation %}
-    <div class="formula-relation-label">{{ relation }}</div>
-    {%- endif %}
-  </a>
-</div>
+{{ card(href, symbol=symbol, name=name, relation=relation) }}
 {%- endmacro %}
 
 {% macro formula_grid(items, id_attr='id') -%}
@@ -69,6 +69,40 @@
 <div class="detail-meta">
   {% if dim_latex %}<span>{{ _('detail.dimensions') }}: ${{ dim_latex }}$</span>{% endif %}
   {% if difficulty %}<span>{{ _('detail.difficulty') }}: {{ difficulty }}/10</span>{% endif %}
+</div>
+{% endif %}
+{%- endmacro %}
+
+{% macro detail_header(title_symbol_latex, title_name, kind_label, crumbs, tail_href=None, tail_name=None, dim_latex=None, difficulty=None, base='/quantities') -%}
+<h2>{% if title_symbol_latex %}${{ title_symbol_latex }}$ {% endif %}{{ title_name }}</h2>
+<div class="detail-desc">{{ kind_label }}</div>
+{{ breadcrumbs(crumbs, tail_href, tail_name, base=base) }}
+{{ detail_meta(dim_latex, difficulty) }}
+{%- endmacro %}
+
+{% macro value_units_table(units, title) -%}
+{% if units %}
+<div class="detail-section">
+  <h3>{{ title }}</h3>
+  <table class="units-table">
+    <colgroup><col class="units-c1"><col class="units-c2"><col class="units-c3"></colgroup>
+    <thead>
+      <tr>
+        <th>{{ _('detail.value') }}</th>
+        <th>{{ _('detail.unit') }}</th>
+        <th>{{ _('detail.system') }}</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for u in units %}
+      <tr>
+        <td><span class="latex-observe" data-latex="{{ u.value_latex }}"></span></td>
+        <td>${{ u.symbol_latex }}$ {{ u.name_html }}</td>
+        <td>{{ u.system or _('unit.system_any') }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
 </div>
 {% endif %}
 {%- endmacro %}
@@ -320,7 +354,7 @@
       <div class="sidebar-inner" id="sidebar-left-inner">
         <div class="view-tabs">
            <a class="view-tab {{ 'active' if current_view == 'formulas' and request.path != '/create' else '' }}" href="/formulas{{ '?' + request.query_string.decode() if request.query_string.decode() else '' }}"><i data-lucide="sigma" width="14" height="14"></i> {{ _('nav.formulas') }}</a>
-           <a class="view-tab {{ 'active' if current_view == 'quantities' and request.path != '/create' else '' }}" href="/quantities{{ '?' + request.query_string.decode() if request.query_string.decode() else '' }}"><i data-lucide="weight" width="14" height="14"></i> {{ _('detail.quantities') }}</a>
+           <a class="view-tab {{ 'active' if current_view == 'quantities' and request.path != '/create' else '' }}" href="/quantities{{ '?' + request.query_string.decode() if request.query_string.decode() else '' }}"><i data-lucide="weight" width="14" height="14"></i> {{ _('nav.quantities') }}</a>
         </div>
 
         <div id="dim-filter-area">
@@ -439,9 +473,9 @@
         <i data-lucide="sigma" width="24" height="24"></i>
         <span class="dock-pill-label">{{ _('nav.formulas') }}</span>
       </button>
-      <button class="dock-half{{ ' active' if current_view == 'quantities' and request.path != '/create' else '' }}" data-dock-view="quantities" data-action="dock-set-view" type="button" aria-label="{{ _('detail.quantities') }}">
+      <button class="dock-half{{ ' active' if current_view == 'quantities' and request.path != '/create' else '' }}" data-dock-view="quantities" data-action="dock-set-view" type="button" aria-label="{{ _('nav.quantities') }}">
         <i data-lucide="weight" width="24" height="24"></i>
-        <span class="dock-pill-label">{{ _('detail.quantities') }}</span>
+        <span class="dock-pill-label">{{ _('nav.quantities') }}</span>
       </button>
     </div>
     <div class="dock-pill dock-split">
@@ -480,6 +514,8 @@
     window._defaultSort = {{ default_sort|tojson|safe }};
     window._topicTreeData = {{ tree_json|tojson|safe }};
   </script>
+  <script defer src="{{ static_v('utils.js') }}"></script>
+  <script defer src="{{ static_v('api.js') }}"></script>
   <script defer src="{{ static_v('filters.js') }}"></script>
   <script defer src="{{ static_v('detail.js') }}"></script>
   <script defer src="{{ static_v('app.js') }}"></script>

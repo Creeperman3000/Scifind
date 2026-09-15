@@ -1469,18 +1469,18 @@ kbd {
 }
 #science-tree .kb-hint { right: 8px; top: 2px; }
 .shortcut-pending {
-  position: sticky;
-  /* -20px cancels .main's bottom padding so the stuck panel sits flush. */
-  bottom: -20px;
+  /* Overlay pinned to the bottom of the viewport. Out of flow, so content
+     height and scroll position don't matter. */
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
   z-index: 250;
   display: none;
   align-items: center;
   justify-content: center;
   gap: 8px 20px;
   flex-wrap: wrap;
-  align-self: stretch;
-  flex-shrink: 0;
-  margin: 12px -24px 0;
   background: var(--bg);
   border-top: 1px solid var(--border);
   box-shadow: var(--shadow-lg);

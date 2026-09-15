@@ -6,7 +6,7 @@
 <h2>{{ _('search.results_for') }} "{{ query }}"</h2>
 
 {% if results %}
-<div class="formula-grid">
+<div class="formula-grid" data-list-container>
 {% for r in results %}
   {% if r.kind == 'formula' %}
     {{ formula_card(r.href, r.latex, r.name, r.relation) }}
@@ -15,6 +15,7 @@
   {% endif %}
 {% endfor %}
 </div>
+{{ load_more_bar(pagination) }}
 {% else %}
 <p>{{ _('search.no_results') }}</p>
 {% endif %}

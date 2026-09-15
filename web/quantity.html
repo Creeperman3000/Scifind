@@ -2,13 +2,7 @@
 {% block title %}{{ _(q.name) }}{% endblock %}
 {% block content %}
 
-<h2>{% if q.symbol %}${{ q.symbol }}$ {% endif %}{{ _(q.name) }}</h2>
-
-<div class="detail-desc">{{ _('detail.quantity') }}</div>
-
-{{ breadcrumbs(q.breadcrumbs) }}
-
-{{ detail_meta(dim_latex, q.difficulty) }}
+{{ detail_header(wrap_symbol_in_latex(q.symbol) if q.symbol else None, _(q.name), _('detail.quantity'), q.breadcrumbs, dim_latex=dim_latex, difficulty=q.difficulty) }}
 
 {{ description_paras(q.description) }}
 
@@ -16,8 +10,9 @@
 
 {% if constants %}
 <div class="detail-section">
-  <h3>{{ _('nav.constants') }}</h3>
+  <h3>{{ _('detail.constants') }}</h3>
   <table class="units-table">
+    <colgroup><col class="units-c1"><col class="units-c2"><col class="units-c3"></colgroup>
     <thead>
       <tr>
         <th>{{ _('detail.constant') }}</th>

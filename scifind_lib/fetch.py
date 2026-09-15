@@ -1,12 +1,9 @@
 """Unified data-access layer."""
 
-import json
-import re
-import unicodedata
 from dataclasses import dataclass, field
 from itertools import groupby
 
-from scifind_lib.db import in_clause
+from scifind_lib.db import in_clause, keyed_rows
 from scifind_lib.formula import (
     dimension_columns,
     dimension_quantity_ids,
@@ -16,6 +13,7 @@ from scifind_lib.formula import (
 from scifind_lib.i18n import localise
 from scifind_lib.tree import topic_tree_order
 from scifind_lib.units import compound_unit_slug
+from scifind_lib.util import eval_dim_expr, parse_int_or
 
 MIN_DIFFICULTY = 1
 MAX_DIFFICULTY = 10
@@ -57,15 +55,6 @@ class QuantityFilter:
         return any(d.get("val") is not None for d in self.dimension_filter.values())
 
 
-def parse_int_with_default(value, default=None):
-    if value is None or value == "":
-        return default
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
 def parse_csv_string(value):
     """Split a comma-separated query value into a list of stripped non-empty parts."""
     return [part.strip() for part in value.split(",") if part.strip()]
@@ -88,7 +77,7 @@ def parse_filter_state(args, conn):
     for symbol in dimension_symbols(conn):
         dimension_filter[symbol] = {"op": default_op, "val": None}
         for op in ops:
-            v = parse_int_with_default(args.get(f"{symbol}_{op}"))
+            v = eval_dim_expr(args.get(f"{symbol}_{op}"))
             if v is not None:
                 dimension_filter[symbol] = {"op": op, "val": v}
                 break
@@ -100,8 +89,8 @@ def parse_filter_state(args, conn):
         exclude_all=args.get("exclude_all") == "1",
         quantity_ids=parse_csv_string(args.get("qty", "")),
         quantity_mode=_parse_mode(args.get("qty_mode", "and"), mode_switched, "fml"),
-        diff_min=parse_int_with_default(args.get("diff_min"), MIN_DIFFICULTY),
-        diff_max=parse_int_with_default(args.get("diff_max"), MAX_DIFFICULTY),
+        diff_min=parse_int_or(args.get("diff_min"), MIN_DIFFICULTY),
+        diff_max=parse_int_or(args.get("diff_max"), MAX_DIFFICULTY),
         dimension_filter=dimension_filter,
         dim_mode=_parse_mode(args.get("dim_mode", "and"), mode_switched, "dim"),
         base_quantity_only=args.get("is_dim") == "1",
@@ -161,14 +150,6 @@ def fetch_formula_token_quantities(conn, formula_id):
         (formula_id,))
 
 
-def fetch_keyed_rows(conn, sql, ids):
-    """Map ``{id: dict(row)}`` for a SELECT with one ``{}`` IN-list slot; {} for empty ids."""
-    if not ids:
-        return {}
-    placeholders, params = in_clause(ids)
-    return {r["id"]: dict(r) for r in _all(conn, sql.format(placeholders), params)}
-
-
 _SEARCH_META_SQL = {
     "formula": (
         "SELECT id, name, json_extract(name, '$.en-us') AS name_en,"
@@ -197,7 +178,7 @@ def fetch_search_meta(conn, hits):
     """``{kind: {id: row}}`` for the kinds present in search hits, one query each."""
     kinds = {h[0] for h in hits}
     return {
-        kind: fetch_keyed_rows(
+        kind: keyed_rows(
             conn, _SEARCH_META_SQL[kind], [h[1] for h in hits if h[0] == kind])
         for kind in kinds if kind in _SEARCH_META_SQL
     }
@@ -313,7 +294,7 @@ def fetch_quantity_related_formulas(conn, quantity_id):
 
 def fetch_quantities_by_ids(conn, quantity_ids):
     """{id: name_json} for the given quantity ids in one query."""
-    rows = fetch_keyed_rows(conn,
+    rows = keyed_rows(conn,
         "SELECT id, name FROM quantity WHERE id IN ({})", quantity_ids)
     return {rid: r["name"] for rid, r in rows.items()}
 
@@ -356,14 +337,6 @@ def fetch_formulas_with_quantities(conn, quantity_ids, mode="and"):
                f" GROUP BY formula_id HAVING match_count = ?")
         params = params + (len(quantity_ids),)
     return {r["formula_id"] for r in _all(conn, sql, params)}
-
-
-def fetch_formulas_with_any_quantity(conn, quantity_ids):
-    return fetch_formulas_with_quantities(conn, quantity_ids, "or")
-
-
-def fetch_formulas_with_all_quantities(conn, quantity_ids):
-    return fetch_formulas_with_quantities(conn, quantity_ids, "and")
 
 
 def fetch_all_constants(conn):
@@ -471,13 +444,68 @@ def fetch_units_with_quantity(conn, quantity_id=None):
 
 
 def fetch_compound_units(conn, quantity_id, only_non_base=False):
-    """Compound-unit rows for a quantity, tagged with computed id + kind."""
+    """Compound-unit rows for a quantity, tagged with canonical id + kind."""
     sql = "SELECT * FROM compound_unit WHERE quantity_id = ?"
     if only_non_base:
         sql += " AND is_base = 0"
-    return [dict(row, id=compound_unit_slug(conn, row["quantity_id"], row["unit"]),
+    return [dict(row, id=compound_unit_slug(row["quantity_id"], row["unit"]),
                  kind="compound_unit")
             for row in _all(conn, sql, (quantity_id,))]
+
+
+def fetch_detail_items(conn, tokens):
+    """Detail-items-shaped dicts from in-memory RPN tokens + overrides."""
+    qids = {tok["quantity_id"] for tok in tokens
+            if tok.get("token_kind") == "quantity"}
+    cids = {tok["constant_id"] for tok in tokens
+            if tok.get("token_kind") == "constant"}
+    qrows = keyed_rows(
+        conn, "SELECT id, name, symbol FROM quantity WHERE id IN ({})", qids,
+    )
+    crows = keyed_rows(
+        conn,
+        "SELECT c.id, c.name, c.symbol,"
+        " c.unit_id, c.compound_unit_id,"
+        " rq.id AS related_quantity_id,"
+        " rq.name AS related_quantity_name,"
+        " rq.symbol AS related_quantity_symbol"
+        " FROM constant c"
+        " LEFT JOIN quantity rq ON rq.id = c.quantity_id"
+        " WHERE c.id IN ({})",
+        cids,
+    )
+    items = []
+    for tok in tokens:
+        kind = tok.get("token_kind")
+        if kind == "quantity":
+            qrow = qrows.get(tok["quantity_id"])
+            if not qrow:
+                continue
+            qid = tok["quantity_id"]
+            qty_name = localise(qrow["name"], "en-us") or qid.replace("_", " ").title()
+            items.append({
+                "quantity_id": qid,
+                "quantity_symbol": qrow["symbol"],
+                "quantity_name": qty_name,
+                "symbol_overwrite": tok.get("symbol_overwrite") or "",
+                "name_overwrite": tok.get("name_overwrite") or "",
+                "label": tok.get("label") or "",
+            })
+        elif kind == "constant":
+            crow = crows.get(tok["constant_id"])
+            if not crow:
+                continue
+            items.append({
+                "constant_id": tok["constant_id"],
+                "constant_symbol": crow["symbol"],
+                "constant_name": localise(crow["name"], "en-us"),
+                "related_quantity_id": crow["related_quantity_id"] or "",
+                "related_quantity_name": localise(crow["related_quantity_name"] or "", "en-us") or None,
+                "related_quantity_symbol": crow["related_quantity_symbol"] or "",
+                "constant_unit_id": crow["unit_id"],
+                "constant_compound_unit_id": crow["compound_unit_id"],
+            })
+    return items
 
 
 def unit_is_base(conn, unit_id):
@@ -487,21 +515,16 @@ def unit_is_base(conn, unit_id):
 
 
 def fetch_prefixable_base_units(conn):
-    """SI base unit id -> prefixable base id; mass prefixes attach to its gram part."""
-    result = {r["id"]: r["id"] for r in _all(conn,
+    """Ids of units that can carry an SI prefix: SI bases, plus gram.
+
+    Gram is mass's prefix anchor (the SI base kilogram is gram with a
+    kilo prefix already on it), so it is included by id — one documented
+    constant instead of a mass-compound query on every call.
+    """
+    ids = {r["id"] for r in _all(conn,
         "SELECT id FROM unit WHERE is_base = 1 AND system = 'SI'")}
-    row = conn.execute(
-        "SELECT quantity_id, unit FROM compound_unit "
-        "WHERE quantity_id = 'mass' AND system = 'SI' AND is_base = 1").fetchone()
-    if row is None:
-        return result
-    gram = next((p["unit"] for p in json.loads(row["unit"])
-                 if p.get("prefix") is not None), None)
-    if gram is None:
-        return result
-    result[gram] = gram
-    result[compound_unit_slug(conn, row["quantity_id"], row["unit"])] = gram
-    return result
+    ids.add("gram")
+    return ids
 
 
 def fetch_first_unit(conn, quantity_id):
@@ -522,63 +545,14 @@ def fetch_si_prefix_map(conn, field="symbol", locale="en-us"):
 
 DEFAULT_LOCALE = "en-us"
 
-# Locale keys stored in the name JSON that search should match.
 SEARCHABLE_LOCALES = ("cs-cz", "en-us", "en-uk")
 
-# (table, kind, extra symbol column or None, extra AND clauses)
 _SEARCH_SOURCES = (
     ("formula", "formula", None, ()),
     ("quantity", "quantity", "symbol", ("hidden = 0",)),
     ("unit", "unit", "symbol", ()),
     ("constant", "constant", "symbol", ()),
 )
-
-
-def _fts_available(conn):
-    try:
-        return bool(conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='entity_fts'"
-        ).fetchone())
-    except Exception:
-        return False
-
-
-_FTS_COLS = "kind,id,name_en,name_cs,name_uk,symbol,entity_id"
-_FTS_NAME = "coalesce(json_extract(name,'$.en-us'),''),coalesce(json_extract(name,'$.cs-cz'),''),coalesce(json_extract(name,'$.en-uk'),'')"
-
-
-def ensure_entity_fts(conn):
-    """Create + backfill entity_fts when missing/empty (idempotent)."""
-    if _fts_available(conn):
-        try:
-            if conn.execute("SELECT count(*) FROM entity_fts").fetchone()[0] > 0:
-                return
-        except Exception:
-            return
-    else:
-        try:
-            conn.execute(
-                "CREATE VIRTUAL TABLE IF NOT EXISTS entity_fts USING fts5("
-                "kind, id UNINDEXED, name_en, name_cs, name_uk, symbol,"
-                " entity_id UNINDEXED, tokenize = 'unicode61 remove_diacritics 1')")
-        except Exception:
-            return
-    try:
-        conn.execute("DELETE FROM entity_fts")
-        for kind, symbol_sql, extra in (("formula", "''", ""), ("quantity", "coalesce(symbol,'')", " WHERE hidden = 0"),
-                                 ("unit", "coalesce(symbol,'')", ""), ("constant", "coalesce(symbol,'')", "")):
-            conn.execute(f"INSERT INTO entity_fts({_FTS_COLS}) SELECT '{kind}',id,{_FTS_NAME},{symbol_sql},id FROM {kind}{extra}")
-        conn.commit()
-    except Exception:
-        pass
-
-
-def _fts_query_text(query):
-    """Sanitize user query into an FTS5 prefix query (terms ANDed, prefix on last)."""
-    folded = "".join(ch for ch in unicodedata.normalize("NFKD", query.strip().lower()) if not unicodedata.combining(ch))
-    if not (terms := [t for t in re.findall(r"\w+", folded, re.UNICODE) if t.strip("_")]):
-        return None
-    return " AND ".join([f'"{t}"' for t in terms[:-1]] + [f'"{terms[-1]}"*'])
 
 
 def _search_entities_like(conn, needle, like_pattern, limit, locale):
@@ -601,54 +575,12 @@ def _search_entities_like(conn, needle, like_pattern, limit, locale):
 
 
 def search_entities(conn, query, limit=30, locale=DEFAULT_LOCALE):
-    """Full-text search over entity names/symbols/ids."""
+    """Substring search over entity names/symbols/ids."""
     if not query or not query.strip():
         return []
     needle = query.strip().lower()
     like_pattern = f"%{needle}%"
-    # Single-char queries stay on LIKE (FTS prefix noise + plan requirement).
-    if len(needle) < 2 or not _fts_available(conn):
-        return _search_entities_like(conn, needle, like_pattern, limit, locale)
-    fts_q = _fts_query_text(query)
-    if not fts_q:
-        return _search_entities_like(conn, needle, like_pattern, limit, locale)
-    try:
-        rows = conn.execute(
-            "SELECT kind, entity_id AS id, rank FROM entity_fts"
-            " WHERE entity_fts MATCH ? ORDER BY rank LIMIT ?",
-            (fts_q, (limit or 30) * 3),
-        ).fetchall()
-    except Exception:
-        return _search_entities_like(conn, needle, like_pattern, limit, locale)
-    if not rows:
-        return _search_entities_like(conn, needle, like_pattern, limit, locale)
-    ids_by_kind: dict = {}
-    for r in rows:
-        ids_by_kind.setdefault(r["kind"], []).append(r["id"])
-    hidden_quantity_ids = set()
-    if ids_by_kind.get("quantity"):
-        marks, vals = in_clause(ids_by_kind["quantity"])
-        hidden_quantity_ids = {rr["id"] for rr in conn.execute(
-            f"SELECT id FROM quantity WHERE id IN ({marks}) AND hidden = 1", vals).fetchall()}
-    name_by_entity = {}
-    for kind, ids in ids_by_kind.items():
-        marks, vals = in_clause(ids)
-        for rr in conn.execute(f"SELECT id, name AS raw_name FROM {kind} WHERE id IN ({marks})", vals).fetchall():
-            name_by_entity[(kind, rr["id"])] = rr["raw_name"]
-    hits, seen = [], set()
-    for r in rows:
-        key = (r["kind"], r["id"])
-        if key in seen or r["id"] in hidden_quantity_ids or key not in name_by_entity:
-            continue
-        seen.add(key)
-        hits.append((r["kind"], r["id"], localise(name_by_entity[key], locale)))
-        if limit is not None and len(hits) >= limit:
-            break
-    return hits
-
-
-def suggest_entities(conn, query, limit=8, locale=DEFAULT_LOCALE):
-    return search_entities(conn, query, limit=limit, locale=locale)
+    return _search_entities_like(conn, needle, like_pattern, limit, locale)
 
 
 _BASE_SORT_KEYS = ("id", "name", "diff_asc", "diff_desc", "topic_tree", "topic_alpha")
@@ -664,8 +596,19 @@ DEFAULT_SEARCH_SORT = "relevance"
 UNKNOWN_TREE_SORT_KEY = float("inf")
 
 
-def _normalize(sort_key, allowed, default):
+def normalize_sort(sort_key, allowed, default):
+    """Single sort-key normalisation used by web + lib."""
     return sort_key if sort_key in allowed else default
+
+
+def _difficulty_key(diff, sort_key, *tail):
+    return ((diff if sort_key == "diff_asc" else -diff), *tail)
+
+
+def _qty_token_key(tokens, ent_id):
+    if ent_id is None:
+        return []
+    return [f"{p:06d} {t} {i}" for p, t, i in tokens.get(ent_id, [])]
 
 
 def entity_sort_key(row, sort_key, locale, tree_order, qty_const_tokens=None):
@@ -673,7 +616,7 @@ def entity_sort_key(row, sort_key, locale, tree_order, qty_const_tokens=None):
         return (localise(row["name"], locale).lower(), row["id"])
     if sort_key in ("diff_asc", "diff_desc"):
         diff = row.get("difficulty") or 0
-        return ((diff if sort_key == "diff_asc" else -diff), row["id"])
+        return _difficulty_key(diff, sort_key, row["id"])
     if sort_key in ("topic_tree", "topic_alpha"):
         topic = row.get("topic_id") or ""
         if sort_key == "topic_alpha":
@@ -685,7 +628,7 @@ def entity_sort_key(row, sort_key, locale, tree_order, qty_const_tokens=None):
 
 
 def _sort_entities(conn, rows, sort_key, allowed, default, locale, with_qty):
-    sort_key = _normalize(sort_key, allowed, default)
+    sort_key = normalize_sort(sort_key, allowed, default)
     qty_const_tokens = fetch_formula_quantity_constant_tokens(conn) if sort_key == "qty" else {}
     tree_order = topic_tree_order(conn) if sort_key == "topic_tree" else {}
     return sorted(rows, key=lambda r: entity_sort_key(
@@ -702,7 +645,7 @@ def sort_quantities(conn, rows, sort_key, locale="en-us"):
 
 
 def sort_search_rows(conn, rows, sort_key, locale="en-us", meta_by_kind=None):
-    sort_key = _normalize(sort_key, SEARCH_SORT_KEYS, DEFAULT_SEARCH_SORT)
+    sort_key = normalize_sort(sort_key, SEARCH_SORT_KEYS, DEFAULT_SEARCH_SORT)
     if sort_key == "relevance":
         return list(rows)
     if sort_key == "id":
@@ -717,16 +660,16 @@ def sort_search_rows(conn, rows, sort_key, locale="en-us", meta_by_kind=None):
         meta = meta_by_kind.get(kind, {}).get(ent_id) or {}
         if sort_key in ("diff_asc", "diff_desc"):
             diff = meta.get("difficulty") or meta.get("quantity_difficulty") or 0
-            return ((diff if sort_key == "diff_asc" else -diff), kind, ent_id)
+            return _difficulty_key(diff, sort_key, kind, ent_id)
         if kind == "formula":
-            qt = [f"{p:06d} {t} {i}" for p, t, i in tokens.get(ent_id, [])]
+            qty_tokens = _qty_token_key(tokens, ent_id)
         elif kind == "quantity":
-            qt = [f"quantity {ent_id}"]
+            qty_tokens = [f"quantity {ent_id}"]
         elif kind == "unit" and meta.get("quantity_id"):
-            qt = [f"quantity {meta['quantity_id']}"]
+            qty_tokens = [f"quantity {meta['quantity_id']}"]
         else:
-            qt = []
-        return (qt, kind, ent_id)
+            qty_tokens = []
+        return (qty_tokens, kind, ent_id)
 
     return sorted(rows, key=_key)
 

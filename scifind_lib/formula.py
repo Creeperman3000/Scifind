@@ -3,7 +3,8 @@
 import logging
 from fractions import Fraction
 
-from scifind_lib.db import cached_process, in_clause, process_cached
+from scifind_lib.constants import FILTER_OPS
+from scifind_lib.db import in_clause
 from scifind_lib.i18n import localise, with_subscript, wrap_symbol_in_latex
 from scifind_lib.operators import (
     apply_dim_spec,
@@ -25,6 +26,7 @@ from scifind_lib.units import (
     parse_compound_unit,
     select_base_unit,
 )
+from scifind_lib.util import as_int
 
 logger = logging.getLogger("scifind.dimensions")
 DimensionMismatchError = ValueError
@@ -36,10 +38,9 @@ _FILTER_COMPARISONS = {
 
 
 def _dim_id_rows(conn):
-    rows = cached_process("dim_id_rows", lambda: [dict(r) for r in conn.execute(
+    return [dict(r) for r in conn.execute(
         "SELECT dim_symbol, id FROM quantity "
-        "WHERE dim_symbol IS NOT NULL ORDER BY dim_position").fetchall()])
-    return [dict(r) for r in rows]
+        "WHERE dim_symbol IS NOT NULL ORDER BY dim_position").fetchall()]
 
 
 def dimension_symbols(conn):
@@ -60,15 +61,15 @@ def dimension_quantity_ids(conn):
     return {r["dim_symbol"]: r["id"] for r in _dim_id_rows(conn)}
 
 
-@process_cached("filter_ops")
-def filter_ops(conn):
-    """Dimension filter operator ids from dimension_filter_operator (position order)."""
-    return tuple(r["operator_id"] for r in conn.execute(
-        "SELECT operator_id FROM dimension_filter_operator ORDER BY position").fetchall())
+def filter_ops(conn=None):
+    """Dimension filter operator ids (backend constant, position order)."""
+    return tuple(FILTER_OPS)
 
 
 def format_dimension_number(n):
-    return str(int(n)) if n == int(n) else f"{n:.10f}".rstrip("0").rstrip(".")
+    if (iv := as_int(n)) is not None:
+        return str(iv)
+    return f"{n:.10f}".rstrip("0").rstrip(".")
 
 
 def _nonzero_dims(exponents, symbols):
@@ -114,17 +115,17 @@ def dimension_matches(row_dimensions, dimension_filter, dim_mode, conn):
         v = row_dimensions[col]
         return v if v is not None else 0
 
-    out = [_FILTER_COMPARISONS[df["op"]](_val(s), df["val"]) for s, df in active]
-    return any(out) if dim_mode == "or" else all(out)
+    checks = [_FILTER_COMPARISONS[df["op"]](_val(s), df["val"]) for s, df in active]
+    return any(checks) if dim_mode == "or" else all(checks)
 
 
 def _collect_qid_dimensions(conn):
     cols = dimension_columns(conn)
-    q = {r["id"]: [r[c] for c in cols] for r in conn.execute(f"SELECT id, {', '.join(cols)} FROM quantity")}
+    dims_by_qid = {r["id"]: [r[c] for c in cols] for r in conn.execute(f"SELECT id, {', '.join(cols)} FROM quantity")}
     for r in conn.execute("SELECT id, quantity_id FROM constant WHERE quantity_id IS NOT NULL"):
-        if r["quantity_id"] in q:
-            q[r["id"]] = list(q[r["quantity_id"]])
-    return q
+        if r["quantity_id"] in dims_by_qid:
+            dims_by_qid[r["id"]] = list(dims_by_qid[r["quantity_id"]])
+    return dims_by_qid
 
 
 def _formula_tokens(conn, formula_id):
@@ -211,15 +212,15 @@ def compute_all_formula_dimensions(conn, formula_ids=None):
             for fid in formula_ids}
 
 
-@process_cached("dimension_triplet")
-def _dimension_triplet_uncached(conn):
+def build_dimension_symbol_triplet(conn):
+    """(variable_map, unit_map, dim_map) for the dimension display."""
     qty_map = dimension_quantity_ids(conn)
     by_id = {}
     if qty_map:
         marks, params = in_clause(list(qty_map.values()))
         by_id = {r["id"]: r for r in conn.execute(
             f"SELECT id, symbol FROM quantity WHERE id IN ({marks})", params).fetchall()}
-    syms = {r["id"]: r["symbol"] for r in conn.execute("SELECT id, symbol FROM unit")}
+    unit_syms = {r["id"]: r["symbol"] for r in conn.execute("SELECT id, symbol FROM unit")}
     variable_map, unit_map, dim_map = {}, {}, {}
     for symbol, qid in qty_map.items():
         row = by_id.get(qid)
@@ -230,46 +231,38 @@ def _dimension_triplet_uncached(conn):
         if base is None:
             continue
         if base["kind"] == "compound_unit":
-            sym = base.get("symbol_overwrite") or format_compound_unit_symbol(
-                base["unit"], unit_symbol=lambda uid: wrap_symbol_in_latex(syms.get(uid, uid)))
+            base_sym = base.get("symbol_overwrite") or format_compound_unit_symbol(
+                base["unit"], unit_symbol=lambda uid: wrap_symbol_in_latex(unit_syms.get(uid, uid)))
         else:
-            sym = wrap_symbol_in_latex(base.get("symbol") or symbol)
-        if sym:
-            unit_map[symbol] = sym
+            base_sym = wrap_symbol_in_latex(base.get("symbol") or symbol)
+        if base_sym:
+            unit_map[symbol] = base_sym
     return variable_map, unit_map, dim_map
-
-
-def build_dimension_symbol_triplet(conn):
-    """Cached (variable_map, unit_map, dim_map) for the dimension display."""
-    var_map, unit_map, dim_map = _dimension_triplet_uncached(conn)
-    return dict(var_map), dict(unit_map), dict(dim_map)
 
 
 def _latex_quantity(node, locale):
     if not node.quantity_id:
         return "?"
-    # Empty symbols (placeholder operands) render empty; template conditionals omit wrappers.
+    # Empty symbols (placeholder operands) render "?" like display tables.
     sym = localise(node.symbol_overwrite or "", locale) or node.symbol
-    return with_subscript(sym, localise(node.label or "", locale)) if sym else ""
+    return with_subscript(sym, localise(node.label or "", locale)) if sym else "?"
 
 
 def _latex_number(node):
     if node.value is None:
         return "?"
     v = node.value
-    return "-" + _format_positive_number(-v) if v < 0 else _format_positive_number(v)
-
-
-def _format_positive_number(v):
-    if v == int(v):
-        return str(int(v))
+    v = -v if v < 0 else v
+    neg = "-" if node.value < 0 else ""
+    if (iv := as_int(v)) is not None:
+        return neg + str(iv)
     try:
         frac = Fraction(v).limit_denominator(100)
     except (ValueError, ZeroDivisionError, OverflowError):
-        return format_dimension_number(v)
+        return neg + format_dimension_number(v)
     if frac.denominator != 1 and frac.numerator == 1 and frac.denominator < 20:
-        return "\\frac{1}{" + str(frac.denominator) + "}"
-    return format_dimension_number(v)
+        return neg + "\\frac{1}{" + str(frac.denominator) + "}"
+    return neg + format_dimension_number(v)
 
 
 def _needs_parens(child, parent, index):
@@ -333,11 +326,11 @@ def _latex_operator(node, locale):
     if len(operands) <= slots:
         return render_template(template, operands, infos, op_id)
     # N-ary chain (relational fold): extra operands rejoin with empty lead slots.
-    out = render_template(template, operands[:slots], infos[:slots], op_id)
+    latex = render_template(template, operands[:slots], infos[:slots], op_id)
     for extra, info in zip(operands[slots:], infos[slots:]):
-        out += render_template(template, [""] * (slots - 1) + [extra],
+        latex += render_template(template, [""] * (slots - 1) + [extra],
                                [operand_info("operator")] * (slots - 1) + [info], op_id)
-    return out
+    return latex
 
 
 def _latex_node(node, locale="en-us"):
@@ -354,11 +347,7 @@ def _latex_node(node, locale="en-us"):
 
 def render_formula_latex(conn, formula_id, locale="en-us"):
     """Render a formula (by id) as a LaTeX string."""
-    tokens = _formula_tokens(conn, formula_id)
-    if not tokens:
-        return ""
-    tree = reduce_rpn_to_tree(conn, tokens)
-    return _latex_node(tree, locale) if tree is not None else ""
+    return render_formulas_latex_batched(conn, [formula_id], locale).get(formula_id, "")
 
 
 def render_formulas_latex_batched(conn, formula_ids, locale="en-us"):
@@ -427,15 +416,6 @@ def _preview_variables(conn, tokens, overrides):
     return variables
 
 
-def _preview_dim_latex(conn, dims, dim_caches, dim_mode):
-    if dim_caches is None:
-        dim_caches = dict(zip(("var", "unit", "dim"), build_dimension_symbol_triplet(conn)))
-    return format_dimensions_latex(*dims, symbols=dimension_symbols(conn),
-                                   variable_symbols=dim_caches.get("var", {}),
-                                   unit_symbols=dim_caches.get("unit", {}),
-                                   dim_symbols=dim_caches.get("dim", {}), mode=dim_mode)
-
-
 def parse_and_preview_equation(conn, equation, locale="en-us", dim_caches=None, overrides=None, dim_mode="dim"):
     """Parse an equation and return a preview dict (no DB writes)."""
     if not equation or not equation.strip():
@@ -451,6 +431,13 @@ def parse_and_preview_equation(conn, equation, locale="en-us", dim_caches=None, 
         tree = reduce_rpn_to_tree(conn, tokens)
     except ValueError as e:
         return {"tokens": tokens, "latex": "", "dim_latex": "", "variables": [], "error": str(e)}
+    if dim_caches is None:
+        dim_caches = dict(zip(("var", "unit", "dim"), build_dimension_symbol_triplet(conn)))
+    dims = compute_rpn_dimensions(conn, tokens)
     return {"tokens": tokens, "latex": _latex_node(tree, locale),
-            "dim_latex": _preview_dim_latex(conn, compute_rpn_dimensions(conn, tokens), dim_caches, dim_mode),
+            "dim_latex": format_dimensions_latex(
+                *dims, symbols=dimension_symbols(conn),
+                variable_symbols=dim_caches.get("var", {}),
+                unit_symbols=dim_caches.get("unit", {}),
+                dim_symbols=dim_caches.get("dim", {}), mode=dim_mode),
             "variables": _preview_variables(conn, tokens, overrides), "error": ""}

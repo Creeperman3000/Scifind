@@ -9,8 +9,8 @@ from markupsafe import Markup
 
 from scifind_lib.constants import SUPERSCRIPT_DIGITS, is_slug
 from scifind_lib.conversion import UnitGraph, precompute_latex_map
-from scifind_lib.db import cached_process, db_cache_key
 from scifind_lib.i18n import localise, with_subscript, wrap_symbol_in_latex
+from scifind_lib.util import anchor, entity_link
 from scifind_lib.fetch import (
     fetch_compound_units,
     fetch_quantity_units,
@@ -23,20 +23,32 @@ from scifind_lib.units import (
     format_compound_unit_html,
     format_compound_unit_symbol,
     inject_si_prefix_nodes,
-    parse_compound_unit,
+    parse_compound_unit_parts,
     prefix_name_callback,
+    quantity_per_map,
     select_base_unit_with_fallback,
     si_prefix_sections,
+    unit_accusative_map,
     unit_name_callback,
     unit_name_map,
     unit_quantity_map,
     unit_symbol_map,
 )
 
-def format_unit_symbol_plain(compound_unit_json):
-    """Render a compound_unit JSON list as a compact string like m·s⁻²."""
-    return "·".join(f"{uid}{str(exp).translate(SUPERSCRIPT_DIGITS)}"
-                    for uid, exp in parse_compound_unit(compound_unit_json))
+def format_unit_symbol_plain(compound_unit_json, prefix_symbols=None):
+    """Render a compound_unit JSON list as a compact string like m·s⁻².
+
+    SI prefixes come from `prefix_symbols`, else fall back to ``10^{p}·``.
+    """
+    parts = []
+    for uid, exp, prefix in parse_compound_unit_parts(compound_unit_json):
+        if prefix is not None:
+            sym = (prefix_symbols or {}).get(int(prefix))
+            base = f"{sym}{uid}" if sym else f"10^{{{int(prefix)}}}·{uid}"
+        else:
+            base = uid
+        parts.append(f"{base}{str(exp).translate(SUPERSCRIPT_DIGITS)}")
+    return "·".join(parts)
 
 
 def group_by_topic(rows, tree, locale="en-us"):
@@ -61,13 +73,19 @@ def render_variable_symbol(item, locale="en-us"):
 _MARKER_RE = re.compile(r"\[\s*\S[^\]]*\]")
 
 
+def _marker_qid(raw):
+    """Normalized slug for a `[id]` / `[id|display]` marker body, or "" if invalid."""
+    qid = raw.split("|", 1)[0].strip().lower().replace(" ", "_")
+    return qid if is_slug(qid) else ""
+
+
 def _marker_link(raw, original):
     qid, sep, display = raw.partition("|")
-    qid = qid.strip().lower().replace(" ", "_")
+    qid = _marker_qid(qid)
     display = display.strip() if sep else raw.strip()
-    if not is_slug(qid):
+    if not qid:
         return html.escape(original)
-    return f'<a href="/quantity/{html.escape(qid)}">{html.escape(display)}</a>'
+    return anchor(f"/quantity/{qid}", display)
 
 
 def expand_quantity_markers(text):
@@ -83,41 +101,39 @@ def expand_quantity_markers(text):
     return "".join(segments)
 
 
-_ENTITY_LINK_KINDS = frozenset({"formula", "quantity", "unit", "constant"})
-_ENTITY_LINK_ID_RE = re.compile(r"^[A-Za-z0-9_]+$")
-
-
-def build_entity_link(kind, ent_id, display):
-    """Render ``<a href="/<kind>/<id>">display</a>``; bad ids render as escaped text only."""
-    if kind not in _ENTITY_LINK_KINDS or not isinstance(ent_id, str) \
-            or not _ENTITY_LINK_ID_RE.fullmatch(ent_id):
-        return html.escape(display or "")
-    return f'<a href="/{kind}/{html.escape(ent_id)}">{html.escape(display or ent_id)}</a>'
-
-
-def _cached(key, loader):
-    if key not in g:
-        setattr(g, key, loader())
-    return getattr(g, key)
+def marker_ids_in(text):
+    """Slug ids referenced by [id] / [id|display] markers in `text`."""
+    ids = set()
+    for m in _MARKER_RE.finditer(text or ""):
+        qid = _marker_qid(m.group(0)[1:-1].strip())
+        if qid:
+            ids.add(qid)
+    return ids
 
 
 def _names():
-    return _cached("unit_name_map",
-                   lambda: unit_name_map(g.db, g.get("locale", "en-us")))
+    return unit_name_map(g.db, g.get("locale", "en-us"))
 
 
 def _symbols():
-    return _cached("unit_symbol_map", lambda: unit_symbol_map(g.db))
+    return unit_symbol_map(g.db)
 
 
 def _quantities():
-    return _cached("unit_quantity_map", lambda: unit_quantity_map(g.db))
+    return unit_quantity_map(g.db)
+
+
+def _quantity_pers():
+    return quantity_per_map(g.db)
+
+
+def _accusatives():
+    return unit_accusative_map(g.db)
 
 
 def _prefixes(field, locale=None):
-    return _cached(f"prefix_{field}_map",
-                   lambda: fetch_si_prefix_map(
-                       g.db, field, locale or g.get("locale", "en-us")))
+    return fetch_si_prefix_map(
+        g.db, field, locale or g.get("locale", "en-us"))
 
 
 def _strip_html(text):
@@ -134,35 +150,25 @@ def _prefix_name(locale):
     return prefix_name_callback(_prefixes("name", locale))
 
 
-def unit_name_link(unit_id):
-    names = _names()
-    if unit_id in names:
-        return Markup(build_entity_link("unit", unit_id, names[unit_id]))
-    return Markup(html.escape(unit_id.replace("_", " ").title()))
-
-
-def _render_unit_html(unit_json, locale):
+def _compound_html(json_text, locale, *, linked=True):
+    """format_compound_unit_html with the request's standard maps (links optional)."""
     names = _names()
     return format_compound_unit_html(
-        unit_json,
-        unit_url=lambda uid: f"/unit/{uid}" if uid in names else None,
+        json_text, locale=locale,
+        unit_url=(lambda uid: f"/unit/{uid}" if uid in names else None) if linked else None,
         unit_name=unit_name_callback(names),
-        locale=locale,
         unit_quantity_map=_quantities(),
+        quantity_pers=_quantity_pers(),
+        unit_accusatives=_accusatives(),
         prefix_name=_prefix_name(locale),
     )
 
 
-def _render_unit_symbol(unit_json, locale=None):
-    symbols = _symbols()
-    loc = locale or g.get("locale", "en-us")
-    # `format_compound_unit_symbol` wraps each part in \\mathrm{} itself,
-    # so pass raw symbols here to avoid double-wrapping.
-    return format_compound_unit_symbol(
-        unit_json,
-        unit_symbol=lambda uid: symbols.get(uid, uid),
-        prefix_symbol=lambda exp: _prefixes("symbol", loc).get(exp, ""),
-    )
+def unit_name_link(unit_id):
+    names = _names()
+    if unit_id in names:
+        return Markup(entity_link("unit", unit_id, names[unit_id]))
+    return Markup(html.escape(unit_id.replace("_", " ").title()))
 
 
 def render_compound_unit(cu_row, locale):
@@ -171,12 +177,26 @@ def render_compound_unit(cu_row, locale):
         return Markup(""), ""
     if cu_row["kind"] == "unit":
         return Markup(unit_name_link(cu_row["id"])), wrap_symbol_in_latex(cu_row["symbol"])
-    sym_latex = (wrap_symbol_in_latex(cu_row["symbol_overwrite"])
-                 if cu_row.get("symbol_overwrite")
-                 else _render_unit_symbol(cu_row["unit"], locale))
-    name_html = (localise(cu_row["name_overwrite"], locale)
-                 if cu_row.get("name_overwrite")
-                 else _render_unit_html(cu_row["unit"], locale))
+    if cu_row.get("symbol_overwrite"):
+        sym_latex = wrap_symbol_in_latex(cu_row["symbol_overwrite"])
+    else:
+        # `format_compound_unit_symbol` wraps each part in \mathrm{} itself,
+        # so pass raw symbols here to avoid double-wrapping.
+        symbols = _symbols()
+        active_locale = locale or g.get("locale", "en-us")
+        sym_latex = format_compound_unit_symbol(
+            cu_row["unit"],
+            unit_symbol=lambda uid: symbols.get(uid, uid),
+            prefix_symbol=lambda exp: _prefixes("symbol", active_locale).get(exp, ""),
+        )
+    # An overwrite without a translation for this locale falls back to the
+    # auto-derived name instead of rendering an empty string.
+    overwrite = (localise(cu_row.get("name_overwrite") or "", locale)
+                 if cu_row.get("name_overwrite") else "")
+    if overwrite:
+        name_html = overwrite
+    else:
+        name_html = _compound_html(cu_row["unit"], locale)
     return Markup(name_html), sym_latex
 
 
@@ -205,6 +225,7 @@ def _si_prefix_entries(conn, quantity_id, base, locale, tr):
     si_prefixes = si_prefix_sections(
         conn, quantity_id, locale, unit_names=_names(), unit_syms=_symbols(),
         prefix_names=_prefixes("name", locale), prefix_syms=_prefixes("symbol", locale),
+        quantity_pers=_quantity_pers(), unit_accusatives=_accusatives(),
     )
     if not si_prefixes:
         return [], None
@@ -234,25 +255,24 @@ def _base_entry(conn, base, locale, tr):
 def _plain_unit_entries(conn, quantity_id, base, locale, tr):
     base_id = base["id"] if base and base["kind"] == "unit" else None
     entries = []
-    for eu in map(dict, fetch_quantity_units(conn, quantity_id)):
-        if eu["id"] == base_id:
+    for unit_row in map(dict, fetch_quantity_units(conn, quantity_id)):
+        if unit_row["id"] == base_id:
             continue
         entries.append(_make_entry(
-            eu["id"], Markup(wrap_symbol_in_latex(eu["symbol"])), unit_name_link(eu["id"]),
-            localise(eu.get("name"), locale) or eu["id"].replace("_", " "),
-            _format_system_label(eu.get("system"), _row_is_base(conn, eu["id"], "unit"), tr),
+            unit_row["id"], Markup(wrap_symbol_in_latex(unit_row["symbol"])), unit_name_link(unit_row["id"]),
+            localise(unit_row.get("name"), locale) or unit_row["id"].replace("_", " "),
+            _format_system_label(unit_row.get("system"), _row_is_base(conn, unit_row["id"], "unit"), tr),
         ))
     return entries
 
 
 def _compound_name_html(cu_row, unit_html, locale):
     """(name_html, label) showing the parts-derived name unless duplicated."""
-    no_json = cu_row.get("name_overwrite")
-    override_text = localise(no_json, locale) if no_json else ""
+    overwrite_json = cu_row.get("name_overwrite")
+    override_text = localise(overwrite_json, locale) if overwrite_json else ""
     if override_text:
-        parts_text = _strip_html(format_compound_unit_html(
-            cu_row["unit"], locale=locale, unit_quantity_map=_quantities(),
-            unit_name=_unit_name(), prefix_name=_prefix_name(locale))).strip()
+        parts_text = _strip_html(
+            _compound_html(cu_row["unit"], locale, linked=False)).strip()
         if parts_text and parts_text.lower() != override_text.lower():
             combined = f"{override_text} ({parts_text})"
             return Markup(combined), combined
@@ -265,8 +285,8 @@ def _compound_name_html(cu_row, unit_html, locale):
 def _compound_entries(conn, quantity_id, base, locale, tr, skip_ids):
     base_id = base["id"] if base and base["kind"] == "compound_unit" else None
     entries = []
-    for _row in fetch_compound_units(conn, quantity_id):
-        cu_row = dict(_row)
+    for row in fetch_compound_units(conn, quantity_id):
+        cu_row = dict(row)
         if cu_row["id"] in skip_ids or cu_row["id"] == base_id:
             continue
         unit_html, unit_sym = render_compound_unit(cu_row, locale)
@@ -281,18 +301,14 @@ def _compound_entries(conn, quantity_id, base, locale, tr, skip_ids):
 
 def quantity_units_table(conn, quantity_id, system, ref_unit_id=None, *, tr):
     """Unit-table payload for quantity/unit pages."""
-    locale = g.locale
-    if db_cache_key() is None:
-        return _quantity_units_table_uncached(conn, quantity_id, system, ref_unit_id, tr=tr)
-    return dict(cached_process(("units_table", quantity_id, system, locale, ref_unit_id),
-        lambda: _quantity_units_table_uncached(conn, quantity_id, system, ref_unit_id, tr=tr)))
+    return _quantity_units_table_uncached(conn, quantity_id, system, ref_unit_id, tr=tr)
 
 
 def _quantity_units_table_uncached(conn, quantity_id, system, ref_unit_id=None, *, tr):
     locale = g.locale
     base = select_base_unit_with_fallback(conn, quantity_id, system)
 
-    graph = UnitGraph(conn, quantity_id)
+    graph = UnitGraph(conn, quantity_id, locale)
     inject_si_prefix_nodes(graph, conn, quantity_id, locale, system,
                            unit_syms=_symbols())
     latex_map = precompute_latex_map(graph)
@@ -307,10 +323,10 @@ def _quantity_units_table_uncached(conn, quantity_id, system, ref_unit_id=None, 
 
     # Skip compound rows already shown as SI prefix entries (hectare = hm²,
     # etc.) — they only belong in the prefix table.
-    rows = [r for section in (si_prefixes or {}).values() for r in section["rows"]]
+    prefix_rows = [r for section in (si_prefixes or {}).values() for r in section["rows"]]
     entries.extend(_compound_entries(
-        conn, quantity_id, base, locale, tr, {r["id"] for r in rows}))
-    si_payload_ids = {r["payload_id"] for r in rows}
+        conn, quantity_id, base, locale, tr, {r["id"] for r in prefix_rows}))
+    si_payload_ids = {r["payload_id"] for r in prefix_rows}
 
     ref_id = ref_unit_id if ref_unit_id and any(e["id"] == ref_unit_id for e in entries) else default_id
     ref_label = next((_strip_html(str(e["label"])) for e in entries if e["id"] == ref_id), "")

@@ -6,8 +6,8 @@ Usage:
     scifind_cli list [options]                  List formulas
     scifind_cli show <id>                       Show formula details
     scifind_cli search <query>                  Full-text search
-    scifind_cli quantities [--formula F]        List quantities
-    scifind_cli quantity <id>                   Show quantity details
+    scifind_cli quantities [--formula F] [--system SYS]  List quantities
+    scifind_cli quantity <id> [--system SYS]    Show quantity details
     scifind_cli units [--quantity Q]            List units
     scifind_cli browse                          Browse branch/topic tree
     scifind_cli export [options]                Export all tables
@@ -29,11 +29,11 @@ from scifind_lib import (
     database_connection, database_path, database_has_formula_table,
     initialize_database, render_formula_latex, format_dimensions_plain,
     dimension_symbols, dimensions_from_row, search_entities,
-    difficulty_to_stars, localise_english, fetch_formula,
+    difficulty_to_stars, localise, fetch_formula,
     fetch_formula_relations, fetch_formula_quantities, fetch_quantity,
     fetch_quantity_units, fetch_quantity_formulas, fetch_all_quantities,
-    fetch_formulas_filtered, fetch_units_with_quantity, export_to_csv,
-    export_to_csv_directory, export_to_xlsx, export_to_ods, export_to_sql,
+    fetch_formulas_filtered, fetch_units_with_quantity,
+    export_to_csv_directory, export_to_xlsx, export_to_ods,
     select_base_unit_with_fallback, load_tree, topic_name,
     format_unit_symbol_plain, group_by_topic,
 )
@@ -57,10 +57,10 @@ def _wrap(text):
 
 
 def _header(title, qualifier=None):
-    text = f"\n  {_st('bold', title)}"
+    heading = f"\n  {_st('bold', title)}"
     if qualifier:
-        text += f" for {_st('yellow', qualifier)}"
-    print(text + "\n")
+        heading += f" for {_st('yellow', qualifier)}"
+    print(heading + "\n")
 
 
 def _unit_row(unit):
@@ -75,13 +75,21 @@ def _base_unit_str(conn, qid, system="SI"):
         return ""
     unit_json = base["unit"] if base["kind"] == "compound_unit" \
         else json.dumps([{"unit": base["id"], "exponent": 1}])
-    return format_unit_symbol_plain(unit_json)
+    from scifind_lib import fetch_si_prefix_map
+    try:
+        # Prefix *names* join uid-based plain units as real words
+        # (kilogram, centimetre), mirroring the web HTML renderer.
+        prefixes = {e: str(n).lower()
+                    for e, n in fetch_si_prefix_map(conn, "name").items()}
+    except Exception:
+        prefixes = None
+    return format_unit_symbol_plain(unit_json, prefixes)
 
 
-def _dims(conn, qty):
+def _dims(conn, qty, system="SI"):
     return (format_dimensions_plain(*dimensions_from_row(qty, conn),
                                     symbols=dimension_symbols(conn)),
-            _base_unit_str(conn, qty["id"]))
+            _base_unit_str(conn, qty["id"], system))
 
 
 def command_init(args):
@@ -120,11 +128,11 @@ def _list_formulas(topic=None, difficulty=None, id_width=40,
     if not rows:
         print("No formulas found.")
         return
-    for t, items in group_by_topic(rows, tree).items():
-        print(f"\n  {_st('yellow', t)}{topic_suffix}")
-        for f in items:
-            print(f"{row_indent}{f['id']:{id_width}s} "
-                  f"{difficulty_to_stars(f['difficulty'])}  {f['name_en']}")
+    for topic_label, formulas in group_by_topic(rows, tree).items():
+        print(f"\n  {_st('yellow', topic_label)}{topic_suffix}")
+        for formula in formulas:
+            print(f"{row_indent}{formula['id']:{id_width}s} "
+                  f"{difficulty_to_stars(formula['difficulty'])}  {formula['name_en']}")
     print()
 
 
@@ -145,13 +153,13 @@ def command_show(args):
         quantities = fetch_formula_quantities(conn, args.id)
         latex = render_formula_latex(conn, args.id, locale="en-us")
         tree = load_tree(conn)
-    print(f"\n  {_st('bold', localise_english(row['name']))}  "
+    print(f"\n  {_st('bold', localise(row['name'], 'en-us'))}  "
           f"{difficulty_to_stars(row['difficulty'])}")
     if (topic := topic_name(row["topic_id"], tree)):
         print(f"  {_st('cyan', topic)}  (difficulty {row['difficulty']}/10)")
     if latex:
         print(f"\n  $$\n  {latex}\n  $$")
-    if (desc := localise_english(row["description"])):
+    if (desc := localise(row["description"], 'en-us')):
         print(f"\n  {_st('dim', _wrap(desc))}")
     if quantities:
         print(f"\n  {_st('bold', 'Quantities:')}")
@@ -179,6 +187,7 @@ def command_search(args):
 
 
 def command_quantities(args):
+    system = getattr(args, "system", None) or "SI"
     with database_connection() as conn:
         rows = (fetch_formula_quantities(conn, args.formula) if args.formula
                 else fetch_all_quantities(conn))
@@ -187,7 +196,7 @@ def command_quantities(args):
             return
         _header("Quantities", args.formula)
         for q in rows:
-            dims, unit = _dims(conn, q)
+            dims, unit = _dims(conn, q, system)
             print(f"  ${q['symbol']}$  {_st('bold', q['name_en'])}  "
                   f"({_st('dim', q['id'])})")
             suffix = f"  default unit: {unit}" if unit else ""
@@ -196,14 +205,15 @@ def command_quantities(args):
 
 
 def command_quantity(args):
+    system = getattr(args, "system", None) or "SI"
     with database_connection() as conn:
         qty = fetch_quantity(conn, args.id)
         if not qty:
             _err(f"Quantity '{args.id}' not found.")
         units = fetch_quantity_units(conn, args.id)
         formulas = fetch_quantity_formulas(conn, args.id)
-        dims, unit = _dims(conn, qty)
-        name, desc = localise_english(qty["name"]), localise_english(qty["description"])
+        dims, unit = _dims(conn, qty, system)
+        name, desc = localise(qty["name"], 'en-us'), localise(qty["description"], 'en-us')
     label = f"${qty['symbol']}$ — {name}"
     print(f"\n  {_st('bold', label)}  "
           f"({_st('dim', qty['id'])})")
@@ -253,16 +263,16 @@ def command_export(args):
             (export_to_xlsx if fmt == "xlsx" else export_to_ods)(conn, output)
             print(f"Exported to {output}")
             return
-        data = export_to_sql(conn) if fmt == "sql" else export_to_csv(conn)
+        from scifind_lib.export import export_payload
+        payload, _, filename = export_payload(conn, fmt)
         output = args.output or ("scifind.sql" if fmt == "sql" else None)
         if output:
-            Path(output).write_text(data, encoding="utf-8")
+            Path(output).write_bytes(payload)
             print(f"Exported to {output}")
         else:
-            sys.stdout.write(data)
+            sys.stdout.write(payload.decode("utf-8"))
 
 
-# (command, help, [(flags, kwargs), ...])
 _SUBCOMMANDS = [
     ("init", "Create and seed the database",
      [(("--force",), {"action": "store_true",
@@ -275,8 +285,13 @@ _SUBCOMMANDS = [
      [(("query",), {"help": "Search terms"}),
       (("--limit", "-l"), {"type": int, "default": 20, "help": "Max results"})]),
     ("quantities", "List quantities",
-     [(("--formula",), {"help": "Filter by formula ID"})]),
-    ("quantity", "Show quantity details", [(("id",), {"help": "Quantity ID"})]),
+     [(("--formula",), {"help": "Filter by formula ID"}),
+      (("--system", "-s"), {"choices": ["SI", "CGS", "Imperial"],
+                            "default": "SI", "help": "Unit system for default unit (default: SI)"})]),
+    ("quantity", "Show quantity details",
+     [(("id",), {"help": "Quantity ID"}),
+      (("--system", "-s"), {"choices": ["SI", "CGS", "Imperial"],
+                            "default": "SI", "help": "Unit system for default unit (default: SI)"})]),
     ("units", "List units",
      [(("--quantity", "-q"), {"help": "Filter by quantity ID"})]),
     ("browse", "Browse by branch/topic", []),

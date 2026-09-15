@@ -8,16 +8,15 @@
     "unitWords": {
       "squared": "squared",
       "cubed": "cubed",
+      "square": "Square",
+      "cubic": "Cubic",
       "inverse": "inverse",
       "toThe": "to the",
       "per": "per",
-      "perSpecial": "per",
       "squaredSpecial": "squared",
       "cubedSpecial": "cubed",
       "reciprocal": "Reciprocal"
     },
-    "quantitiesSpecial": [],
-    "accusativeNames": {},
     "sibilants": {
       "chars": [],
       "preposition": {
@@ -28,6 +27,7 @@
   "ui": {
     "nav": {
       "formulas": "Formulas",
+      "quantities": "Quantities",
       "operators": "Operators",
       "constants": "Constants",
       "filter": "Filter",
@@ -100,6 +100,7 @@
       "unit": "Unit",
       "base_quantities": "Base quantities",
       "constant": "Constant",
+      "constants": "Constants",
       "value": "Value",
       "si_prefixes": "SI prefixes",
       "si_base": "SI base",
@@ -199,8 +200,8 @@
       "create_continue": "Continue to SQL",
       "tree_pick": "expand / highlight",
       "tree_toggle": "toggle checkbox",
-      "tree_exit": "re-expand & exit",
-      "esc_close": "Close dialog, menu or highlight, or clear search",
+      "tree_exit": "exit",
+      "esc_close": "Close dialog",
       "dot_go": "Go…",
       "dot_menu": "Show available keys"
     }

@@ -12,21 +12,9 @@
       "inverse": "inverzní",
       "toThe": "na",
       "per": "na",
-      "perSpecial": "za",
       "squaredSpecial": "na druhou",
       "cubedSpecial": "na třetí",
       "reciprocal": "Převrácená hodnota"
-    },
-    "quantitiesSpecial": [
-      "time"
-    ],
-    "accusativeNames": {
-      "sekunda": "sekundu",
-      "hodina": "hodinu",
-      "minuta": "minutu",
-      "astronomická jednotka": "astronomickou jednotku",
-      "úhlová minuta": "úhlovou minutu",
-      "úhlová vteřina": "úhlovou vteřinu"
     },
     "sibilants": {
       "chars": [
@@ -42,6 +30,7 @@
   "ui": {
     "nav": {
       "formulas": "Vzorce",
+      "quantities": "Veličiny",
       "operators": "Operátory",
       "constants": "Konstanty",
       "filter": "Filtr",
@@ -114,6 +103,7 @@
       "unit": "Jednotka",
       "base_quantities": "Základní veličiny",
       "constant": "Konstanta",
+      "constants": "Konstanty",
       "value": "Hodnota",
       "si_prefixes": "Předpony SI",
       "si_base": "Základní SI",
@@ -152,7 +142,7 @@
       "loading": "Načítání…"
     },
     "toast": {
-      "copied": "Zkopírováno",
+      "copied": "Zkopírován",
       "copy_failed": "Kopírování selhalo"
     },
     "tooltip": {
@@ -213,8 +203,10 @@
       "create_continue": "Pokračovat na SQL",
       "tree_pick": "rozbalit / zvýraznit",
       "tree_toggle": "přepnout zaškrtnutí",
-      "tree_exit": "znovu rozbalit a skončit",
-      "esc_close": "Zavřít dialog, nabídku či zvýraznění, nebo vymazat hledání"
+      "tree_exit": "ukončit",
+      "esc_close": "Zavřít dialog",
+      "dot_go": "Přejít…",
+      "dot_menu": "Zobrazit dostupné klávesy"
     }
   }
 }

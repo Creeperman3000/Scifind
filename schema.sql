@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS quantity (
     hidden           BOOLEAN NOT NULL DEFAULT 0 CHECK (hidden IN (0,1)),
     description      TEXT,                -- JSON i18n
     links            TEXT,                -- JSON array of URL strings: ["https://...", ...]
+    per_overwrite    TEXT,                -- JSON i18n denominator preposition, e.g. time {"cs-cz":"za"}
     dim_symbol       TEXT,                -- base-dimension symbol (e.g. 'M'); NULL = derived quantity
     dim_position     INTEGER,             -- order among base dimensions; column is 'dim_' || dim_symbol
     dim_M            REAL NOT NULL DEFAULT 0,
@@ -57,6 +58,7 @@ CREATE TABLE IF NOT EXISTS quantity (
     dim_J            REAL NOT NULL DEFAULT 0,
     CHECK (json_valid(name)),
     CHECK (symbol_overwrite IS NULL OR json_valid(symbol_overwrite)),
+    CHECK (per_overwrite IS NULL OR json_valid(per_overwrite)),
     CHECK (description IS NULL OR json_valid(description)),
     CHECK (links IS NULL OR json_valid(links))
 );
@@ -64,6 +66,7 @@ CREATE TABLE IF NOT EXISTS quantity (
 CREATE TABLE IF NOT EXISTS unit (
     id           TEXT PRIMARY KEY,
     name         TEXT NOT NULL,        -- JSON i18n: {"en-us":"Meter","en-uk":"Metre"}
+    name_accusative TEXT,              -- JSON i18n declined name, e.g. second {"cs-cz":"sekundu"}
     symbol       TEXT NOT NULL,
     quantity_id  TEXT NOT NULL REFERENCES quantity(id),
     system       TEXT CHECK (system IN ('SI','CGS','Imperial') OR system IS NULL),
@@ -80,6 +83,7 @@ CREATE TABLE IF NOT EXISTS unit (
     constant_shift       REAL NOT NULL DEFAULT 0,
     offset               REAL NOT NULL DEFAULT 0,
     CHECK (json_valid(name)),
+    CHECK (name_accusative IS NULL OR json_valid(name_accusative)),
     CHECK (factor_numerator IS NULL OR factor_numerator != 0),
     CHECK (factor_denominator IS NULL OR factor_denominator != 0)
 );
@@ -91,7 +95,10 @@ CREATE TABLE IF NOT EXISTS compound_unit (
     unit             TEXT NOT NULL,      -- JSON array [{"unit":"<id>","exponent":<n>},...]
     system           TEXT CHECK (system IN ('SI','CGS','Imperial') OR system IS NULL),
     is_base          INTEGER NOT NULL DEFAULT 0 CHECK (is_base IN (0,1)),
-    -- No stored id: the slug is computed via compound_unit_slug(); value derives from `unit` parts.
+    -- No stored id: the id is derived on the fly via compound_unit_slug()
+    -- (pure function of quantity_id + parts, locale-free), so recomputing
+    -- can never drift from the parts. Friendly names like hectare/are/litre
+    -- live in name_overwrite/symbol_overwrite, not in the id.
     PRIMARY KEY (quantity_id, unit),
     CHECK (json_valid(unit))
 );
@@ -106,7 +113,7 @@ CREATE TABLE IF NOT EXISTS constant (
     value        REAL,               -- numerical value; NULL for symbolic constants
     quantity_id  TEXT REFERENCES quantity(id),       -- quantity whose name applies
     unit_id      TEXT REFERENCES unit(id),           -- constant's preferred unit (a named unit row), or NULL
-    compound_unit_id TEXT, -- slug into compound_unit, computed via compound_unit_slug (no FK: id is not stored; resolved at runtime), or NULL
+    compound_unit_id TEXT, -- canonical compound_unit id from compound_unit_slug (no FK: id is not stored; resolved at runtime), or NULL
     CHECK (json_valid(name)),
     CHECK (description IS NULL OR json_valid(description)),
     CHECK (links IS NULL OR json_valid(links))
@@ -118,28 +125,6 @@ CREATE TABLE IF NOT EXISTS si_prefix (
     symbol   TEXT NOT NULL,              -- JSON i18n: {"en-us":"k","cs-cz":"k"}; LaTeX-safe raw symbols
     CHECK (json_valid(name)),
     CHECK (json_valid(symbol))
-);
-
--- Slug overrides for single-part compound slugs with irregular names
--- (hectare/are/litre family): (unit_id, prefix, exponent) -> slug base.
-CREATE TABLE IF NOT EXISTS slug_override (
-    unit_id  TEXT NOT NULL,
-    prefix   INTEGER,
-    exponent INTEGER NOT NULL,
-    slug     TEXT NOT NULL,
-    PRIMARY KEY (unit_id, prefix, exponent)
-);
-
--- Relational operators backing the dimension search filter (?M_eq=1, ...).
-CREATE TABLE IF NOT EXISTS dimension_filter_operator (
-    operator_id TEXT PRIMARY KEY REFERENCES operator(id),
-    position    INTEGER NOT NULL
-);
-
--- Small UI policy values (e.g. key 'si_visible_exponents' -> JSON array).
-CREATE TABLE IF NOT EXISTS app_config (
-    key   TEXT PRIMARY KEY,
-    value TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS formula_token (
@@ -197,59 +182,6 @@ CREATE INDEX IF NOT EXISTS idx_formula_relation_related ON formula_relation(rela
 CREATE INDEX IF NOT EXISTS idx_formula_relation_type    ON formula_relation(relation_type);
 CREATE INDEX IF NOT EXISTS idx_unit_quantity            ON unit(quantity_id);
 CREATE INDEX IF NOT EXISTS idx_compound_unit_quantity   ON compound_unit(quantity_id);
--- Full-text search over entity names/symbols/ids (FTS5, maintained by triggers).
-CREATE VIRTUAL TABLE IF NOT EXISTS entity_fts USING fts5(
-    kind, id UNINDEXED, name_en, name_cs, name_uk, symbol, entity_id UNINDEXED,
-    tokenize = 'unicode61 remove_diacritics 1'
-);
-CREATE TRIGGER IF NOT EXISTS trg_fts_formula_ai AFTER INSERT ON formula BEGIN
-    INSERT INTO entity_fts(kind, id, name_en, name_cs, name_uk, symbol, entity_id)
-    VALUES ('formula', new.id, coalesce(json_extract(new.name, '$.en-us'), ''), coalesce(json_extract(new.name, '$.cs-cz'), ''), coalesce(json_extract(new.name, '$.en-uk'), ''), '', new.id);
-END;
-CREATE TRIGGER IF NOT EXISTS trg_fts_formula_ad AFTER DELETE ON formula BEGIN
-    DELETE FROM entity_fts WHERE kind = 'formula' AND entity_id = old.id;
-END;
-CREATE TRIGGER IF NOT EXISTS trg_fts_formula_au AFTER UPDATE ON formula BEGIN
-    DELETE FROM entity_fts WHERE kind = 'formula' AND entity_id = old.id;
-    INSERT INTO entity_fts(kind, id, name_en, name_cs, name_uk, symbol, entity_id)
-    VALUES ('formula', new.id, coalesce(json_extract(new.name, '$.en-us'), ''), coalesce(json_extract(new.name, '$.cs-cz'), ''), coalesce(json_extract(new.name, '$.en-uk'), ''), '', new.id);
-END;
-CREATE TRIGGER IF NOT EXISTS trg_fts_quantity_ai AFTER INSERT ON quantity BEGIN
-    INSERT INTO entity_fts(kind, id, name_en, name_cs, name_uk, symbol, entity_id)
-    VALUES ('quantity', new.id, coalesce(json_extract(new.name, '$.en-us'), ''), coalesce(json_extract(new.name, '$.cs-cz'), ''), coalesce(json_extract(new.name, '$.en-uk'), ''), coalesce(new.symbol, ''), new.id);
-END;
-CREATE TRIGGER IF NOT EXISTS trg_fts_quantity_ad AFTER DELETE ON quantity BEGIN
-    DELETE FROM entity_fts WHERE kind = 'quantity' AND entity_id = old.id;
-END;
-CREATE TRIGGER IF NOT EXISTS trg_fts_quantity_au AFTER UPDATE ON quantity BEGIN
-    DELETE FROM entity_fts WHERE kind = 'quantity' AND entity_id = old.id;
-    INSERT INTO entity_fts(kind, id, name_en, name_cs, name_uk, symbol, entity_id)
-    VALUES ('quantity', new.id, coalesce(json_extract(new.name, '$.en-us'), ''), coalesce(json_extract(new.name, '$.cs-cz'), ''), coalesce(json_extract(new.name, '$.en-uk'), ''), coalesce(new.symbol, ''), new.id);
-END;
-CREATE TRIGGER IF NOT EXISTS trg_fts_unit_ai AFTER INSERT ON unit BEGIN
-    INSERT INTO entity_fts(kind, id, name_en, name_cs, name_uk, symbol, entity_id)
-    VALUES ('unit', new.id, coalesce(json_extract(new.name, '$.en-us'), ''), coalesce(json_extract(new.name, '$.cs-cz'), ''), coalesce(json_extract(new.name, '$.en-uk'), ''), coalesce(new.symbol, ''), new.id);
-END;
-CREATE TRIGGER IF NOT EXISTS trg_fts_unit_ad AFTER DELETE ON unit BEGIN
-    DELETE FROM entity_fts WHERE kind = 'unit' AND entity_id = old.id;
-END;
-CREATE TRIGGER IF NOT EXISTS trg_fts_unit_au AFTER UPDATE ON unit BEGIN
-    DELETE FROM entity_fts WHERE kind = 'unit' AND entity_id = old.id;
-    INSERT INTO entity_fts(kind, id, name_en, name_cs, name_uk, symbol, entity_id)
-    VALUES ('unit', new.id, coalesce(json_extract(new.name, '$.en-us'), ''), coalesce(json_extract(new.name, '$.cs-cz'), ''), coalesce(json_extract(new.name, '$.en-uk'), ''), coalesce(new.symbol, ''), new.id);
-END;
-CREATE TRIGGER IF NOT EXISTS trg_fts_constant_ai AFTER INSERT ON constant BEGIN
-    INSERT INTO entity_fts(kind, id, name_en, name_cs, name_uk, symbol, entity_id)
-    VALUES ('constant', new.id, coalesce(json_extract(new.name, '$.en-us'), ''), coalesce(json_extract(new.name, '$.cs-cz'), ''), coalesce(json_extract(new.name, '$.en-uk'), ''), coalesce(new.symbol, ''), new.id);
-END;
-CREATE TRIGGER IF NOT EXISTS trg_fts_constant_ad AFTER DELETE ON constant BEGIN
-    DELETE FROM entity_fts WHERE kind = 'constant' AND entity_id = old.id;
-END;
-CREATE TRIGGER IF NOT EXISTS trg_fts_constant_au AFTER UPDATE ON constant BEGIN
-    DELETE FROM entity_fts WHERE kind = 'constant' AND entity_id = old.id;
-    INSERT INTO entity_fts(kind, id, name_en, name_cs, name_uk, symbol, entity_id)
-    VALUES ('constant', new.id, coalesce(json_extract(new.name, '$.en-us'), ''), coalesce(json_extract(new.name, '$.cs-cz'), ''), coalesce(json_extract(new.name, '$.en-uk'), ''), coalesce(new.symbol, ''), new.id);
-END;
 -- Composite/covering indexes for list, filter, and detail queries (no per-row scans).
 CREATE INDEX IF NOT EXISTS idx_formula_token_qty_kind_fid ON formula_token(quantity_id, token_kind, formula_id);
 CREATE INDEX IF NOT EXISTS idx_formula_token_kind_const ON formula_token(token_kind, constant_id);

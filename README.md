@@ -26,7 +26,6 @@ python webapp.py                  # webapp
 | `web/`             | Jinja2 templates, CSS, and JS |
 | `schema.sql`       | Database schema               |
 | `seed.sql`         | Seed data                     |
-| `tree.json`        | Topic-tree seed source (runtime data lives in the `topic` table) |
 | `locales/`         | Locale JSON files             |
 | `wiki/`            | Documentation                 |
 | `requirements.txt` | Dependencies                  |

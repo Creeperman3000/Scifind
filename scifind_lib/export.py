@@ -3,7 +3,6 @@
 import csv
 import io
 import json
-import re
 import zipfile
 from pathlib import Path
 
@@ -11,6 +10,7 @@ from scifind_lib.constants import PROJECT_DIR, is_slug
 from scifind_lib.db import insert_statement, sql_literal
 from scifind_lib.formula import dimension_columns
 from scifind_lib.parser import parse_equation, quantity_token_key
+from scifind_lib.util import safe_json_dict, slugify_text
 
 QTY_OVERRIDE_FIELDS = ("symbol_overwrite", "name_overwrite")  # schema order
 _QTY_OVERRIDE_ALIASES = {"symbol_overwrite": "symbol", "name_overwrite": "name"}
@@ -31,7 +31,7 @@ def resolve_formula_id(name_en, formula_id=""):
                 "separated by single underscores"
             )
         return formula_id
-    slug = re.sub(r"[^a-z0-9]+", "_", name_en.strip().lower()).strip("_")
+    slug = slugify_text(name_en)
     if not slug:
         raise ValueError("name must contain at least one alphanumeric character")
     return slug
@@ -39,34 +39,27 @@ def resolve_formula_id(name_en, formula_id=""):
 
 def merge_locale_value(blob, value, locale):
     """Return `blob` (a JSON object string) with `locale` set to `value`."""
-    obj = {}
-    if blob:
-        try:
-            parsed = json.loads(blob)
-            if isinstance(parsed, dict):
-                obj = parsed
-        except (ValueError, TypeError):
-            obj = {}
-    obj[locale] = value
-    return json.dumps(obj, ensure_ascii=False)
+    localized = safe_json_dict(blob)
+    localized[locale] = value
+    return json.dumps(localized, ensure_ascii=False)
 
 
 def build_i18n_override_value(overrides, tr_overrides_by_loc, field, key):
     """None or JSON {locale: value} string for one quantity token override."""
-    ov = overrides.get(key) or {}
-    base = ov.get(field)
+    override = overrides.get(key) or {}
+    base = override.get(field)
     if base is None:
-        base = ov.get(_QTY_OVERRIDE_ALIASES[field])
-    per_locale = {loc: (t_ov.get(key) or {}).get(field)
-                  for loc, t_ov in tr_overrides_by_loc.items()
-                  if (t_ov.get(key) or {}).get(field)}
+        base = override.get(_QTY_OVERRIDE_ALIASES[field])
+    per_locale = {loc: (loc_ov.get(key) or {}).get(field)
+                  for loc, loc_ov in tr_overrides_by_loc.items()
+                  if (loc_ov.get(key) or {}).get(field)}
     if not base and not per_locale:
         return None
-    obj = {}
+    localized = {}
     if base:
-        obj["en-us"] = base
-    obj.update(per_locale)
-    return json.dumps(obj, ensure_ascii=False)
+        localized["en-us"] = base
+    localized.update(per_locale)
+    return json.dumps(localized, ensure_ascii=False)
 
 
 def token_row_values(formula_id, pos, tok, overrides, tr_overrides_by_loc):
@@ -116,15 +109,15 @@ def build_create_sql(
     for loc, tr in (translations or {}).items():
         if not isinstance(tr, dict) or loc == "en-us":
             continue
-        t_name = tr.get("name")
-        if t_name:
-            name_json = merge_locale_value(name_json, t_name.strip(), loc)
-        t_desc = tr.get("description")
-        if t_desc:
-            desc_json = merge_locale_value(desc_json, t_desc, loc)
-        t_ov = tr.get("overrides") or {}
-        if t_ov:
-            tr_overrides_by_loc[loc] = t_ov
+        trans_name = tr.get("name")
+        if trans_name:
+            name_json = merge_locale_value(name_json, trans_name.strip(), loc)
+        trans_desc = tr.get("description")
+        if trans_desc:
+            desc_json = merge_locale_value(desc_json, trans_desc, loc)
+        trans_ov = tr.get("overrides") or {}
+        if trans_ov:
+            tr_overrides_by_loc[loc] = trans_ov
 
     formula_sql = insert_statement(
         "formula", FORMULA_COLUMNS,
@@ -149,7 +142,7 @@ def build_create_sql(
 EXPORT_TABLE_ORDER = [
     "topic", "formula", "formula_token", "formula_relation",
     "operator", "constant", "compound_unit", "quantity", "unit",
-    "si_prefix", "slug_override", "dimension_filter_operator", "app_config",
+    "si_prefix",
 ]
 
 EXPORT_TABLE_COLUMNS = {
@@ -168,15 +161,12 @@ EXPORT_TABLE_COLUMNS = {
     ],
     "quantity": [
         "id", "name", "symbol", "symbol_overwrite", "topic_id",
-        "difficulty", "description", "links",
+        "difficulty", "description", "links", "per_overwrite",
         "hidden", "dim_symbol", "dim_position",
     ],
     "si_prefix": ["id", "name", "symbol"],
-    "slug_override": ["unit_id", "prefix", "exponent", "slug"],
-    "dimension_filter_operator": ["operator_id", "position"],
-    "app_config": ["key", "value"],
     "unit": [
-        "id", "name", "symbol", "quantity_id", "system", "is_base",
+        "id", "name", "name_accusative", "symbol", "quantity_id", "system", "is_base",
         "reference_unit_id", "factor_numerator", "factor_denominator",
         "constant_id", "constant_power", "constant_shift", "offset",
     ],
@@ -196,13 +186,23 @@ def _iter_export_tables(conn):
         yield table, columns, [[r[c] for c in columns] for r in rows]
 
 
+def _sheet_name(table):
+    """Spreadsheet sheet name (31-char limit)."""
+    return table[:31]
+
+
+def _rows_insert_sql(table, columns, rows):
+    """INSERT statements for already-fetched `rows` (lists parallel to `columns`)."""
+    return "".join(insert_statement(table, columns, row) + "\n" for row in rows)
+
+
 def _csv_text(columns, rows):
     """CSV text (header + rows) for one table."""
-    text = io.StringIO()
-    writer = csv.writer(text)
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
     writer.writerow(columns)
     writer.writerows(rows)
-    return text.getvalue()
+    return buffer.getvalue()
 
 
 def export_to_csv(conn):
@@ -237,8 +237,8 @@ def export_to_xlsx(conn, output):
     from openpyxl import Workbook
     workbook = Workbook()
     for i, (table, columns, rows) in enumerate(_iter_export_tables(conn)):
-        sheet = workbook.active if i == 0 else workbook.create_sheet(title=table[:31])
-        sheet.title = table[:31]
+        sheet = workbook.active if i == 0 else workbook.create_sheet(title=_sheet_name(table))
+        sheet.title = _sheet_name(table)
         sheet.append(columns)
         for row in rows:
             sheet.append(row)
@@ -252,7 +252,7 @@ def export_to_ods(conn, output):
     from odf.text import P
     document = OpenDocumentSpreadsheet()
     for table, columns, rows in _iter_export_tables(conn):
-        sheet = Table(name=table[:31])
+        sheet = Table(name=_sheet_name(table))
         document.spreadsheet.addElement(sheet)
         for row_data in [columns] + rows:
             row = TableRow()
@@ -273,10 +273,7 @@ def build_formula_insert_sql(conn, formula_id):
             f"SELECT {','.join(columns)} FROM {table} WHERE {where} ORDER BY rowid",
             (formula_id,) * where.count("?"),
         ).fetchall()
-        return "".join(
-            insert_statement(table, columns, [row[c] for c in columns]) + "\n"
-            for row in rows
-        )
+        return _rows_insert_sql(table, columns, [[row[c] for c in columns] for row in rows])
 
     formula_sql = build_insert_sql("formula", "id = ?")
     token_sql = (
@@ -289,7 +286,7 @@ def build_formula_insert_sql(conn, formula_id):
 def export_to_sql(conn):
     """Export the schema and all table contents as a SQL script string."""
     schema = (PROJECT_DIR / "schema.sql").read_text(encoding="utf-8")
-    out = [
+    script_parts = [
         "-- Scifind SQL export\n",
         "-- Restore with: sqlite3 scifind.db < this_file.sql\n",
         "\n",
@@ -298,8 +295,43 @@ def export_to_sql(conn):
         "BEGIN TRANSACTION;\n",
     ]
     for table, columns, rows in _iter_export_tables(conn):
-        out.append(f"\n-- table: {table}\n")
-        for row in rows:
-            out.append(insert_statement(table, columns, row) + "\n")
-    out.append("\nCOMMIT;\n")
-    return "".join(out)
+        script_parts.append(f"\n-- table: {table}\n")
+        script_parts.append(_rows_insert_sql(table, columns, rows))
+    script_parts.append("\nCOMMIT;\n")
+    return "".join(script_parts)
+
+
+EXPORT_MIMETYPES = {
+    "sql": "application/sql",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "ods": "application/vnd.oasis.opendocument.spreadsheet",
+    "zip": "application/zip",
+    "csv": "text/csv",
+}
+
+EXPORT_FILENAMES = {
+    "sql": "scifind.sql",
+    "xlsx": "scifind.xlsx",
+    "ods": "scifind.ods",
+    "zip": "scifind_csv.zip",
+    "csv": "scifind.csv",
+}
+
+
+def export_payload(conn, fmt):
+    """Single export dispatch: (payload_bytes, mimetype, filename) for `fmt`.
+
+    `fmt` in {sql, xlsx, ods, zip, csv}.
+    """
+    import io
+
+    fmt = (fmt or "csv").lower()
+    if fmt == "sql":
+        return export_to_sql(conn).encode("utf-8"), EXPORT_MIMETYPES[fmt], EXPORT_FILENAMES[fmt]
+    if fmt in ("xlsx", "ods"):
+        buffer = io.BytesIO()
+        (export_to_xlsx if fmt == "xlsx" else export_to_ods)(conn, buffer)
+        return buffer.getvalue(), EXPORT_MIMETYPES[fmt], EXPORT_FILENAMES[fmt]
+    if fmt == "zip":
+        return export_to_csv_zip(conn), EXPORT_MIMETYPES[fmt], EXPORT_FILENAMES[fmt]
+    return export_to_csv(conn).encode("utf-8"), EXPORT_MIMETYPES["csv"], EXPORT_FILENAMES["csv"]

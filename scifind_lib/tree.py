@@ -1,20 +1,13 @@
 """Science/branch/topic tree, loaded from the ``topic`` table."""
 
-import json
-
-from scifind_lib.db import process_cached
 from scifind_lib.i18n import localise
+from scifind_lib.util import safe_json_dict
 
 
 def _parse_json_dict(text):
-    try:
-        data = json.loads(text or "{}")
-    except ValueError:
-        return {}
-    return data if isinstance(data, dict) else {}
+    return safe_json_dict(text)
 
 
-@process_cached("topic_tree")
 def load_tree(conn):
     """Nested topic tree rebuilt from ``topic`` rows ordered by position."""
     rows = conn.execute(
@@ -72,12 +65,12 @@ def build_tree_indices(tree):
             leaf_map[nid] = {nid}
             desc_map[nid] = {nid}
         else:
-            ls, ds = set(), {nid}
-            for k in kids:
-                ls |= leaf_map[k]
-                ds |= desc_map[k]
-            leaf_map[nid] = ls
-            desc_map[nid] = ds
+            leaves, descendants = set(), {nid}
+            for kid in kids:
+                leaves |= leaf_map[kid]
+                descendants |= desc_map[kid]
+            leaf_map[nid] = leaves
+            desc_map[nid] = descendants
     return {
         "id_to_node": id_to_node,
         "parent": parent,
@@ -113,18 +106,18 @@ def compress_selection(tree, ids, _indices=None):
     covered = set()
     for nid in set(ids):
         covered |= leaf.get(nid, {nid}) if nid in desc else {nid}
-    out = set()
+    compressed = set()
 
     def _collapse(nodes):
         for node in nodes:
             nid = node["id"]
             if leaf.get(nid, {nid}) <= covered:
-                out.add(nid)
+                compressed.add(nid)
             else:
                 _collapse(node.get("children") or [])
 
     _collapse(tree or [])
-    return out
+    return compressed
 
 
 def topic_parent_map(tree, _indices=None):
@@ -168,11 +161,6 @@ def topic_path(tree, topic, _indices=None, _parent_map=None):
     return None
 
 
-@process_cached("topic_tree_order")
-def _topic_tree_order_uncached(conn):
-    return {r["id"]: r["position"] for r in conn.execute("SELECT id, position FROM topic").fetchall()}
-
-
 def topic_tree_order(conn):
     """{topic_id: position} over the science tree, from ``topic.position``."""
-    return dict(_topic_tree_order_uncached(conn))
+    return {r["id"]: r["position"] for r in conn.execute("SELECT id, position FROM topic").fetchall()}

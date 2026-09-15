@@ -3,19 +3,9 @@
 (function() {
   'use strict';
 
-  const $ = (id) => document.getElementById(id);
-  const csrfHeader = window._csrfToken ? { 'X-CSRF-Token': window._csrfToken } : {};
-  function postForm(url, fd) {
-    if (window._csrfToken && !fd.has('_csrf_token')) fd.set('_csrf_token', window._csrfToken);
-    return fetch(url, { method: 'POST', body: fd, headers: csrfHeader });
-  }
-  const t = (path, fallback) => {
-    let cur = window._localeUI || {};
-    for (const p of path.split('.')) {
-      if (cur && typeof cur === 'object' && p in cur) cur = cur[p]; else return fallback;
-    }
-    return cur || fallback;
-  };
+  const $ = (id) => window.SFUtils.byId(id);
+  function escapeHtml(s) { return window.SFUtils.escapeHtml(s); }
+  const t = (path, fallback) => window.SFUtils.t(path, fallback);
 
   /* Local math paint + global content/icons refresh in one call. */
   function paintMath(el) {
@@ -25,12 +15,7 @@
     if (typeof renderMathInContent === 'function') renderMathInContent();
     refreshIcons();
   }
-  const copyText = (text, label) => {
-    if (!(navigator.clipboard && navigator.clipboard.writeText)) return;
-    navigator.clipboard.writeText(text)
-      .then(() => showToast(t('toast.copied', 'Copied') + ' ' + label, 'success'))
-      .catch((e) => showToast(t('toast.copy_failed', 'Copy failed') + ': ' + e.message, 'error'));
-  };
+  const copyText = (text, label) => window.SFUtils.copyText(text, label);
   function renderRowSymbols(root) {
     if (typeof katex === 'undefined') return;
     root.querySelectorAll('tr[data-symbol]').forEach((tr) => {
@@ -45,9 +30,7 @@
   }
 
   function loadTokenSidebar() {
-    fetch('/create/token-sidebar')
-      .then((r) => r.text())
-      .then((html) => setHTML($('sidebar-left-inner'), html));
+    window.SFApi.getText('/create/token-sidebar').then(function(html) { setHTML($('sidebar-left-inner'), html); });
   }
 
   function filterTokenSidebar(query) {
@@ -132,7 +115,13 @@
     }
     if (texEl) texEl.textContent = latex || 'F = ma';
   }
+  // Mirrors scifind_lib/i18n.py localise(value, locale, default="en-us"):
+  // accepts a JSON blob string, a dict, or plain text.
   function localiseName(value, fallback) {
+    if (value && typeof value === 'object') {
+      const loc = (document.documentElement.lang || 'en-us').toLowerCase();
+      return value[loc] || value['en-us'] || fallback;
+    }
     if (!value || typeof value !== 'string' || !value.trim().startsWith('{')) return value || fallback;
     try {
       const obj = JSON.parse(value);
@@ -170,22 +159,21 @@
       _lastPreviewEq = trimmed;
       const fd = collectOverrides();
       fd.set('equation', eq);
-      postForm('/create/preview-render', fd)
-        .then((r) => r.json())
-        .then((data) => {
-          if (seq !== previewSeq) return;
-          previewOk(data, eq);
-          const newKey = variablesKey(data.variables);
-          if (newKey !== lastVariablesKey) {
-            lastVariablesKey = newKey;
-            renderOverrideTable(data.variables || []);
-          }
-          paintMath(document);
-        })
-        .catch((err) => {
-          if (seq !== previewSeq) return;
-          showToast(t('create.preview_failed', 'Preview failed') + ': ' + err.message, 'error');
-        });
+      function gotPreview(data) {
+        if (seq !== previewSeq) return;
+        previewOk(data, eq);
+        const newKey = variablesKey(data.variables);
+        if (newKey !== lastVariablesKey) {
+          lastVariablesKey = newKey;
+          renderOverrideTable(data.variables || []);
+        }
+        paintMath(document);
+      }
+      function previewFail(err) {
+        if (seq !== previewSeq) return;
+        showToast(window.SFApi.serverMessage(err, t('create.preview_failed', 'Preview failed')), 'error');
+      }
+      window.SFApi.postJSON('/create/preview-render', fd).then(gotPreview, previewFail);
     }, 200);
   }
 
@@ -203,9 +191,8 @@
 
   window._treeSelectionChanged = function(id) { selectTopic(id); };
   function loadBreadcrumb(topic) {
-    fetch('/create/breadcrumb' + (topic ? '?topic=' + encodeURIComponent(topic) : ''))
-      .then((r) => r.text())
-      .then((html) => setHTML($('topic-bar'), html));
+    var url = '/create/breadcrumb' + (topic ? '?topic=' + encodeURIComponent(topic) : '');
+    window.SFApi.getText(url).then(function(html) { setHTML($('topic-bar'), html); });
   }
   function selectTopic(id) {
     const hidden = $('topic');
@@ -216,9 +203,9 @@
     if (typeof window._setTreeSelection === 'function') window._setTreeSelection(id);
   }
 
-  function openModal() { $('sql-modal').classList.add('open'); }
+  function openModal() { window.SFUtils.setModal('sql-modal', true); }
   function closeModal() {
-    $('sql-modal').classList.remove('open');
+    window.SFUtils.setModal('sql-modal', false);
     flow.history = [];
     flow.translations = {};
     flow.variables = [];
@@ -303,27 +290,31 @@
   function renderSqlPage() {
     $('modal-title').textContent = '';
     $('modal-step').innerHTML = '<h3>' + escapeHtml(t('create.formula_insert')) + '</h3><div id="sql-formula-wrap"></div><h3>' + escapeHtml(t('create.token_inserts')) + '</h3><div id="sql-token-wrap"></div>';
-    postForm('/create/build-sql', buildFinalFormData())
-      .then(async (r) => ({ ok: r.ok, body: await r.text() }))
-      .then((out) => {
-        if (!out.ok) {
-          const errEl = (new DOMParser().parseFromString(out.body, 'text/html')).querySelector('[data-error]');
-          showToast(errEl ? errEl.dataset.error : t('create.parse_error'), 'error');
-          return;
-        }
-        const wrapMap = { 'formula-sql': $('sql-formula-wrap'), 'token-sql': $('sql-token-wrap') };
-        (new DOMParser().parseFromString(out.body, 'text/html')).querySelectorAll('.sql-block').forEach((block) => {
-          const pre = block.querySelector('pre');
-          const wrap = pre && wrapMap[pre.id];
-          if (wrap) wrap.appendChild(block);
-        });
-        refreshIcons();
-        flow.issueUrl = buildIssueUrl();
-        $('modal-actions').innerHTML = backBtn()
-          + '<a class="btn-primary btn-sm" id="open-issue-link" target="_blank" rel="noopener noreferrer" href="' + escapeHtml(flow.issueUrl) + '">'
-          + escapeHtml(t('create.translate_open_issue', 'Open GitHub issue')) + '</a>';
-      })
-      .catch((err) => showToast(t('create.parse_error', 'Build failed') + ': ' + err.message, 'error'));
+    function renderHtml(body) {
+      const wrapMap = { 'formula-sql': $('sql-formula-wrap'), 'token-sql': $('sql-token-wrap') };
+      (new DOMParser().parseFromString(body, 'text/html')).querySelectorAll('.sql-block').forEach((block) => {
+        const pre = block.querySelector('pre');
+        const wrap = pre && wrapMap[pre.id];
+        if (wrap) wrap.appendChild(block);
+      });
+      refreshIcons();
+      flow.issueUrl = buildIssueUrl();
+      $('modal-actions').innerHTML = backBtn()
+        + '<a class="btn-primary btn-sm" id="open-issue-link" target="_blank" rel="noopener noreferrer" href="' + escapeHtml(flow.issueUrl) + '">'
+        + escapeHtml(t('create.translate_open_issue', 'Open GitHub issue')) + '</a>';
+    }
+    function failToast(err) {
+      // postJSON throws enriched Error with server message; legacy HTML falls back to data-error.
+      var msg = err && err.message ? err.message : t('create.parse_error');
+      if (err && err.html && !err.data) {
+        const errEl = (new DOMParser().parseFromString(err.html, 'text/html')).querySelector('[data-error]');
+        msg = errEl ? errEl.dataset.error : msg;
+      }
+      showToast(msg, 'error');
+    }
+    window.SFApi.postJSON('/create/build-sql', buildFinalFormData())
+      .then((data) => renderHtml(data.html || ''))
+      .catch(failToast);
   }
 
   function buildFinalFormData() {
@@ -361,23 +352,24 @@
     }
     const fd = collectOverrides();
     fd.set('equation', ($('equation').value || '').trim());
-    postForm('/create/preview-render', fd)
-      .then((r) => r.json())
-      .then((data) => {
-        flow.variables = (data && data.variables) || [];
-        return fetch('/create/languages').then((r) => r.json());
-      })
-      .then((langs) => {
-        flow.availableLanguages = (langs && langs.locales) || [];
-        if (langs && langs.repo) window._scifindRepo = langs.repo;
-        flow.history = [];
-        flow.translations = {};
-        $('modal-step').innerHTML = '';
-        $('modal-actions').innerHTML = '';
-        pushPage({ kind: 'pick', selected: [] });
-        openModal();
-      })
-      .catch((err) => showToast(t('create.could_not_start', 'Could not start') + ': ' + err.message, 'error'));
+    function gotPreview(data) {
+      flow.variables = (data && data.variables) || [];
+      return window.SFApi.getJSON('/create/languages');
+    }
+    function started(langs) {
+      flow.availableLanguages = (langs && langs.locales) || [];
+      if (langs && langs.repo) window._scifindRepo = langs.repo;
+      flow.history = [];
+      flow.translations = {};
+      $('modal-step').innerHTML = '';
+      $('modal-actions').innerHTML = '';
+      pushPage({ kind: 'pick', selected: [] });
+      openModal();
+    }
+    function startFail(err) {
+      showToast(window.SFApi.serverMessage(err, t('create.could_not_start', 'Could not start')), 'error');
+    }
+    window.SFApi.postJSON('/create/preview-render', fd).then(gotPreview).then(started, startFail).catch(startFail);
   }
 
   function onPickLangsContinue() {
@@ -425,8 +417,8 @@
       if (page && page.kind === 'translate') captureTranslationForm(page.code);
       popPage();
     },
-    'copy-formula-sql': () => { const pre = $('formula-sql'); if (pre) copyText(pre.textContent, 'SQL'); },
-    'copy-token-sql': () => { const pre = $('token-sql'); if (pre) copyText(pre.textContent, 'SQL'); },
+    'copy-formula-sql': () => window.SFUtils.copyPreById('formula-sql', 'SQL'),
+    'copy-token-sql': () => window.SFUtils.copyPreById('token-sql', 'SQL'),
     'toggle-token-section': (el) => {
       const list = $(el.dataset.target);
       if (!list) return;
@@ -439,17 +431,18 @@
       }
     },
   };
+  window.SFUtils.registerActions(flowActions);
 
-  document.addEventListener('click', (e) => {
+  function createPreHandle(e) {
     const tokenItem = e.target.closest('.qty-result[data-insert]');
-    if (tokenItem) { insertAtCursor(tokenItem.dataset.insert); return; }
+    if (tokenItem) { insertAtCursor(tokenItem.dataset.insert); return true; }
 
     const topicItem = e.target.closest('.topic-menu-item[data-id]');
     if (topicItem) {
       e.preventDefault(); e.stopPropagation();
       closeAllMenus();
       selectTopic(topicItem.dataset.id);
-      return;
+      return true;
     }
 
     const crumbNode = e.target.closest('.topic-current[data-id]');
@@ -457,18 +450,18 @@
       const parents = [...$('topic-bar').querySelectorAll('.topic-current[data-id]')];
       const parent = parents[parents.indexOf(crumbNode) - 1];
       selectTopic(parent ? parent.dataset.id : '');
-      return;
+      return true;
     }
 
     const trigger = e.target.closest('.topic-dropdown-trigger');
     if (trigger) {
       e.preventDefault(); e.stopPropagation();
       const menu = trigger.nextElementSibling;
-      if (!menu) return;
+      if (!menu) return true;
       const wasOpen = menu.classList.contains('open');
       closeAllMenus();
       if (!wasOpen) menu.classList.add('open');
-      return;
+      return true;
     }
 
     const trCopy = e.target.closest('[data-tr-copy]');
@@ -476,11 +469,12 @@
       const field = trCopy.dataset.trCopy;
       const target = document.querySelector('[data-tr-field="' + field + '"]');
       if (target) copyText(target.value || target.placeholder || '', trCopy.dataset.trCopyLabel || field);
-      return;
+      return true;
     }
-    const actionEl = e.target.closest('[data-action]');
-    if (actionEl && flowActions[actionEl.dataset.action]) flowActions[actionEl.dataset.action](actionEl, e);
-  });
+    return false;
+  }
+  window.SFUtils.registerPreHandler(createPreHandle);
+  window.SFUtils.installSingleClickListener();
 
   $('sidebar-left-inner').addEventListener('input', (e) => {
     if (e.target.id === 'token-search') filterTokenSidebar(e.target.value);
@@ -544,15 +538,20 @@
     clearHoverTimers();
     openSub = openItem = null;
     const bar = $('topic-bar');
+    if (!bar) return;
     bar.querySelectorAll('.topic-children-menu').forEach((m) => m.classList.remove('open'));
     bar.querySelectorAll('.topic-submenu').forEach((m) => m.style.display = '');
   }
-  document.addEventListener('click', (e) => {
-    if (!$('topic-bar').contains(e.target)) closeAllMenus();
+  // Single overlay path: topic menus close via the central dispatcher,
+  // same as settings/copy/sort menus (consistent click-outside behaviour).
+  window.SFUtils.registerOverlayCloser((e) => {
+    if ($('topic-bar') && !$('topic-bar').contains(e.target)) closeAllMenus();
   });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeAllMenus(); closeModal(); } });
 
-  const slugify = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+  // Mirrors export.resolve_formula_id slug branch: collapse runs, strip ALL edges.
+  const slugify = (s) => window.SFUtils.slugify(s);
+  const isSlug = (s) => window.SFUtils.isSlug(s);
   const nameInput = $('name_en'), idInput = $('formula_id');
   nameInput.addEventListener('input', () => { if (!idInput.dataset.manual) idInput.value = slugify(nameInput.value); });
   idInput.addEventListener('input', () => { idInput.dataset.manual = idInput.value !== slugify(nameInput.value); });

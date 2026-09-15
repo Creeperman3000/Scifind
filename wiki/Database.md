@@ -1,6 +1,6 @@
 # Database Specification
 
-SQLite database with 10 tables. Formulas are stored as [Reverse Polish
+SQLite database with 13 tables. Formulas are stored as [Reverse Polish
 Notation (RPN)](https://en.wikipedia.org/wiki/Reverse_Polish_notation) token streams that are evaluated into expression trees at
 render time. Operators and constants live in their own tables.
 
@@ -28,7 +28,6 @@ depth-first order over the tree (e.g. `kinematics` is `2` under
 | `difficulty` | INTEGER | 1–10 |
 | `description` | TEXT | JSON i18n |
 | `links` | TEXT | JSON array of URLs: `["https://...", ...]` |
-| `created` / `modified` | TEXT | Auto timestamps |
 
 ## `operator`
 
@@ -73,7 +72,8 @@ its left-hand side.
 | `description` | TEXT | JSON i18n |
 | `links` | TEXT | JSON array of URLs |
 | `value` | REAL | Numerical value; NULL for purely symbolic constants |
-| `default_unit` | TEXT | JSON array `[{"unit":"<id>","exponent":<n>},...]`; only for dimensional constants |
+| `unit_id` | TEXT | FK → unit.id; the constant's preferred named unit, or NULL |
+| `compound_unit_id` | TEXT | Canonical id into `compound_unit` (derived, not a DB FK); preferred compound unit, or NULL |
 | `quantity_id` | TEXT | FK → quantity.id; quantity whose name/unit applies (same dimensions); NULL = unlisted on quantity pages |
 
 ## `formula_token`
@@ -98,7 +98,7 @@ A CHECK constraint enforces that exactly one of `quantity_id`,
 `constant_id`, `operator_id`, or `value` is non-NULL per row.
 
 ## `formula_relation`
-Relationships between formulas. Can be viewed in `quantity/<formula_relation.formula_id>`
+Relationships between formulas. Can be viewed in `formula/<formula_relation.formula_id>`
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -125,11 +125,14 @@ the exponent column name derives as `'dim_' + dim_symbol`
 | `difficulty`           | INTEGER | 1–10                                              |
 | `description`          | TEXT    | JSON i18n                                         |
 | `links`                | TEXT    | JSON array of URLs                                |
-| `default_unit`         | TEXT    | JSON array `[{"unit":"<id>","exponent":<n>},...]` |
+| `per_overwrite`        | TEXT    | JSON i18n denominator preposition, e.g. `time` carries `{"cs-cz": "za"}` so Czech renders "Metr za sekundu" instead of the default `unitWords.per` ("na") |
 | `dim_symbol`           | TEXT    | Base-dimension symbol, NULL for derived rows      |
 | `dim_position`         | INTEGER | Order among base dimensions                       |
 | `dim_*`                | REAL    | Base dimension exponents (NOT NULL, default 0)    |
-| `created` / `modified` | TEXT    | Auto timestamps                                   |
+
+The default unit is not a column: it is resolved at runtime from the
+`unit` / `compound_unit` row with `is_base = 1` for the quantity's
+system (falling back to SI).
 
 ## `unit`
 
@@ -137,11 +140,12 @@ the exponent column name derives as `'dim_' + dim_symbol`
 |--------|------|-------------|
 | `id` | TEXT | Primary key |
 | `name` | TEXT | JSON i18n |
+| `name_accusative` | TEXT | JSON i18n declined name, e.g. `second` carries `{"cs-cz": "sekundu"}` for use after a `per_overwrite` preposition |
 | `symbol` | TEXT | LaTeX symbol |
 | `quantity_id` | TEXT | FK → quantity.id |
 | `system` | TEXT | `SI`, `CGS`, `Imperial`, or NULL (= any) |
 | `is_base` | INTEGER | 1 marks the quantity's primary unit (or one of them per system) |
-| `reference_unit_id` | TEXT | ID into `unit`, or a `compound_unit` slug (no DB-level constraint; `validate_graph` in `conversion.py` checks reachability at runtime), NULL = root |
+| `reference_unit_id` | TEXT | ID into `unit`, or a canonical `compound_unit` id (no DB-level constraint; `validate_graph` in `conversion.py` checks reachability at runtime), NULL = root |
 | `factor_numerator` | REAL | Numerator of the scaling factor; NULL means 1 |
 | `factor_denominator` | REAL | Denominator of the scaling factor; NULL means 1 (e.g. `1 inch = 1/12 ft` stores denominator `12`) |
 | `constant_id` | TEXT | FK → constant.id; the constant scales the factor (`constant_power` ±1) or offsets the reference value (`constant_shift` ±1; used for temperature absolute zero) |
@@ -164,7 +168,14 @@ temperature factor is hard-coded as a decimal.
 
 ## `compound_unit`
 
-Some values like `id` and `name` of `compound_unit` values are derived from `unit`.
+The `id` of a compound is never stored: it is derived on the fly by
+`compound_unit_slug()` as a pure function of `quantity_id` plus the
+`unit` parts (`{part}_per_{part}_{quantity_id}`, e.g.
+`metre_per_second_velocity`, `gram_p3_mass`). Prefix exponents are
+encoded as numbers (`_p3`, `_pm2`), never translated prefix names, so
+the same parts give the same id in every locale. Friendly names such as
+hectare / are / litre live in `name_overwrite` / `symbol_overwrite`,
+not in the id (e.g. id `metre_p2_squared_area`, name "Hectare").
 
 | Column             | Type    | Description                                                                                      |
 | ------------------ | ------- | ------------------------------------------------------------------------------------------------ |
@@ -177,14 +188,17 @@ Some values like `id` and `name` of `compound_unit` values are derived from `uni
 
 A compound's value derives from its `unit` parts.
 
+Leave `name_overwrite` NULL when it would duplicate the auto-derived name;
+an overwrite holding only some locales (e.g. `{"cs-cz": ...}` for Czech
+grammar fixes) falls back to the auto-derived name in the other locales.
+
 ## `si_prefix`
 
 | Column     | Type    | Description                                        |
 | ---------- | ------- | -------------------------------------------------- |
-| `id`       | TEXT    | Primary key (`k`, `M`, `\mu`, ...)                 |
-| `symbol`   | TEXT    | LaTeX display prefix, prepended to the unit symbol |
+| `id`       | TEXT    | Primary key: power of ten as a string (`3` = kilo, `-2` = centi) |
 | `name`     | TEXT    | JSON i18n prefix name, prepended to the unit name  |
-| `exponent` | INTEGER | Power of ten: kilo=3, centi=-2                     |
+| `symbol`   | TEXT    | JSON i18n prefix symbol, prepended to the unit symbol |
 
 ## Seed Data
 

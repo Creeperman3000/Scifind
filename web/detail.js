@@ -3,6 +3,10 @@
 /* Conversion cells are rendered server-side; picking a different
    reference row just swaps the pre-computed LaTeX (no client math). */
 
+  function $(id) { return window.SFUtils.byId(id); }
+  function $$(sel, root) { return window.SFUtils.bySel(sel, root); }
+  function t(path, fallback) { return window.SFUtils.t(path, fallback); }
+
   function _setUnitsCell(td, latex) {
     if (latex === null || latex === undefined) { td.innerHTML = '&ndash;'; return; }
     td.innerHTML = '';
@@ -14,10 +18,10 @@
   }
 
   /* One pass per table: ref highlight + button state + conversion cell. */
-  function _syncUnitsTable(table, st) {
+  function _syncUnitsTable(table, unitsState) {
     table.querySelectorAll('tbody tr[data-unit-id]').forEach(function(tr) {
-      var id = tr.getAttribute('data-unit-id');
-      var isRef = id === st.ref;
+      var unitId = tr.getAttribute('data-unit-id');
+      var isRef = unitId === unitsState.ref;
       tr.classList.toggle('is-ref', isRef);
       var btn = tr.querySelector('.units-ref-btn');
       if (btn) {
@@ -27,20 +31,20 @@
       var td = tr.querySelector('td.uv-conv');
       if (!td) return;
       if (isRef) { _setUnitsCell(td, null); return; }
-      var latex = (st.latex_by_ref[id] || {})[st.ref];
-      if (latex == null) latex = st.value_latex[id];
+      var latex = (unitsState.latex_by_ref[unitId] || {})[unitsState.ref];
+      if (latex == null) latex = unitsState.value_latex[unitId];
       _setUnitsCell(td, latex);
     });
   }
 
-  function _syncUnitsSection(sec) {
-    var st = sec._unitsState;
-    if (!st) return;
-    sec.querySelectorAll('.units-ref-name').forEach(function(span) {
-      span.textContent = st.ref_labels[st.ref] || '';
+  function _syncUnitsSection(section) {
+    var unitsState = section._unitsState;
+    if (!unitsState) return;
+    section.querySelectorAll('.units-ref-name').forEach(function(span) {
+      span.textContent = unitsState.ref_labels[unitsState.ref] || '';
     });
-    sec.querySelectorAll('table[data-units-dynamic]').forEach(function(table) {
-      _syncUnitsTable(table, st);
+    section.querySelectorAll('table[data-units-dynamic]').forEach(function(table) {
+      _syncUnitsTable(table, unitsState);
     });
     if (typeof renderMathInContent === 'function') renderMathInContent();
   }
@@ -52,22 +56,22 @@
   }
 
   function _setupUnitsTable(table) {
-    var sec = table.closest('.detail-section');
-    var dataEl = sec && sec.querySelector('script.units-table-data');
+    var section = table.closest('.detail-section');
+    var dataEl = section && section.querySelector('script.units-table-data');
     if (!dataEl) return;
     /* Both tables of a section share one reference-unit state, so a pick in either drives both. */
-    if (!sec._unitsState) {
-      var data;
-      try { data = JSON.parse(dataEl.textContent); } catch (e) { return; }
-      var st = { ref: data.ref, latex_by_ref: {}, ref_labels: {}, value_latex: {} };
-      (data.entries || []).concat(data.si_entries || []).forEach(function(e) {
-        st.latex_by_ref[e.id] = e.latex_by_ref || {};
-        st.ref_labels[e.id] = _stripHtml(e.label || e.name || e.id);
-        if (e.value_latex) st.value_latex[e.id] = e.value_latex;
+    if (!section._unitsState) {
+      var tableData;
+      try { tableData = JSON.parse(dataEl.textContent); } catch (e) { return; }
+      var unitsState = { ref: tableData.ref, latex_by_ref: {}, ref_labels: {}, value_latex: {} };
+      (tableData.entries || []).concat(tableData.si_entries || []).forEach(function(entry) {
+        unitsState.latex_by_ref[entry.id] = entry.latex_by_ref || {};
+        unitsState.ref_labels[entry.id] = _stripHtml(entry.label || entry.name || entry.id);
+        if (entry.value_latex) unitsState.value_latex[entry.id] = entry.value_latex;
       });
-      sec._unitsState = st;
+      section._unitsState = unitsState;
     }
-    _syncUnitsSection(sec);
+    _syncUnitsSection(section);
   }
 
   function initUnitsTables(scope) {
@@ -80,17 +84,17 @@
   }
 
   function pickUnitsRef(btn) {
-    var sec = btn.closest('.detail-section');
-    if (!sec || !sec._unitsState) return;
-    var id = btn.getAttribute('data-unit-id');
-    if (id == null || !sec._unitsState.latex_by_ref[id]) return;
-    sec._unitsState.ref = id;
-    _syncUnitsSection(sec);
+    var section = btn.closest('.detail-section');
+    if (!section || !section._unitsState) return;
+    var unitId = btn.getAttribute('data-unit-id');
+    if (unitId == null || !section._unitsState.latex_by_ref[unitId]) return;
+    section._unitsState.ref = unitId;
+    _syncUnitsSection(section);
   }
 
-  function toggleSiPrefixes(el) {
-    var sec = el.closest('.detail-section');
-    var table = sec && sec.querySelector('.si-prefix-table');
+  function toggleSiPrefixes(trigger) {
+    var section = trigger.closest('.detail-section');
+    var table = section && section.querySelector('.si-prefix-table');
     if (!table) return;
     var open = table.classList.toggle('si-expanded');
     var row = table.querySelector('.si-toggle-row');
@@ -101,7 +105,7 @@
   }
 
   (function() {
-    var mc = document.getElementById('main-content');
+    var mc = $('main-content');
     if (!mc || typeof MutationObserver === 'undefined') return;
     new MutationObserver(function(muts) {
       for (var i = 0; i < muts.length; i++) {
@@ -122,7 +126,7 @@
      mask anchored at the mantissa's right edge so the \times10^ stays opaque.
      Hiding (not deleting) lets resizes bring trimmed digits back. */
   function layoutConstantValues() {
-    document.querySelectorAll('.constant-box').forEach(function(box) {
+    $$('.constant-box').forEach(function(box) {
       var val = box.querySelector('.const-value');
       if (!val) return;
       var decs = Array.prototype.slice.call(val.querySelectorAll('.cv-dec'));
@@ -167,56 +171,33 @@
       requestAnimationFrame(function() { layoutConstantValues(); });
     });
   }
-  function toastCopy(promise, label) {
-    promise.then(function() { showToast(window._localeUI.toast.copied + ' ' + label, 'success'); })
-           .catch(function(e) { showToast(window._localeUI.toast.copy_failed + ': ' + e.message, 'error'); });
-  }
-
   function copyFormula(fmt) {
-    var latex = document.getElementById('formula-tex');
+    var latex = $('formula-tex');
     if (!latex) return;
     var tex = latex.textContent;
     var labelMap = { latex: 'LaTeX', unicode: 'Unicode', png: 'PNG', svg: 'SVG' };
-    var doCopy = null;
     if (fmt === 'latex') {
-      doCopy = navigator.clipboard.writeText(tex);
-    } else if (fmt === 'unicode') {
+      window.SFUtils.copyText(tex, labelMap[fmt]);
+      return;
+    }
+    var doCopy = null;
+    if (fmt === 'unicode') {
       doCopy = import('https://cdn.jsdelivr.net/npm/unicodeit@0.7.5/+esm').then(function(mod) {
         return navigator.clipboard.writeText(mod.replace(tex));
       });
     } else if (fmt === 'png' || fmt === 'svg') {
       var url = 'https://latex.codecogs.com/' + fmt + '.latex?' + encodeURIComponent((fmt === 'png' ? '\\dpi{3000}' : '') + tex);
-      doCopy = fetch(url).then(function(r) { return r.blob(); }).then(function(blob) {
+      doCopy = fetch(url).then(window.SFApi.checkOk).then(function(r) { return r.blob(); }).then(function(blob) {
         var item = {};
         item['image/' + fmt] = blob;
         return navigator.clipboard.write([new ClipboardItem(item)]);
       });
     }
-    if (doCopy) toastCopy(doCopy, labelMap[fmt] || fmt);
-  }
-
-  function copySqlBlock(btn) {
-    var block = btn.closest('.sql-block');
-    var pre = block ? block.querySelector('pre') : null;
-    if (!pre || !pre.textContent.trim()) return;
-    toastCopy(navigator.clipboard.writeText(pre.textContent), 'SQL');
-  }
-
-  function _setModal(id, open) {
-    var modal = document.getElementById(id);
-    if (modal) modal.classList.toggle('open', !!open);
-  }
-  function openFormulaSqlModal() {
-    var menu = document.getElementById('formula-copy-menu');
-    if (menu) menu.classList.remove('open');
-    _setModal('formula-sql-modal', true);
-  }
-  function closeFormulaSqlModal() {
-    _setModal('formula-sql-modal', false);
+    if (doCopy) window.SFUtils.copyPromise(doCopy, labelMap[fmt] || fmt);
   }
 
   function toggleCopyMenu(e) {
     e.stopPropagation();
-    var menu = document.getElementById('formula-copy-menu');
+    var menu = $('formula-copy-menu');
     if (menu) menu.classList.toggle('open');
   }

@@ -2,14 +2,14 @@
 
 (function() {
   'use strict';
-  function $(id) { return document.getElementById(id); }
-  function $$(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
+  function $(id) { return window.SFUtils.byId(id); }
+  function $$(sel, root) { return window.SFUtils.bySel(sel, root); }
   function showToast(message, type) {
-    var t = document.createElement('div');
-    t.className = 'toast ' + (type || 'success');
-    t.textContent = message;
-    $('toast-container').appendChild(t);
-    setTimeout(function() { t.style.opacity = '0'; t.style.transition = 'opacity var(--dur-slow)'; setTimeout(function() { t.remove(); }, 300); }, 4000);
+    var toastEl = document.createElement('div');
+    toastEl.className = 'toast ' + (type || 'success');
+    toastEl.textContent = message;
+    $('toast-container').appendChild(toastEl);
+    setTimeout(function() { toastEl.style.opacity = '0'; toastEl.style.transition = 'opacity var(--dur-slow)'; setTimeout(function() { toastEl.remove(); }, 300); }, 4000);
   }
   window.showToast = showToast;
   function refreshIcons() { if (typeof lucide !== 'undefined') lucide.createIcons(); }
@@ -252,7 +252,6 @@
     });
   }
 
-  /* Keep <head> stylesheets in step with the target page. */
   function syncPageStyles(doc) {
     var want = {};
     $$('link[rel="stylesheet"]', doc.head).forEach(function(l) { want[l.getAttribute('href')] = true; });
@@ -330,8 +329,8 @@
   function mergeLinkQs(href) {
     var parts = href.split('?');
     var params = new URLSearchParams(window.location.search);
-    params.delete('q');
-    ['page', 'per_page', 'all'].forEach(function(k) { params.delete(k); });
+    window.SFUtils.stripSearchParam(params, false);
+    window.SFUtils.stripPagingParams(params);
     if (parts[1]) new URLSearchParams(parts[1]).forEach(function(v, k) {
       if (k === 'page' || k === 'per_page' || k === 'all') return;
       params.set(k, v);
@@ -347,10 +346,7 @@
     var list_container = document.querySelector('[data-list-container]');
     if (!more_bar || !list_container) return;
     btn.dataset.loading = '1';
-    fetch(btn.getAttribute('href')).then(function(r) {
-      if (!r.ok) throw new Error('load more failed');
-      return r.text();
-    }).then(function(html) {
+    window.SFApi.getText(btn.getAttribute('href')).then(function(html) {
       var doc = new DOMParser().parseFromString(html, 'text/html');
       var items = doc.querySelector('[data-list-container]');
       if (items) list_container.insertAdjacentHTML('beforeend', items.innerHTML);
@@ -367,43 +363,38 @@
     var searchForm = document.querySelector('.topbar-search form');
     var searchInput = searchForm ? searchForm.querySelector('input[name="q"]') : null;
     var suggestionsEl = $('search-suggestions');
-    var suggestDebounce = null;
     var suggestHighlight = -1;
 
     function closeSuggestions() {
       if (suggestionsEl) { suggestionsEl.classList.remove('open'); suggestionsEl.innerHTML = ''; }
       suggestHighlight = -1;
     }
-    function goSuggestion(s) {
+    function goSuggestion(suggestion) {
       closeSuggestions();
-      searchInput.value = s.heading;
-      navigateTo('/' + s.kind + '/' + s.id);
+      searchInput.value = suggestion.heading;
+      navigateTo('/' + suggestion.kind + '/' + suggestion.id);
     }
-    var _suggestController = null, _suggestCache = new Map();
+    var _suggestController = null;
     function fetchSuggestions(q) {
       if (!suggestionsEl) return;
       if (!q) { closeSuggestions(); return; }
-      if (_suggestCache.has(q)) { renderSuggestions(_suggestCache.get(q)); return; }
       if (_suggestController) _suggestController.abort();
       var ctrl = _suggestController = new AbortController();
-      fetch('/api/search-suggestions?q=' + encodeURIComponent(q), { signal: ctrl.signal })
-        .then(function(r) { return r.json(); })
+      window.SFApi.getJSON('/api/search-suggestions?q=' + encodeURIComponent(q), { signal: ctrl.signal })
         .then(function(data) {
           if (ctrl.signal.aborted) return;
-          _suggestCache.set(q, data);
-          if (_suggestCache.size > 50) _suggestCache.delete(_suggestCache.keys().next().value);
           renderSuggestions(data);
         })
         .catch(function(err) { if (!err || err.name !== 'AbortError') closeSuggestions(); });
     }
     function renderSuggestions(data) {
       closeSuggestions();
-      (data.suggestions || []).forEach(function(s) {
+      (data.suggestions || []).forEach(function(suggestion) {
         var div = document.createElement('div');
         div.className = 'search-suggestion'; div.tabIndex = -1;
         div.innerHTML = '<span></span><span class="ss-kind"></span>';
-        div.children[0].textContent = s.heading; div.children[1].textContent = s.kind;
-        div.addEventListener('click', function() { goSuggestion(s); });
+        div.children[0].textContent = suggestion.heading; div.children[1].textContent = suggestion.kind;
+        div.addEventListener('click', function() { goSuggestion(suggestion); });
         suggestionsEl.appendChild(div);
       });
       if (suggestionsEl.innerHTML) suggestionsEl.classList.add('open');
@@ -418,12 +409,10 @@
     }
 
     if (searchInput && suggestionsEl) {
+      var debouncedSuggest = window.SFUtils.debounce(function() { fetchSuggestions(searchInput.value.trim()); }, 150);
       searchInput.addEventListener('input', function() {
         syncSearchCancel();
-        clearTimeout(suggestDebounce);
-        suggestDebounce = setTimeout(function() {
-          fetchSuggestions(searchInput.value.trim());
-        }, 150);
+        debouncedSuggest();
       });
       searchInput.addEventListener('keydown', function(e) {
         var items = suggestionsEl.querySelectorAll('.search-suggestion');
@@ -470,8 +459,6 @@
     window.addEventListener('popstate', function() { navigateTo(window.location.href, true); });
   })();
 
-  /* ---- First-load boot (runs once). Post-swap sync reuses
-     syncContent() above. */
   /* Restore helpers live at IIFE top level (not nested in initPage) so
      syncContent() can reuse them on every SPA swap. */
   function restoreTreeFromUrl() {
@@ -582,10 +569,7 @@
     return w >= 1024 ? 'pc' : w >= 768 ? 'tablet' : 'mobile';
   }
 
-  function isSidebarOpen(side) {
-    var el = $('sidebar-' + side);
-    return !el || el.getAttribute('data-open') !== '0'; // default open if element missing
-  }
+  function isSidebarOpen(side) { return window.SFUtils.sidebarOpenAttr(side); }
   function setSidebarState(side, open) {
     var el = $('sidebar-' + side);
     if (!el) return;
@@ -614,8 +598,6 @@
   }
   function toggleSidebar(side) { setSidebarOpen(side, !isSidebarOpen(side)); }
   window.toggleSidebar = toggleSidebar;
-  /* Aliases kept for existing call sites below. */
-  function openSidebar(side) { setSidebarOpen(side, true); }
   function closeSidebar(side) { setSidebarOpen(side, false); }
 
   /* Shared overlay closer for the shortcuts Esc chain. */
@@ -651,9 +633,8 @@
 
   function hasActiveFilters() {
     var diffMin = parseInt($('diff-min').value), diffMax = parseInt($('diff-max').value);
-    return dimVals().some(dimResolved) ||
-      (window._qtySelected && window._qtySelected.length > 0) ||
-      diffMin > 1 || diffMax < 10;
+    return window.SFUtils.filtersActive(dimVals().map(dimResolved),
+      (window._qtySelected && window._qtySelected.length) || 0, diffMin, diffMax);
   }
 
   function hasTreeFilter() {
@@ -684,8 +665,7 @@
   }
 
   function dockSetView(view) {
-    var qs = new URL(window.location).searchParams.toString();
-    var target = (view === 'quantities' ? '/quantities' : '/formulas') + (qs ? '?' + qs : '');
+    var target = window.SFUtils.viewUrl(view, false);
     if (typeof window._navigateTo === 'function') window._navigateTo(target);
     else window.location.href = target;
   }
@@ -806,9 +786,7 @@
      /search so strip it from the URL too. */
   function exitSearchAction() {
     if (/[?&]q=/.test(window.location.search)) {
-      var url = new URL(window.location);
-      url.searchParams.delete('q');
-      var clean = url.pathname + (url.searchParams.toString() ? '?' + url.searchParams.toString() : '');
+      var clean = window.SFUtils.stripQFromUrl(window.location.href);
       if (window.location.pathname === '/search') {
         if (typeof window._navigateTo === 'function') window._navigateTo(clean);
         else window.location.href = clean;
@@ -827,11 +805,26 @@
     'toggle-settings': toggleSettings,
     'toggle-sort-menu': toggleSortMenu,
     'toggle-copy-menu': toggleCopyMenu,
-    'open-formula-sql': openFormulaSqlModal,
-    'close-formula-sql': closeFormulaSqlModal,
-    'open-bug-report': function() { window.open('https://github.com/Creeperman3000/Scifind/issues/new', '_blank'); }
+    'open-formula-sql': function() { var m = $('formula-copy-menu'); if (m) m.classList.remove('open'); window.SFUtils.setModal('formula-sql-modal', true); },
+    'close-formula-sql': function() { window.SFUtils.setModal('formula-sql-modal', false); },
+    'open-bug-report': function() { window.open('https://github.com/Creeperman3000/Scifind/issues/new', '_blank'); },
+    'sort-pick': function(e, el) { pickSort(el.getAttribute('data-sort')); },
+    'copy-formula-latex': function() { copyFormula('latex'); },
+    'copy-formula-unicode': function() { copyFormula('unicode'); },
+    'copy-formula-image-png': function() { copyFormula('png'); },
+    'copy-formula-image-svg': function() { copyFormula('svg'); },
+    'copy-formula-sql-export': function(e, el) { window.SFUtils.copySqlBlock(el); },
+    'copy-token-sql-export': function(e, el) { window.SFUtils.copySqlBlock(el); },
+    'remove-qty-chip': function(e, el) { removeQtyChip(el.getAttribute('data-qty')); },
+    'add-qty-chip': function(e, el) { addQtyChip(el.getAttribute('data-qty')); },
+    'close-overlays': function() { closeSidebar('left'); closeSidebar('right'); },
+    'dock-set-view': function(e, el) { dockSetView(el.getAttribute('data-dock-view')); },
+    'dock-toggle-panel': function(e, el) { toggleSidebar(el.getAttribute('data-target')); },
+    'toggle-si-prefixes': function(e, el) { toggleSiPrefixes(el); },
+    'units-ref-pick': function(e, el) { pickUnitsRef(el); }
   };
-  document.addEventListener('click', function(e) {
+  window.SFUtils.registerActions(CLICK_ACTIONS);
+  window.SFUtils.registerOverlayCloser(function(e) {
     var settingsWrap = document.querySelector('.settings-wrap');
     if (settingsWrap && !settingsWrap.contains(e.target)) $('settings-menu').classList.remove('open');
     window._morphSelects.forEach(function(ctrl) {
@@ -841,27 +834,8 @@
     if (copyMenu && !e.target.closest('.formula-box *') && e.target !== copyMenu && !copyMenu.contains(e.target)) {
       copyMenu.classList.remove('open');
     }
-    var el = e.target.closest('[data-action]');
-    if (!el) return;
-    var action = el.getAttribute('data-action');
-    if (CLICK_ACTIONS[action]) { CLICK_ACTIONS[action](e, el); return; }
-    switch (action) {
-      case 'sort-pick': pickSort(el.getAttribute('data-sort')); break;
-      case 'copy-formula-latex': copyFormula('latex'); break;
-      case 'copy-formula-unicode': copyFormula('unicode'); break;
-      case 'copy-formula-image-png': copyFormula('png'); break;
-      case 'copy-formula-image-svg': copyFormula('svg'); break;
-      case 'copy-formula-sql-export':
-      case 'copy-token-sql-export': copySqlBlock(el); break;
-      case 'remove-qty-chip': removeQtyChip(el.getAttribute('data-qty')); break;
-      case 'add-qty-chip': addQtyChip(el.getAttribute('data-qty')); break;
-      case 'close-overlays': closeSidebar('left'); closeSidebar('right'); break;
-      case 'dock-set-view': dockSetView(el.getAttribute('data-dock-view')); break;
-      case 'dock-toggle-panel': toggleSidebar(el.getAttribute('data-target')); break;
-      case 'toggle-si-prefixes': toggleSiPrefixes(el); break;
-      case 'units-ref-pick': pickUnitsRef(el); break;
-    }
   });
+  window.SFUtils.installSingleClickListener();
   var CHANGE_ACTIONS = {
     'switch-theme': switchTheme,
     'switch-lang': function(v) { reloadWithCookie('sf_locale', v); },

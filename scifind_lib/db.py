@@ -38,6 +38,14 @@ def in_clause(ids):
     return ("NULL", ()) if not items else (",".join("?" for _ in items), tuple(items))
 
 
+def keyed_rows(conn, sql, ids):
+    """``{id: dict(row)}`` for a SELECT with one ``{}`` IN-list slot; {} for empty ids."""
+    if not ids:
+        return {}
+    marks, params = in_clause(ids)
+    return {r["id"]: dict(r) for r in conn.execute(sql.format(marks), params).fetchall()}
+
+
 def open_database():
     path = database_path()
     if parent := os.path.dirname(path):
@@ -63,52 +71,6 @@ def database_has_formula_table(conn):
     return bool(conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='formula'").fetchone())
 
 
-# Keyed by (db_path, mtime_ns, size) so reseed invalidates; :memory:/URI bypass.
-_PROCESS_CACHE: dict = {}
-
-
-def db_cache_key():
-    """(path, mtime_ns, size) for the current DB file, or None if uncacheable."""
-    path = database_path()
-    if not path or path == ":memory:" or path.startswith("file:"):
-        return None
-    try:
-        st = os.stat(path)
-    except OSError:
-        return None
-    return (path, st.st_mtime_ns, st.st_size)
-
-
-def cached_process(key_name, loader):
-    """Cached loader() for (db_cache_key, key_name); shared — copy mutables before mutating."""
-    ckey = db_cache_key()
-    if ckey is None:
-        return loader()
-    full = (ckey, key_name)
-    if full not in _PROCESS_CACHE:
-        _PROCESS_CACHE[full] = loader()
-    return _PROCESS_CACHE[full]
-
-
-def process_cached(key_name):
-    """Decorator for uncached ``fn(conn, ...)`` loaders using the process cache."""
-    from functools import wraps
-
-    def _decorator(fn):
-        @wraps(fn)
-        def _wrapper(conn, *args, **kwargs):
-            key = key_name if not args and not kwargs else f"{key_name}:{args!r}:{sorted(kwargs.items())!r}"
-            return cached_process(key, lambda: fn(conn, *args, **kwargs))
-        _wrapper.uncached = fn
-        return _wrapper
-    return _decorator
-
-
-def clear_process_cache():
-    """Drop all process-cached reference data."""
-    _PROCESS_CACHE.clear()
-
-
 def initialize_database(force=False, schema_path=None, seed_path=None):
     """Create (or recreate) the schema and seed data; ``force`` requires SCIFIND_ALLOW_FORCE_INIT=1."""
     if force and os.environ.get("SCIFIND_ALLOW_FORCE_INIT", "").lower() not in {"1", "true", "yes"}:
@@ -117,21 +79,22 @@ def initialize_database(force=False, schema_path=None, seed_path=None):
     schema_path = schema_path or project_dir / "schema.sql"
     seed_path = seed_path or project_dir / "seed.sql"
     tables = ("formula_relation", "formula_token", "formula", "operator", "constant",
-              "compound_unit", "unit", "quantity", "topic", "si_prefix",
-              "slug_override", "dimension_filter_operator", "app_config")
+              "compound_unit", "unit", "quantity", "topic", "si_prefix")
+    legacy_tables = ("dimension_filter_operator", "app_config")
     with database_connection() as conn:
         conn.execute("PRAGMA foreign_keys = OFF")
         try:
             if force:
-                for table in tables:
+                for table in tables + legacy_tables:
                     conn.execute(f"DROP TABLE IF EXISTS {table}")
-            for path in (schema_path, seed_path):
-                conn.executescript(Path(path).read_text(encoding="utf-8"))
+            for script_path in (schema_path, seed_path):
+                conn.executescript(Path(script_path).read_text(encoding="utf-8"))
+            for table in legacy_tables:
+                conn.execute(f"DROP TABLE IF EXISTS {table}")
             conn.execute("PRAGMA foreign_keys = ON")
             conn.commit()
         except Exception as exc:
             logger.error("initialize_database failed; rolling back: %s", exc)
             conn.rollback()
             raise
-        clear_process_cache()
         return conn.total_changes

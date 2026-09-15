@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import math
 from collections import deque
 
+from scifind_lib.i18n import localise, wrap_symbol_in_latex
 from scifind_lib.units import (
     compound_unit_by_slug, compound_unit_slug,
     format_compound_unit_symbol,
     parse_compound_unit_parts, si_prefix_factor,
+)
+from scifind_lib.util import (
+    SCI_LARGE_THRESHOLD, SCI_SMALL_THRESHOLD,
+    as_int as _as_int,
+    render_sci_latex, split_sci_mantissa,
 )
 
 logger = logging.getLogger(__name__)
@@ -28,12 +33,13 @@ class UnitGraph:
         "constant_id", "constant_power", "constant_shift", "offset",
     )
     _UNIT_COLS = "id, symbol, system, is_base, " + ", ".join(_EDGE_COLS)
-    # No stored id: compound dict keys are slugs computed via compound_unit_slug.
+    # No stored id: compound dict keys are canonical ids from compound_unit_slug.
     _COMPOUND_COLS = "quantity_id, unit, symbol_overwrite, system, is_base"
 
-    def __init__(self, conn, quantity_id):
+    def __init__(self, conn, quantity_id, locale="en-us"):
         self.conn = conn
         self.quantity_id = quantity_id
+        self.locale = locale
         self.unit_rows: dict = {}
         self.compound_rows: dict = {}
         # Only unit rows have reference edges. Compound rows live in
@@ -51,21 +57,21 @@ class UnitGraph:
             self._install(row, in_unit=False)
 
     def _install(self, row, *, in_unit):
-        d = dict(row)
+        row_dict = dict(row)
         if in_unit:
-            self.unit_rows[d["id"]] = d
-            self.edges[d["id"]] = self.make_edge(
-                d["reference_unit_id"], d["factor_numerator"], d["factor_denominator"],
-                d["constant_id"],
-                1.0 if d["constant_power"] is None else d["constant_power"],
-                0.0 if d["constant_shift"] is None else d["constant_shift"],
-                0.0 if d["offset"] is None else d["offset"],
+            self.unit_rows[row_dict["id"]] = row_dict
+            self.edges[row_dict["id"]] = self.make_edge(
+                row_dict["reference_unit_id"], row_dict["factor_numerator"], row_dict["factor_denominator"],
+                row_dict["constant_id"],
+                1.0 if row_dict["constant_power"] is None else row_dict["constant_power"],
+                0.0 if row_dict["constant_shift"] is None else row_dict["constant_shift"],
+                0.0 if row_dict["offset"] is None else row_dict["offset"],
             )
         else:
-            uid = d.get("id") or compound_unit_slug(
-                self.conn, d.get("quantity_id"), d.get("unit"))
-            d["id"] = uid
-            self.compound_rows[uid] = d
+            uid = row_dict.get("id") or compound_unit_slug(
+                row_dict.get("quantity_id"), row_dict.get("unit"))
+            row_dict["id"] = uid
+            self.compound_rows[uid] = row_dict
 
     @staticmethod
     def make_edge(reference_unit_id, factor_numerator=None,
@@ -169,7 +175,7 @@ class UnitGraph:
         parts = parse_compound_unit_parts(row["unit"]) if row else None
         if not parts:
             return None
-        result = 1.0
+        product = 1.0
         for uid, exp, prefix in parts:
             v = self.root_value(uid)
             if v is None or not math.isfinite(v):
@@ -179,8 +185,8 @@ class UnitGraph:
                     v *= float(si_prefix_factor(prefix))
                 except (TypeError, ValueError):
                     return None
-            result *= v ** exp
-        return result
+            product *= v ** exp
+        return product
 
 
 def validate_graph(conn):
@@ -234,11 +240,11 @@ def convert_value(value, from_id, to_id, graph):
 
 def _graph_neighbours(graph, node):
     """Direct neighbours of `node` in either edge direction."""
-    out = []
+    neighbours = []
     edge = graph.edges.get(node)
     if edge is not None and edge[0] is not None:
-        out.append(edge[0])
-    return out + [o for o, e in graph.edges.items() if e[0] == node and o != node]
+        neighbours.append(edge[0])
+    return neighbours + [o for o, e in graph.edges.items() if e[0] == node and o != node]
 
 
 def path_between(graph, from_id, to_id):
@@ -262,24 +268,6 @@ def path_between(graph, from_id, to_id):
     return None
 
 
-def _prefix_symbol_latex(conn, exp):
-    row = conn.execute("SELECT symbol FROM si_prefix WHERE id = ?", (str(exp),)).fetchone()
-    if not row:
-        return ""
-    try:
-        return json.loads(row["symbol"]).get("en-us", "") or ""
-    except (ValueError, TypeError):
-        return row["symbol"] or ""
-
-
-def _part_symbol(graph, uid):
-    if uid in graph.unit_rows:
-        return graph.unit_rows[uid].get("symbol") or uid
-    part_row = graph.conn.execute(
-        "SELECT symbol FROM unit WHERE id = ?", (uid,)).fetchone()
-    return part_row["symbol"] if part_row else uid
-
-
 def _unit_symbol(graph, unit_id):
     if unit_id in graph.unit_rows:
         return graph.unit_rows[unit_id].get("symbol") or unit_id
@@ -291,19 +279,25 @@ def _unit_symbol(graph, unit_id):
     parts = parse_compound_unit_parts(row["unit"])
     if not parts:
         return unit_id
-    sym_map = {uid: _part_symbol(graph, uid) for uid, _e, _p in parts}
+    sym_map = {}
+    for uid, _e, _p in parts:
+        if uid in graph.unit_rows:
+            sym_map[uid] = graph.unit_rows[uid].get("symbol") or uid
+        else:
+            part_row = graph.conn.execute(
+                "SELECT symbol FROM unit WHERE id = ?", (uid,)).fetchone()
+            sym_map[uid] = part_row["symbol"] if part_row else uid
+
+    def _prefix_sym(exp):
+        row = graph.conn.execute(
+            "SELECT symbol FROM si_prefix WHERE id = ?", (str(int(exp)),)).fetchone()
+        return localise(row["symbol"], graph.locale) if row else ""
+
     return format_compound_unit_symbol(
         row["unit"],
         unit_symbol=lambda uid: sym_map.get(uid, uid),
-        prefix_symbol=lambda exp: _prefix_symbol_latex(graph.conn, int(exp)),
+        prefix_symbol=_prefix_sym,
     )
-
-
-def _unit_latex(graph, unit_id):
-    sym = _unit_symbol(graph, unit_id)
-    if not sym or "\\mathrm{" in sym:
-        return sym
-    return f"\\mathrm{{{sym}}}"
 
 
 def _pretty_factor(x):
@@ -312,10 +306,10 @@ def _pretty_factor(x):
     if math.isinf(x):
         return "\\infty"
     ax = abs(x)
-    if ax >= 1e4 or ax < 1e-4:
+    if ax >= SCI_LARGE_THRESHOLD or ax < SCI_SMALL_THRESHOLD:
         return _render_sci(x, decimals=6)
-    if x == int(x) and abs(x) < 1e15:
-        return str(int(x))
+    if (iv := _as_int(x)) is not None:
+        return str(iv)
     return f"{x:.6g}"
 
 
@@ -323,11 +317,8 @@ def _reciprocal_int(value):
     """Integer k > 1 with value ≈ 1/k, else None."""
     if value == 0:
         return None
-    r = 1.0 / value
-    r_int = round(r)
-    if r_int > 1 and abs(r - r_int) <= 1e-9 * max(1.0, abs(r)):
-        return int(r_int)
-    return None
+    r = _as_int(1.0 / value)
+    return r if r is not None and r > 1 else None
 
 
 def _factor_value_text(value):
@@ -336,18 +327,14 @@ def _factor_value_text(value):
     if value > 0 and value != 1:
         k = _reciprocal_int(value)
         if k is not None:
-            return _reciprocal_from_int(k)
+            if k < 10000:
+                return f"1/{k}"
+            log10 = math.log10(k)
+            if abs(log10 - round(log10)) < 1e-9:
+                return f"1/10^{{{int(round(log10))}}}"
+            factor_text = _pretty_factor(k)
+            return f"1/({factor_text})" if "\\times" in factor_text else f"1/{factor_text}"
     return _pretty_factor(value)
-
-
-def _reciprocal_from_int(r_int):
-    if r_int < 10000:
-        return f"1/{r_int}"
-    log10 = math.log10(r_int)
-    if abs(log10 - round(log10)) < 1e-9:
-        return f"1/10^{{{int(round(log10))}}}"
-    text = _pretty_factor(r_int)
-    return f"1/({text})" if "\\times" in text else f"1/{text}"
 
 
 def _constant_symbol(graph, constant_id):
@@ -361,30 +348,27 @@ def _render_sci(x, *, decimals=4):
     if x == 0:
         return "0"
     sign = "-" if x < 0 else ""
-    exp = int(math.floor(math.log10(abs(x))))
-    mant = abs(x) / (10.0 ** exp)
+    mant, exp = split_sci_mantissa(abs(x))
     if abs(mant - 1.0) <= 1e-6:
         return f"{sign}10^{{{exp}}}"
     if abs(mant - 10.0) <= 1e-6:
         return f"{sign}10^{{{exp + 1}}}"
     mant = round(mant, 6)
     if mant >= 9.9999995:
-        mant = 1.0
-        exp += 1
+        mant, exp = 1.0, exp + 1
     if abs(mant - round(mant)) < 1e-9:
         mant_str = str(int(round(mant)))
     else:
         mant_str = f"{mant:.{decimals}f}".rstrip("0").rstrip(".")
-    return f"{sign}{mant_str}\\times10^{{{exp}}}"
+    return render_sci_latex(sign, mant_str, exp)
 
 
 def _nice_num(x):
     """Render a coefficient readably: int, fraction, ≤2 dp, else .6g."""
     if x == 0:
         return "0"
-    r = round(x)
-    if r != 0 and abs(x - r) < 1e-9 and abs(r) < 1e15:
-        return str(int(r))
+    if (iv := _as_int(x)) is not None and iv != 0:
+        return str(iv)
     for d in range(2, 21):
         n = x * d
         nr = round(n)
@@ -396,7 +380,7 @@ def _nice_num(x):
     r2 = round(x, 2)
     if abs(x - r2) < 1e-6:
         return f"{r2:.2f}".rstrip("0").rstrip(".")
-    if ax >= 1e6 or ax < 1e-4:
+    if ax >= SCI_LARGE_THRESHOLD or ax < SCI_SMALL_THRESHOLD:
         return _render_sci(x)
     return f"{x:.6g}"
 
@@ -405,8 +389,8 @@ def render_equation(graph, row_id, ref_id):
     """LaTeX for the (row, ref) conversion cell."""
     if row_id == ref_id:
         return None
-    qa, qb = graph._quantity_of(row_id), graph._quantity_of(ref_id)
-    if qa is None or qa != qb:
+    row_qid, ref_qid = graph._quantity_of(row_id), graph._quantity_of(ref_id)
+    if row_qid is None or row_qid != ref_qid:
         return _render_numeric_equation(graph, row_id, ref_id)
     path = path_between(graph, row_id, ref_id)
     if path is not None:
@@ -431,8 +415,8 @@ def _hop_factor(graph, edge, inverted):
 
 def _render_chain(graph, path):
     """Chain LaTeX for a row→ref path."""
-    row_sym = _unit_latex(graph, path[0])
-    ref_sym = _unit_latex(graph, path[-1])
+    row_sym = wrap_symbol_in_latex(_unit_symbol(graph, path[0]))
+    ref_sym = wrap_symbol_in_latex(_unit_symbol(graph, path[-1]))
     hops = []
     has_offset = False
     for i in range(len(path) - 1):
@@ -458,27 +442,16 @@ def _render_chain(graph, path):
     return _render_chain_numeric(hops, row_sym, ref_sym)
 
 
-def _int_text(x):
-    """Compact text for an int-like number, else None."""
-    try:
-        r = round(float(x))
-    except (TypeError, ValueError):
-        return None
-    if abs(float(x) - r) <= 1e-9 * max(1.0, abs(float(x))) and abs(r) < 1e15:
-        return str(int(r))
-    return None
-
-
 def _stored_fraction_text(raw_num, raw_den):
     """Literal `num/den` text for a stored factor (NULL = 1); None when trivial."""
     n = 1.0 if raw_num is None else raw_num
     d = 1.0 if raw_den is None else raw_den
     if n == 1.0 and d == 1.0:
         return None
-    n_text, d_text = _int_text(n), _int_text(d)
+    n_text, d_text = _as_int(n), _as_int(d)
     if n_text is None or d_text is None:
         return None
-    return n_text if d_text == "1" else f"{n_text}/{d_text}"
+    return str(n_text) if d_text == 1 else f"{n_text}/{d_text}"
 
 
 def _hop_display_text(hop):
@@ -519,10 +492,10 @@ def _const_multiplier_fragment(sym, M, cv):
         (M * cv, lambda k: sym if k == 1 else f"{k} \\div {sym}"),
         (1.0 / (M * cv), lambda k: f"1/{sym}" if k == 1 else f"1/({sym} \\times {k})"),
     )
-    for k, text in candidates:
+    for k, render in candidates:
         k_int = int(round(k))
         if isint(k) and (best is None or k_int < best[0]):
-            best = (k_int, text(k_int))
+            best = (k_int, render(k_int))
     return best[1] if best else _factor_value_text(M)
 
 
@@ -570,10 +543,10 @@ def _render_affine_equation(hops, row_sym, ref_sym):
         if c < 0:
             return f"{lhs} = ({body} + {_nice_num(-c)}) \\times {_nice_num(a)}"
         return f"{lhs} = ({body} - {_nice_num(c)}) \\times {_nice_num(a)}"
-    out = f"{lhs} = {_nice_num(a)} \\times {body}"
+    equation = f"{lhs} = {_nice_num(a)} \\times {body}"
     if abs(b) >= 1e-12:
-        out += f" - {_nice_num(-b)}" if b < 0 else f" + {_nice_num(b)}"
-    return out
+        equation += f" - {_nice_num(-b)}" if b < 0 else f" + {_nice_num(b)}"
+    return equation
 
 
 def _render_numeric_equation(graph, row_id, ref_id):
@@ -586,7 +559,8 @@ def _render_numeric_equation(graph, row_id, ref_id):
     ratio = row_val / ref_val
     if not math.isfinite(ratio):
         return None
-    row_sym, ref_sym = _unit_latex(graph, row_id), _unit_latex(graph, ref_id)
+    row_sym = wrap_symbol_in_latex(_unit_symbol(graph, row_id))
+    ref_sym = wrap_symbol_in_latex(_unit_symbol(graph, ref_id))
     if ratio == 1:
         # Distinct ids with identical value: show the identity, not a dash.
         return f"1\\,{row_sym} = 1\\,{ref_sym}"

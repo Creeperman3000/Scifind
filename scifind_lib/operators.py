@@ -1,9 +1,8 @@
 """Data-driven operator machinery: latex templates + dim_spec evaluator."""
 
-import json
 import re
 
-from scifind_lib.db import process_cached
+from scifind_lib.util import safe_json_list
 
 DIM_TOLERANCE = 1e-9
 
@@ -12,10 +11,7 @@ class OperatorDefinition:
     def __init__(self, row):
         self.id = row["id"]
         self.symbol = row.get("symbol")
-        try:
-            aliases = json.loads(row.get("aliases") or "[]")
-        except (ValueError, TypeError):
-            aliases = []
+        aliases = safe_json_list(row.get("aliases"))
         self.aliases = [a for a in aliases if isinstance(a, str) and a]
         self.arity = row["arity"]
         self.precedence = row["precedence"]
@@ -38,13 +34,8 @@ class OperatorDefinition:
 
 OPERATOR_COLUMNS = "id, symbol, aliases, arity, precedence, associativity, type, latex_template, dim_spec"
 
-@process_cached("operators")
-def _load_operators_uncached(conn):
-    return {r["id"]: OperatorDefinition(dict(r)) for r in conn.execute(f"SELECT {OPERATOR_COLUMNS} FROM operator")}
-
-
 def load_operators(conn):
-    return dict(_load_operators_uncached(conn))
+    return {r["id"]: OperatorDefinition(dict(r)) for r in conn.execute(f"SELECT {OPERATOR_COLUMNS} FROM operator")}
 
 def alias_to_id_map(operators):
     mapping = {}
@@ -167,17 +158,17 @@ def _matcher_matches(matcher, info):
     return want is not None and info.get("kind") == want and info.get("ref") == arg
 
 def _render_tokens(toks, operands, infos):
-    out = []
+    chunks = []
     for tok in toks:
         if tok[0] == "text":
-            out.append(tok[1])
+            chunks.append(tok[1])
         elif tok[0] == "slot":
-            out.append(operands[tok[1]])
+            chunks.append(operands[tok[1]])
         else:
             _, idx, matcher, then_toks, else_toks = tok
             take_then = _matcher_matches(matcher, infos[idx]) if matcher is not None else operands[idx]
-            out.append(_render_tokens(then_toks if take_then else else_toks, operands, infos))
-    return "".join(out)
+            chunks.append(_render_tokens(then_toks if take_then else else_toks, operands, infos))
+    return "".join(chunks)
 
 def render_template(template, operands, infos, op_id="<template>"):
     operands, infos = list(operands), list(infos)
@@ -230,16 +221,16 @@ def _parse_idx_list(arg, arity, op_id, what):
         return True
     if not arg:
         raise ValueError(f"operator {op_id!r}: dim_spec {what} needs indexes or 'all' (e.g. {what}(all), {what}(0, 1))")
-    out = []
+    indexes = []
     for part in arg.split(","):
         part = part.strip()
         if not re.fullmatch(r"-?\d+", part or ""):
             raise ValueError(f"operator {op_id!r}: dim_spec {what} has bad index {part!r} (expected e.g. {what}(all), {what}(0, 1))")
         j = _wrap_dim_index(int(part), arity, op_id, what)
-        if j in out:
+        if j in indexes:
             raise ValueError(f"operator {op_id!r}: dim_spec {what} repeats index {j}")
-        out.append(j)
-    return sorted(out)
+        indexes.append(j)
+    return sorted(indexes)
 
 def _split_terms(expr, op_id):
     terms, buf, sign, depth = [], [], 1, 0
@@ -278,20 +269,20 @@ def _parse_result_expr(expr, arity, op_id):
         m = _TERM_RE.match(term)
         if not m:
             raise ValueError(f"operator {op_id!r}: dim_spec result term {term!r} is not of the form dims(i), n*dims(i), dims(i)*value(j) or dims(i)/value(j)")
-        d = _wrap_dim_index(int(m.group("dim")), arity, op_id, "dims")
-        if d in seen:
-            raise ValueError(f"operator {op_id!r}: dim_spec result mentions dims({d}) twice")
-        seen.add(d)
+        dim_idx = _wrap_dim_index(int(m.group("dim")), arity, op_id, "dims")
+        if dim_idx in seen:
+            raise ValueError(f"operator {op_id!r}: dim_spec result mentions dims({dim_idx}) twice")
+        seen.add(dim_idx)
         coeff = float(m.group("coeff")) if m.group("coeff") else 1.0
         op, weight = m.group("op"), (m.group("weight") or "").strip()
         if not weight:
-            factors[d] = sign * coeff
+            factors[dim_idx] = sign * coeff
             continue
         if (vm := _VALUE_RE.match(weight)) is not None:
             if sign != 1 or coeff != 1.0:
-                raise ValueError(f"operator {op_id!r}: dim_spec value-weighted term {term!r} must be positive with no numeric prefix (e.g. dims({d})*value(j))")
+                raise ValueError(f"operator {op_id!r}: dim_spec value-weighted term {term!r} must be positive with no numeric prefix (e.g. dims({dim_idx})*value(j))")
             j = _wrap_dim_index(int(vm.group("idx")), arity, op_id, "value")
-            factors[d] = {"value_of": j} if op == "*" else {"value_of": j, "invert": True}
+            factors[dim_idx] = {"value_of": j} if op == "*" else {"value_of": j, "invert": True}
             continue
         try:
             number = float(weight)
@@ -299,7 +290,7 @@ def _parse_result_expr(expr, arity, op_id):
             raise ValueError(f"operator {op_id!r}: dim_spec result term {term!r} has a bad weight") from exc
         if number == 0 and op == "/":
             raise ValueError(f"operator {op_id!r}: dim_spec result term {term!r} divides by zero")
-        factors[d] = sign * coeff * (number if op == "*" else 1.0 / number)
+        factors[dim_idx] = sign * coeff * (number if op == "*" else 1.0 / number)
     return factors
 
 def parse_dim_spec(text, arity, op_id):
@@ -370,9 +361,9 @@ def _norm_indexes(value, arity, op_id, what, allow_true=True):
 
 def _validate_dim_spec(spec, arity, op_id):
     factors = spec.get("factors", 1)
-    ok = _is_broadcast(factors) or (isinstance(factors, list) and len(factors) == arity
+    valid = _is_broadcast(factors) or (isinstance(factors, list) and len(factors) == arity
             and all(_is_broadcast(f) or _is_value_ref(f) for f in factors))
-    if not ok:
+    if not valid:
         raise ValueError(f"operator {op_id!r}: dim_spec factors must be a number or a list of {arity} numbers / value_of refs")
     for f in factors if isinstance(factors, list) else []:
         if isinstance(f, dict):
