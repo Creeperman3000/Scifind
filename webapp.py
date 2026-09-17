@@ -69,8 +69,8 @@ from scifind_lib.formula import dimension_symbols, dimension_quantity_ids
 from scifind_lib.conversion import UnitGraph, convert_value, validate_graph
 from scifind_lib.formula import (
     compute_all_formula_dimensions,
-    compute_compound_unit_dimensions,
     compute_formula_dimensions,
+    constant_dimensions,
     dimension_matches,
     dimensions_from_row,
     parse_and_preview_equation,
@@ -115,6 +115,7 @@ from scifind_lib.fetch import (
 from scifind_lib.units import (
     parse_compound_unit,
     resolve_base_unit,
+    resolve_constant_base,
     select_base_units_batched,
 )
 from scifind_lib.operators import operand_info, render_template as render_op_template
@@ -825,21 +826,12 @@ def _constant_units_table(conn, constant, system):
     """Per-unit value rows for a constant, converting via the unit graph; preferred unit first."""
     si_value = constant.get("value")
     rq_id = constant.get("quantity_id") or constant.get("related_quantity_id")
-    if si_value is None or not rq_id:
+    if si_value is None or (not rq_id and not constant.get("unit")):
         return []
 
     locale = g.locale
-    base, default_unit_html, default_unit_symbol = _base_unit_html_latex(
-        conn, constant.get("unit_id"), constant.get("compound_unit_id"),
-        fallback_qid=rq_id, locale=locale)
-
-    graph = UnitGraph(conn, rq_id, locale)
-    if base and base["kind"] == "compound_unit":
-        base_unit_ids = {uid for uid, _ in parse_compound_unit(base["unit"])}
-    elif base:
-        base_unit_ids = {base["id"]}
-    else:
-        base_unit_ids = set()
+    base = resolve_constant_base(conn, constant, system=system)
+    _, default_unit_html, default_unit_symbol = _render_base(base, locale)
 
     units_rows = []
     if base:
@@ -851,8 +843,11 @@ def _constant_units_table(conn, constant, system):
         })
 
     seen_values = {units_rows[0]["value_latex"]} if units_rows else set()
-    if base is None:
+    if base is None or not rq_id:
         return units_rows
+    base_unit_ids = ({uid for uid, _ in parse_compound_unit(base["unit"])} if base["kind"] == "compound_unit"
+                     else {base["id"]})
+    graph = UnitGraph(conn, rq_id, locale)
     for unit_row in fetch_quantity_units(conn, rq_id):
         unit = dict(unit_row)
         if unit["id"] in base_unit_ids:
@@ -898,9 +893,10 @@ def _constant_detail_item(conn, item, locale):
         sym = f"${rq_symbol}$ " if rq_symbol else ""
         paren_html = f"({sym}{entity_link('quantity', rq_id, rq_name)})"
 
-    base = resolve_base_unit(conn, item.get("constant_unit_id"),
-                               item.get("constant_compound_unit_id"),
-                               fallback_qid=rq_id, system=g.unit_system)
+    base = resolve_constant_base(conn, {
+        "unit": item.get("constant_unit"),
+        "quantity_id": rq_id,
+    }, system=g.unit_system)
     return _detail_row(item.get("constant_symbol") or "", name_html,
                        paren_html, base, locale)
 
@@ -992,14 +988,11 @@ def _with_latex(conn, rows, locale, id_key="id"):
     return annotated
 
 
-def _base_unit_html_latex(conn, unit_id=None, compound_id=None, fallback_qid=None, locale=None):
-    """Single resolve + render path for detail pages (html, latex)."""
-    base = resolve_base_unit(conn, unit_id, compound_id, fallback_qid,
-                             system=g.unit_system)
+def _render_base(base, locale=None):
+    """Render an already-resolved base row as (base, html, latex)."""
     if base is None:
         return None, Markup(""), ""
-    active_locale = locale or g.locale
-    name_html, symbol_latex = render_compound_unit(base, active_locale)
+    name_html, symbol_latex = render_compound_unit(base, locale or g.locale)
     return base, name_html, symbol_latex
 
 
@@ -1043,9 +1036,8 @@ def quantity_detail(quantity_id):
     for const in fetch_quantity_constants(conn, quantity_id):
         const = dict(const)
         const["value_latex"] = _format_constant_value(const["value"])
-        _, _html, _latex = _base_unit_html_latex(
-            conn, const.get("unit_id"), const.get("compound_unit_id"),
-            fallback_qid=quantity_id)
+        _, _html, _latex = _render_base(
+            resolve_constant_base(conn, const, system=g.unit_system), locale)
         const["unit_symbol_latex"] = _latex
         constants.append(const)
     return render_template(
@@ -1073,11 +1065,11 @@ def constant_detail(constant_id):
             or localise(constant.get("related_quantity_name"), "en-us")
         )
 
-    base, _, unit_symbol_latex = _base_unit_html_latex(
-        conn, constant.get("unit_id"), constant.get("compound_unit_id"),
-        fallback_qid=constant.get("related_quantity_id"))
-    compound_unit_json = (base["unit"]
-                          if base and base["kind"] == "compound_unit" else None)
+    base, _, unit_symbol_latex = _render_base(
+        resolve_constant_base(conn, constant, system=g.unit_system), locale)
+    dimensions = constant_dimensions(
+        conn, constant.get("quantity_id") or constant.get("related_quantity_id"),
+        constant.get("unit"))
     display = format_sci_parts(constant["value"]) if constant.get("value") is not None else None
 
     return render_template(
@@ -1085,7 +1077,7 @@ def constant_detail(constant_id):
         constant=constant,
         links=_parse_links(constant.get("links")),
         formulas=_with_latex(conn, fetch_constant_formulas(conn, constant_id), locale),
-        dim_latex=_dim_latex(conn, compute_compound_unit_dimensions(conn, compound_unit_json)),
+        dim_latex=_dim_latex(conn, dimensions),
         display=display,
         value_latex=_constant_value_latex(display) if display else "",
         unit_symbol_latex=unit_symbol_latex,

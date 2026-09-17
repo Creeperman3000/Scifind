@@ -141,6 +141,26 @@ def compound_unit_slug(quantity_id, unit_json):
     return f"{base}_{quantity_id}"
 
 
+def _lower_first_html(fragment):
+    """Lowercase the first text character of an HTML fragment (tags preserved)."""
+    out, i, n = [], 0, len(fragment)
+    while i < n:
+        if fragment[i] == "<":
+            end = fragment.find(">", i)
+            if end == -1:
+                break
+            out.append(fragment[i:end + 1])
+            i = end + 1
+        elif fragment[i].isspace():
+            out.append(fragment[i])
+            i += 1
+        else:
+            out.append(fragment[i].lower())
+            out.append(fragment[i + 1:])
+            return "".join(out)
+    return fragment
+
+
 def format_compound_unit_html(
     json_text, unit_url=None, unit_name=None, locale="en-us", unit_quantity_map=None,
     quantity_pers=None, unit_accusatives=None, prefix_name=None,
@@ -151,6 +171,7 @@ def format_compound_unit_html(
     denominator part whose quantity carries ``quantity.per_overwrite``
     for this locale switches to that word (e.g. Czech time -> "za")
     and renders the denominator in the accusative (``unit.name_accusative``).
+    Pure-reciprocal denominators stay nominative.
     """
     split = _fraction_parts(json_text)
     if split is None:
@@ -158,9 +179,17 @@ def format_compound_unit_html(
     numerators, denominators = split
     words = locale_unit_words(locale)
     num_html = _render_unit_group(numerators, unit_url, unit_name, locale,
-                                   prefix_name=prefix_name)
+                                   unit_accusatives=unit_accusatives,
+                                   prefix_name=prefix_name,
+                                   decline=False, case="nom")
     if not denominators:
         return num_html
+    if not num_html:
+        den_html = _render_unit_group(
+            denominators, unit_url, unit_name, locale,
+            unit_accusatives=unit_accusatives,
+            prefix_name=prefix_name, decline=False, case="nom")
+        return f"{words['reciprocal']} {_lower_first_html(den_html)}"
     use_special, per_word = False, words["per"]
     if unit_quantity_map and quantity_pers:
         for uid, _e, _p in denominators:
@@ -172,9 +201,7 @@ def format_compound_unit_html(
     den_html = _render_unit_group(denominators, unit_url, unit_name, locale,
                                    use_special_exponents=use_special,
                                    unit_accusatives=unit_accusatives,
-                                   prefix_name=prefix_name)
-    if not num_html:
-        return f"{words['reciprocal']} {den_html}"
+                                   prefix_name=prefix_name, case="acc")
     return f"{num_html} {per_word} {den_html}"
 
 
@@ -214,9 +241,35 @@ def strip_compound_html(text):
     return html.unescape(re.sub(r"<[^>]+>", "", text or "")).strip()
 
 
+def compound_overwrite_cell(overwrite_text, unit_json, locale, *,
+                            unit_names, unit_quantity_map=None,
+                            quantity_pers=None, unit_accusatives=None,
+                            prefix_names=None):
+    """Table-cell HTML for a name overwrite: ``overwrite (linked parts)``.
+
+    The header and ref labels use just `overwrite_text`; the parts stay only
+    in the cell, with their component links intact. When the derived parts
+    name duplicates the overwrite, the cell shows just the overwrite.
+    """
+    linked_parts = format_compound_unit_html(
+        unit_json, locale=locale,
+        unit_name=unit_name_callback(unit_names),
+        unit_url=lambda uid: f"/unit/{uid}" if uid in unit_names else None,
+        unit_quantity_map=unit_quantity_map,
+        quantity_pers=quantity_pers,
+        unit_accusatives=unit_accusatives,
+        prefix_name=prefix_name_callback(prefix_names or {}),
+    ).strip()
+    parts_text = strip_compound_html(linked_parts).strip()
+    if linked_parts and parts_text \
+            and parts_text.lower() != (overwrite_text or "").lower():
+        return Markup(f"{html.escape(overwrite_text)} ({linked_parts})")
+    return Markup(html.escape(overwrite_text or ""))
+
+
 def _render_unit_group(items, url_func, name_func=None, locale="en-us",
                        use_special_exponents=False, unit_accusatives=None,
-                       prefix_name=None):
+                       prefix_name=None, decline=True, case="nom"):
     """Render (unit_id, exponent, prefix) triples as HTML with natural-language exponents.
 
     Exponents 2/3 render before the noun ("Square inch") when the locale
@@ -227,6 +280,9 @@ def _render_unit_group(items, url_func, name_func=None, locale="en-us",
     fragments = []
     for i, (unit_id, exponent, prefix) in enumerate(items):
         label = name_func(unit_id) if name_func else unit_id.replace("_", " ").title()
+        # Feminine nouns carry a distinct accusative; masculine/neuter don't.
+        acc_form = localise((unit_accusatives or {}).get(unit_id) or "", locale)
+        feminine = bool(acc_form) and acc_form.lower() != label.lower()
         link = url_func(unit_id) if url_func else None
         pref_text = ""
         if prefix is not None and prefix_name:
@@ -242,7 +298,7 @@ def _render_unit_group(items, url_func, name_func=None, locale="en-us",
                 pref_text = pref
             else:
                 label = pref + label
-        if use_special_exponents and unit_accusatives:
+        if decline and unit_accusatives:
             acc = localise(unit_accusatives.get(unit_id) or "", locale)
             if acc:
                 label = acc
@@ -261,6 +317,8 @@ def _render_unit_group(items, url_func, name_func=None, locale="en-us",
             fragments.append(f"{attr} {pref_text}{link_text}")
             continue
         word = unit_exponent_word(exponent, locale, denominator=use_special_exponents)
+        if not use_special_exponents and feminine and abs(exponent) == 3:
+            word = words.get("cubed_f_acc" if case == "acc" else "cubed_f_nom") or word
         link_text = (anchor(link, label) if link else html.escape(label))
         fragment = pref_text + link_text
         if word:
@@ -340,6 +398,22 @@ def resolve_base_unit(conn, unit_id=None, compound_id=None, fallback_qid=None,
     if base is None and fallback_qid:
         base = select_base_unit_with_fallback(conn, fallback_qid, system)
     return base
+
+
+def resolve_constant_base(conn, constant, system="SI"):
+    """Base row for a constant: explicit ``unit`` JSON wins, else quantity base, else None.
+
+    NULL unit inherits the quantity's base; NULL quantity with NULL unit
+    means dimensionless (pi).
+    """
+    unit_json = constant.get("unit")
+    qid = constant.get("quantity_id") or constant.get("related_quantity_id")
+    if unit_json:
+        slug = compound_unit_slug(qid, unit_json)
+        return compound_unit_by_slug(conn, slug, qid) or {
+            "kind": "compound_unit", "id": slug, "unit": unit_json,
+            "quantity_id": qid, "system": "SI"}
+    return select_base_unit_with_fallback(conn, qid, system) if qid else None
 
 
 def select_base_unit(conn, quantity_id, system):
@@ -467,11 +541,10 @@ def _db_prefix_entries(conn, quantity_id):
 def _prefixable_parts(conn, parts_with_prefix):
     """[(part_uid, part_exp, base_prefix)] for the prefixable parts.
 
-    The prefix anchor is always the part with its old prefix stripped
-    (e.g. mass SI base ``gram_p3`` anchors on ``gram``), so attaching a
-    new prefix is just swapping the exponent — no per-quantity special
-    cases. A part is prefixable when its unit is an SI base unit, with
-    ``gram`` included as mass's anchor.
+    The prefix anchor is always the part with its old prefix stripped, so
+    attaching a new prefix is just swapping the exponent — no per-quantity
+    special cases. A part is prefixable when its unit is an SI base unit or
+    the unprefixed part of an SI compound base (the 10^0 of its family).
     """
     from scifind_lib.fetch import fetch_prefixable_base_units
 
@@ -484,8 +557,13 @@ def _prefixable_parts(conn, parts_with_prefix):
             for uid, exp, _prefix in parts_with_prefix if uid in prefixable]
 
 
-def inject_si_prefix_nodes(graph, conn, quantity_id, locale, system, *, unit_syms):
-    """Inject synthetic SI-prefixed nodes for the prefix table; dimensionless skipped."""
+def inject_si_prefix_nodes(graph, conn, quantity_id, locale, *, unit_syms):
+    """Inject synthetic SI-prefixed nodes for the prefix table; dimensionless skipped.
+
+    The nodes always anchor on the SI base (the SI table is the SI family),
+    so conversions use the same graph path as every other row: the prefix
+    just multiplies the base by 10^k.
+    """
     from scifind_lib.fetch import (
         fetch_si_prefixes,
         fetch_unit,
@@ -493,7 +571,7 @@ def inject_si_prefix_nodes(graph, conn, quantity_id, locale, system, *, unit_sym
 
     if _is_dimensionless(conn, quantity_id):
         return
-    base = select_base_unit_with_fallback(conn, quantity_id, system)
+    base = select_base_unit_with_fallback(conn, quantity_id, "SI")
     if not base:
         return
 
@@ -526,13 +604,18 @@ def inject_si_prefix_nodes(graph, conn, quantity_id, locale, system, *, unit_sym
             return
 
         for part_uid, _part_exp, base_prefix in prefixable_parts:
-            for p in fetch_si_prefixes(conn):
-                exp = int(p["id"])
-                if exp == base_prefix:
-                    continue
-                pid = f"si_{p['id']}_{part_uid}"
+            prefix_syms_by_exp = {int(p["id"]): p for p in fetch_si_prefixes(conn)}
+            exps = [e for e in prefix_syms_by_exp if e != base_prefix]
+            if base_prefix != 0:
+                # Implicit unprefixed anchor (10^0 of its family); the
+                # si_prefix table carries no 0 row.
+                exps.append(0)
+            for exp in exps:
+                pid = f"si_{exp}_{part_uid}"
+                row = prefix_syms_by_exp.get(exp)
+                prefix_sym = "" if row is None else localise(row["symbol"], locale)
                 prefixed_sym_latex = _build_compound_sym_latex(
-                    unit_syms, localise(p["symbol"], locale), part_uid, parts
+                    unit_syms, prefix_sym, part_uid, parts
                 )
                 graph.compound_rows[pid] = {
                     "id": pid,
@@ -544,14 +627,12 @@ def inject_si_prefix_nodes(graph, conn, quantity_id, locale, system, *, unit_sym
                 }
 
 
-def _prefixed_unit_name(prefix_word, base_name, link_unit_id):
-    return html.escape(prefix_word) + anchor(f"/unit/{link_unit_id}", base_name.lower())
-
-
 def _collapse_flags(rows, conn, fallback="si_base"):
     visible = _visible_exponents(conn)
     for r in rows:
-        r["collapsed"] = (not r.get("is_db_entry", False)) and (r["exp"] not in visible)
+        # exp 0 is the unprefixed form and is always visible, independent of
+        # the configured visible set.
+        r["collapsed"] = (not r.get("is_db_entry", False)) and (r["exp"] not in visible) and (r["exp"] != 0)
         r["payload_id"] = r["id"] or fallback
     return rows
 
@@ -593,24 +674,32 @@ def si_prefix_sections(conn, quantity_id, locale, *,
                 "exp": 0,
                 "symbol_latex": base_symbol_latex,
                 "name": base_name,
+                "label": base_name,
                 "system_key": system_key(0),
                 "link_unit_id": base_id,
-                "value_latex": "10^{0}",
             }]
 
             for p in fetch_si_prefixes(conn):
                 exp = int(p["id"])
                 prefix_sym = localise(p["symbol"], locale)
                 normalised_prefix = _normalise_prefix_symbol(prefix_sym, base_symbol)
-                prefix_word = localise(p["name"], locale)
+                pname = Markup(_render_unit_group(
+                    [(base_id, 1, exp)],
+                    lambda uid: f"/unit/{uid}" if uid in unit_names else None,
+                    unit_name_callback(unit_names),
+                    locale,
+                    prefix_name=prefix_name_callback(prefix_names),
+                ))
                 prefixed.append({
                     "id": f"si_{p['id']}",
                     "exp": exp,
                     "symbol_latex": wrap_symbol_in_latex(normalised_prefix + base_symbol),
-                    "name": Markup(_prefixed_unit_name(prefix_word, base_name, base_id)),
+                    # Same renderer as the canonical compound path: prefix as
+                    # plain text, base name linked and joined lowercase.
+                    "name": pname,
+                    "label": strip_compound_html(pname),
                     "system_key": system_key(exp),
                     "link_unit_id": None,
-                    "value_latex": f"10^{{{exp}}}",
                 })
             _collapse_flags(prefixed, conn, base_id or "si_base")
             prefixed.sort(key=lambda x: x["exp"], reverse=True)
@@ -643,51 +732,68 @@ def si_prefix_sections(conn, quantity_id, locale, *,
         prefixed = []
         db_prefix_entries = prefix_map.get(part_uid, {})
 
+        base_name_html = format_compound_unit_html(
+            base["unit"], locale=locale,
+            unit_name=unit_name_callback(unit_names),
+            unit_url=lambda uid: f"/unit/{uid}" if uid in unit_names else None,
+            unit_quantity_map=unit_quantity_map(conn),
+            quantity_pers=quantity_pers or quantity_per_map(conn),
+            unit_accusatives=unit_accusatives or unit_accusative_map(conn),
+            prefix_name=prefix_name_callback(prefix_names),
+        )
         prefixed.append({
             "id": f"{base_id}_{part_uid}_base",
             "exp": base_prefix,
             "symbol_latex": base_symbol_latex,
-            "name": format_compound_unit_html(
-                base["unit"], locale=locale,
-                unit_name=unit_name_callback(unit_names),
-                unit_url=lambda uid: f"/unit/{uid}" if uid in unit_names else None,
-                unit_quantity_map=unit_quantity_map(conn),
-                quantity_pers=quantity_pers or quantity_per_map(conn),
-                unit_accusatives=unit_accusatives or unit_accusative_map(conn),
-                prefix_name=prefix_name_callback(prefix_names),
-            ),
+            "name": base_name_html,
+            "label": strip_compound_html(base_name_html),
             "system_key": "detail.si_base",
             "link_unit_id": None,
-            "value_latex": f"10^{{{base_prefix * part_exp}}}",
         })
 
-        for p in fetch_si_prefixes(conn):
-            exp = int(p["id"])
-            if exp == base_prefix:
-                continue
+        prefix_rows = {int(p["id"]): p for p in fetch_si_prefixes(conn)}
+        section_exps = [e for e in prefix_rows if e != base_prefix]
+        if base_prefix != 0:
+            # Implicit unprefixed anchor (10^0 of its family); the
+            # si_prefix table carries no 0 row.
+            section_exps.append(0)
+        for exp in section_exps:
+            p = prefix_rows.get(exp)
 
             if exp in db_prefix_entries:
                 db_entry = db_prefix_entries[exp]
                 name_json = db_entry["name_overwrite"]
-                db_entry_name = localise(name_json, locale) if name_json else ""
-                if not db_entry_name:
+                overwrite = localise(name_json, locale) if name_json else ""
+                if overwrite:
+                    db_entry_name = compound_overwrite_cell(
+                        overwrite, db_entry["unit"], locale,
+                        unit_names=unit_names,
+                        unit_quantity_map=unit_quantity_map(conn),
+                        quantity_pers=quantity_pers or quantity_per_map(conn),
+                        unit_accusatives=unit_accusatives or unit_accusative_map(conn),
+                        prefix_names=prefix_names,
+                    )
+                    db_entry_label = overwrite
+                else:
                     # No overwrite (or no translation for this locale):
-                    # derive from the parts instead of the slug. Plain text
-                    # (no links): the template wraps this in an outer link.
-                    db_entry_name = strip_compound_html(format_compound_unit_html(
+                    # derive from the parts through the canonical renderer,
+                    # with per-component links like everywhere else.
+                    db_entry_name = format_compound_unit_html(
                         db_entry["unit"], locale=locale,
                         unit_name=unit_name_callback(unit_names),
+                        unit_url=lambda uid: f"/unit/{uid}" if uid in unit_names else None,
                         unit_quantity_map=unit_quantity_map(conn),
-                        quantity_pers=quantity_per_map(conn),
-                        unit_accusatives=unit_accusative_map(conn),
+                        quantity_pers=quantity_pers or quantity_per_map(conn),
+                        unit_accusatives=unit_accusatives or unit_accusative_map(conn),
                         prefix_name=prefix_name_callback(prefix_names),
-                    )) or db_entry["id"].replace("_", " ").title()
+                    ) or db_entry["id"].replace("_", " ").title()
+                    db_entry_label = strip_compound_html(db_entry_name)
                 sym_overwrite = db_entry["symbol_overwrite"]
                 if sym_overwrite:
                     db_sym_latex = sym_overwrite
                 else:
                     db_parts = parse_compound_unit(db_entry["unit"])
-                    if db_parts and part_uid:
+                    if db_parts and part_uid and p is not None:
                         prefix_sym = localise(p["symbol"], locale)
                         db_sym_latex = _build_compound_sym_latex(
                             unit_syms, prefix_sym, part_uid, db_parts
@@ -703,38 +809,38 @@ def si_prefix_sections(conn, quantity_id, locale, *,
                     "exp": exp,
                     "symbol_latex": db_sym_latex,
                     "name": db_entry_name,
+                    "label": db_entry_label,
                     "system_key": None,
-                    "link_unit_id": part_uid,
-                    "value_latex": f"10^{{{exp * part_exp}}}",
+                    "link_unit_id": None,
                     "is_db_entry": True,
                 })
                 continue
 
-            prefix_name_val = localise(p["name"], locale)
-            prefix_sym = localise(p["symbol"], locale)
-            prefixed_parts = [
-                {"unit": uid, "exponent": exp_val, "prefix": exp}
-                if uid == part_uid
-                else {"unit": uid, "exponent": exp_val}
-                for uid, exp_val in parts
-            ]
+            prefix_sym = "" if p is None else localise(p["symbol"], locale)
+            # Same swapped entries as the conversion graph, so the displayed
+            # name always describes the converted value (other parts keep
+            # their prefixes; exp 0 strips the anchor prefix).
+            prefixed_parts = _swapped_entries(parts_with_prefix, part_uid, exp)
             pref_name_html = format_compound_unit_html(
                 json.dumps(prefixed_parts), locale=locale,
                 unit_name=unit_name_callback(unit_names),
-                prefix_name=lambda _exp: prefix_name_val,
                 unit_url=lambda uid: f"/unit/{uid}" if uid in unit_names else None,
+                unit_quantity_map=unit_quantity_map(conn),
+                quantity_pers=quantity_pers or quantity_per_map(conn),
+                unit_accusatives=unit_accusatives or unit_accusative_map(conn),
+                prefix_name=prefix_name_callback(prefix_names),
             )
             pref_sym_latex = _build_compound_sym_latex(
                 unit_syms, prefix_sym, part_uid, parts
             )
             prefixed.append({
-                "id": f"si_{p['id']}_{part_uid}",
+                "id": f"si_{exp}_{part_uid}",
                 "exp": exp,
                 "symbol_latex": pref_sym_latex,
                 "name": pref_name_html,
+                "label": strip_compound_html(pref_name_html),
                 "system_key": None,
                 "link_unit_id": None,
-                "value_latex": f"10^{{{exp * part_exp}}}",
             })
 
         _collapse_flags(prefixed, conn, f"{base_id}_{part_uid}" or "si_base")

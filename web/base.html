@@ -139,9 +139,10 @@
 {%- endmacro %}
 
 {% macro units_table(units, table_data, si_prefix_sections, fixed_ref=False) -%}
-{% if units %}
+{% if units or si_prefix_sections %}
 <div class="detail-section">
   <h3>{{ _('detail.units') }}</h3>
+{% if units %}
   <table class="units-table" data-units-dynamic>
     <colgroup><col class="units-c1"><col class="units-c2"><col class="units-c3"></colgroup>
     <thead>
@@ -161,6 +162,7 @@
     {% endfor %}
     </tbody>
   </table>
+{% endif %}
 {% if si_prefix_sections %}
   {% for section in si_prefix_sections %}
   <div class="si-prefix-section">

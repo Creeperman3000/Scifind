@@ -32,7 +32,6 @@
       if (!td) return;
       if (isRef) { _setUnitsCell(td, null); return; }
       var latex = (unitsState.latex_by_ref[unitId] || {})[unitsState.ref];
-      if (latex == null) latex = unitsState.value_latex[unitId];
       _setUnitsCell(td, latex);
     });
   }
@@ -63,11 +62,10 @@
     if (!section._unitsState) {
       var tableData;
       try { tableData = JSON.parse(dataEl.textContent); } catch (e) { return; }
-      var unitsState = { ref: tableData.ref, latex_by_ref: {}, ref_labels: {}, value_latex: {} };
+      var unitsState = { ref: tableData.ref, latex_by_ref: {}, ref_labels: {} };
       (tableData.entries || []).concat(tableData.si_entries || []).forEach(function(entry) {
         unitsState.latex_by_ref[entry.id] = entry.latex_by_ref || {};
         unitsState.ref_labels[entry.id] = _stripHtml(entry.label || entry.name || entry.id);
-        if (entry.value_latex) unitsState.value_latex[entry.id] = entry.value_latex;
       });
       section._unitsState = unitsState;
     }

@@ -13,7 +13,7 @@ from scifind_lib.formula import (
 from scifind_lib.i18n import localise
 from scifind_lib.tree import topic_tree_order
 from scifind_lib.units import compound_unit_slug
-from scifind_lib.util import eval_dim_expr, parse_int_or
+from scifind_lib.util import eval_dim_expr, parse_int_or, safe_json_list
 
 MIN_DIFFICULTY = 1
 MAX_DIFFICULTY = 10
@@ -134,8 +134,7 @@ def fetch_formula_token_quantities(conn, formula_id):
         "SELECT ft.*, q.symbol AS quantity_symbol,"
         " json_extract(q.name, '$.en-us') AS quantity_name,"
         " c.symbol AS constant_symbol,"
-        " c.unit_id AS constant_unit_id,"
-        " c.compound_unit_id AS constant_compound_unit_id,"
+        " c.unit AS constant_unit,"
         " json_extract(c.name, '$.en-us') AS constant_name,"
         " rq.id AS related_quantity_id,"
         " json_extract(rq.name, '$.en-us') AS related_quantity_name,"
@@ -376,7 +375,7 @@ def fetch_quantity_constants(conn, quantity_id):
     """Constants pointing at this quantity via constant.quantity_id."""
     return _all(conn,
         "SELECT c.id, c.name, c.symbol, c.value,"
-        " c.unit_id, c.compound_unit_id"
+        " c.quantity_id, c.unit"
         " FROM constant c WHERE c.quantity_id = ? ORDER BY c.id",
         (quantity_id,))
 
@@ -465,7 +464,7 @@ def fetch_detail_items(conn, tokens):
     crows = keyed_rows(
         conn,
         "SELECT c.id, c.name, c.symbol,"
-        " c.unit_id, c.compound_unit_id,"
+        " c.unit,"
         " rq.id AS related_quantity_id,"
         " rq.name AS related_quantity_name,"
         " rq.symbol AS related_quantity_symbol"
@@ -502,8 +501,7 @@ def fetch_detail_items(conn, tokens):
                 "related_quantity_id": crow["related_quantity_id"] or "",
                 "related_quantity_name": localise(crow["related_quantity_name"] or "", "en-us") or None,
                 "related_quantity_symbol": crow["related_quantity_symbol"] or "",
-                "constant_unit_id": crow["unit_id"],
-                "constant_compound_unit_id": crow["compound_unit_id"],
+                "constant_unit": crow["unit"],
             })
     return items
 
@@ -515,15 +513,20 @@ def unit_is_base(conn, unit_id):
 
 
 def fetch_prefixable_base_units(conn):
-    """Ids of units that can carry an SI prefix: SI bases, plus gram.
+    """Ids of units that can carry an SI prefix: SI bases plus the unprefixed
+    parts of SI compound bases.
 
-    Gram is mass's prefix anchor (the SI base kilogram is gram with a
-    kilo prefix already on it), so it is included by id — one documented
-    constant instead of a mass-compound query on every call.
+    The unprefixed part is the 10^0 anchor of its prefix family (e.g. gram
+    for mass, whose SI base is the kilo-prefixed gram compound) — derived
+    from the data, with no per-unit exceptions.
     """
     ids = {r["id"] for r in _all(conn,
         "SELECT id FROM unit WHERE is_base = 1 AND system = 'SI'")}
-    ids.add("gram")
+    for r in _all(conn,
+            "SELECT unit FROM compound_unit WHERE is_base = 1 AND system = 'SI'"):
+        for entry in safe_json_list(r["unit"]):
+            if isinstance(entry, dict) and entry.get("unit"):
+                ids.add(entry["unit"])
     return ids
 
 

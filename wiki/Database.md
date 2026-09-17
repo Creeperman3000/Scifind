@@ -72,9 +72,8 @@ its left-hand side.
 | `description` | TEXT | JSON i18n |
 | `links` | TEXT | JSON array of URLs |
 | `value` | REAL | Numerical value; NULL for purely symbolic constants |
-| `unit_id` | TEXT | FK → unit.id; the constant's preferred named unit, or NULL |
-| `compound_unit_id` | TEXT | Canonical id into `compound_unit` (derived, not a DB FK); preferred compound unit, or NULL |
-| `quantity_id` | TEXT | FK → quantity.id; quantity whose name/unit applies (same dimensions); NULL = unlisted on quantity pages |
+| `quantity_id` | TEXT | FK → quantity.id; quantity whose base unit applies; NULL = no quantity link |
+| `unit` | TEXT | JSON array like `compound_unit.unit` (`[{"unit":"<id>","prefix":<int>,"exponent":<n>},...]`); explicit unit when it differs from the quantity base; NULL = use the quantity's base unit (or no units when `quantity_id` is also NULL, e.g. `pi`) |
 
 ## `formula_token`
 The RPN encoding of one formula. Primary key `(formula_id, position)`;

@@ -7,7 +7,7 @@ from scifind_lib.db import (  # noqa: F401
 from scifind_lib.formula import (  # noqa: F401
     build_dimension_symbol_triplet,
     compute_all_formula_dimensions, compute_compound_unit_dimensions,
-    compute_formula_dimensions,     compute_rpn_dimensions, dimension_column_for, dimension_columns,
+    compute_formula_dimensions,     compute_rpn_dimensions, constant_dimensions, dimension_column_for, dimension_columns,
     dimension_matches, dimension_quantity_ids, dimension_symbols,
     dimensions_from_row, filter_ops, format_dimension_number, format_dimensions_latex,
     format_dimensions_plain, parse_and_preview_equation, render_formula_latex,
@@ -31,7 +31,7 @@ from scifind_lib.units import (  # noqa: F401
     format_compound_unit_symbol, inject_si_prefix_nodes,
     parse_compound_unit,
     parse_compound_unit_parts, prefix_name_callback, quantity_per_map,
-    resolve_base_unit, select_base_unit,
+    resolve_base_unit, resolve_constant_base, select_base_unit,
     select_base_unit_with_fallback, si_prefix_factor,
     si_prefix_sections,     split_numerator_denominator,
     unit_accusative_map, unit_name_callback, unit_name_map, unit_quantity_map,

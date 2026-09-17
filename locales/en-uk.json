@@ -4,5 +4,9 @@
     "acceptLanguage": "en-GB",
     "fallback": "en-us"
   },
-  "ui": {}
+  "ui": {
+    "relation": {
+      "generalization": "Generalisation"
+    }
+  }
 }

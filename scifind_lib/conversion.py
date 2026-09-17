@@ -448,6 +448,8 @@ def _stored_fraction_text(raw_num, raw_den):
     d = 1.0 if raw_den is None else raw_den
     if n == 1.0 and d == 1.0:
         return None
+    if abs(n) >= 1e6 or abs(d) >= 1e6:
+        return None
     n_text, d_text = _as_int(n), _as_int(d)
     if n_text is None or d_text is None:
         return None
@@ -557,14 +559,24 @@ def _render_numeric_equation(graph, row_id, ref_id):
     if row_val is None or ref_val is None or ref_val == 0:
         return None
     ratio = row_val / ref_val
-    if not math.isfinite(ratio):
-        return None
+    if not math.isfinite(ratio) or (ratio == 0 and row_val != 0):
+        # Extreme prefix powers (e.g. m^6) overflow double; compare decades.
+        try:
+            decade = round(math.log10(abs(row_val)) - math.log10(abs(ref_val)))
+        except ValueError:
+            return None
+        sign = "-" if (row_val < 0) != (ref_val < 0) else ""
+        factor_text = f"{sign}10^{{{decade}}}"
+    elif ratio == 1:
+        # Distinct ids with identical value: show the identity, not a dash.
+        row_sym = wrap_symbol_in_latex(_unit_symbol(graph, row_id))
+        ref_sym = wrap_symbol_in_latex(_unit_symbol(graph, ref_id))
+        return f"1\\,{row_sym} = 1\\,{ref_sym}"
+    else:
+        factor_text = _factor_value_text(ratio)
     row_sym = wrap_symbol_in_latex(_unit_symbol(graph, row_id))
     ref_sym = wrap_symbol_in_latex(_unit_symbol(graph, ref_id))
-    if ratio == 1:
-        # Distinct ids with identical value: show the identity, not a dash.
-        return f"1\\,{row_sym} = 1\\,{ref_sym}"
-    return f"1\\,{row_sym} = {_factor_value_text(ratio)}\\,{ref_sym}"
+    return f"1\\,{row_sym} = {factor_text}\\,{ref_sym}"
 
 
 def precompute_latex_map(graph):

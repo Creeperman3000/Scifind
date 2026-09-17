@@ -19,6 +19,7 @@ from scifind_lib.fetch import (
 )
 from scifind_lib.tree import topic_name
 from scifind_lib.units import (
+    compound_overwrite_cell,
     compound_slug_is_base,
     format_compound_unit_html,
     format_compound_unit_symbol,
@@ -194,7 +195,7 @@ def render_compound_unit(cu_row, locale):
     overwrite = (localise(cu_row.get("name_overwrite") or "", locale)
                  if cu_row.get("name_overwrite") else "")
     if overwrite:
-        name_html = overwrite
+        name_html = html.escape(overwrite)
     else:
         name_html = _compound_html(cu_row["unit"], locale)
     return Markup(name_html), sym_latex
@@ -232,7 +233,7 @@ def _si_prefix_entries(conn, quantity_id, base, locale, tr):
     base_id = base["id"] if base else None
     any_label = _format_system_label(None, False, tr)
     entries = [_make_entry(r["payload_id"], Markup(r["symbol_latex"]),
-                           Markup(r["name"]), r["name"], any_label)
+                           Markup(r["name"]), r.get("label") or r["name"], any_label)
                for section in si_prefixes.values() for r in section["rows"]
                if r["payload_id"] != base_id]
     return entries, si_prefixes
@@ -247,7 +248,13 @@ def _base_entry(conn, base, locale, tr):
     return _make_entry(
         base["id"], default_sym, default_html,
         format_compound_unit_html(label_json, locale=locale,
-                                  unit_name=_unit_name(), prefix_name=_prefix_name(locale)),
+                                  unit_url=(lambda uid: f"/unit/{uid}"
+                                            if uid in _names() else None),
+                                  unit_name=_unit_name(),
+                                  unit_quantity_map=_quantities(),
+                                  quantity_pers=_quantity_pers(),
+                                  unit_accusatives=_accusatives(),
+                                  prefix_name=_prefix_name(locale)),
         _format_system_label(base.get("system"), _row_is_base(conn, base["id"], base["kind"]), tr),
     )
 
@@ -267,19 +274,31 @@ def _plain_unit_entries(conn, quantity_id, base, locale, tr):
 
 
 def _compound_name_html(cu_row, unit_html, locale):
-    """(name_html, label) showing the parts-derived name unless duplicated."""
+    """(name_html, label): cell keeps ``overwrite (linked parts)``; label is overwrite only.
+
+    The label feeds the ``Conversion to:`` header and ref labels, which show
+    just the overwrite. The parts stay only in the table cell (and payload),
+    with their component links intact.
+    """
     overwrite_json = cu_row.get("name_overwrite")
     override_text = localise(overwrite_json, locale) if overwrite_json else ""
     if override_text:
-        parts_text = _strip_html(
-            _compound_html(cu_row["unit"], locale, linked=False)).strip()
-        if parts_text and parts_text.lower() != override_text.lower():
-            combined = f"{override_text} ({parts_text})"
-            return Markup(combined), combined
-        return Markup(override_text), override_text
+        return compound_overwrite_cell(
+            override_text, cu_row["unit"], locale,
+            unit_names=_names(),
+            unit_quantity_map=_quantities(),
+            quantity_pers=_quantity_pers(),
+            unit_accusatives=_accusatives(),
+            prefix_names=_prefixes("name", locale),
+        ), override_text
     return unit_html, format_compound_unit_html(
         cu_row["unit"], locale=locale,
-        unit_name=_unit_name(), prefix_name=_prefix_name(locale))
+        unit_url=(lambda uid: f"/unit/{uid}" if uid in _names() else None),
+        unit_name=_unit_name(),
+        unit_quantity_map=_quantities(),
+        quantity_pers=_quantity_pers(),
+        unit_accusatives=_accusatives(),
+        prefix_name=_prefix_name(locale))
 
 
 def _compound_entries(conn, quantity_id, base, locale, tr, skip_ids):
@@ -309,7 +328,7 @@ def _quantity_units_table_uncached(conn, quantity_id, system, ref_unit_id=None, 
     base = select_base_unit_with_fallback(conn, quantity_id, system)
 
     graph = UnitGraph(conn, quantity_id, locale)
-    inject_si_prefix_nodes(graph, conn, quantity_id, locale, system,
+    inject_si_prefix_nodes(graph, conn, quantity_id, locale,
                            unit_syms=_symbols())
     latex_map = precompute_latex_map(graph)
     latex_by_ref = lambda eid: {rid: latex_map.get(eid, {}).get(rid) for rid in latex_map}
@@ -327,6 +346,12 @@ def _quantity_units_table_uncached(conn, quantity_id, system, ref_unit_id=None, 
     entries.extend(_compound_entries(
         conn, quantity_id, base, locale, tr, {r["id"] for r in prefix_rows}))
     si_payload_ids = {r["payload_id"] for r in prefix_rows}
+
+    # Synthetic base headers have no graph node; alias them to the base id.
+    base_alias = {r["payload_id"]: default_id for r in prefix_rows
+                  if r.get("system_key") == "detail.si_base"
+                  and r["payload_id"] not in latex_map and default_id}
+    ref_of = lambda pid: base_alias.get(pid, pid)
 
     ref_id = ref_unit_id if ref_unit_id and any(e["id"] == ref_unit_id for e in entries) else default_id
     ref_label = next((_strip_html(str(e["label"])) for e in entries if e["id"] == ref_id), "")
@@ -346,16 +371,16 @@ def _quantity_units_table_uncached(conn, quantity_id, system, ref_unit_id=None, 
         "component": section["component"],
         "label": section["label"],
         "payload": [{
-            "id": r["payload_id"],
+            "id": ref_of(r["payload_id"]),
             "exp": r.get("exp"),
             "symbol_latex": Markup(r["symbol_latex"]),
             "name": r["name"],
+            "label": r.get("label") or _strip_html(str(r.get("name") or "")),
             "system_key": r.get("system_key"),
             "link_unit_id": r.get("link_unit_id"),
-            "value_latex": r.get("value_latex", ""),
-            "is_ref": r["payload_id"] == ref_id,
+            "is_ref": ref_of(r["payload_id"]) == ref_id,
             "collapsed": bool(r.get("collapsed")),
-            "latex_by_ref": latex_by_ref(r["payload_id"]),
+            "latex_by_ref": latex_by_ref(ref_of(r["payload_id"])),
         } for r in section["rows"]],
     } for section in (si_prefixes or {}).values()]
     si_payload = [row for section in si_prefix_sections for row in section["payload"]]

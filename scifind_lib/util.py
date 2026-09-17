@@ -76,7 +76,9 @@ def as_int(value):
         r = round(float(value))
     except (TypeError, ValueError):
         return None
-    if abs(float(value) - r) <= 1e-9 * max(1.0, abs(float(value))) and abs(r) < 1e15:
+    if r == 0:
+        return 0 if float(value) == 0 else None
+    if abs(float(value) - r) <= 1e-9 * abs(float(value)) and abs(r) < 1e15:
         return int(r)
     return None
 

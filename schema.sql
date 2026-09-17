@@ -111,12 +111,12 @@ CREATE TABLE IF NOT EXISTS constant (
     description  TEXT,               -- JSON i18n
     links        TEXT,               -- JSON array of URL strings: ["https://...", ...]
     value        REAL,               -- numerical value; NULL for symbolic constants
-    quantity_id  TEXT REFERENCES quantity(id),       -- quantity whose name applies
-    unit_id      TEXT REFERENCES unit(id),           -- constant's preferred unit (a named unit row), or NULL
-    compound_unit_id TEXT, -- canonical compound_unit id from compound_unit_slug (no FK: id is not stored; resolved at runtime), or NULL
+    quantity_id  TEXT REFERENCES quantity(id),       -- quantity whose base unit applies; NULL = no quantity link
+    unit         TEXT,               -- JSON array like compound_unit.unit, explicit unit when it differs from the quantity base; NULL = use quantity's base unit (or no units when quantity_id is also NULL)
     CHECK (json_valid(name)),
     CHECK (description IS NULL OR json_valid(description)),
-    CHECK (links IS NULL OR json_valid(links))
+    CHECK (links IS NULL OR json_valid(links)),
+    CHECK (unit IS NULL OR json_valid(unit))
 );
 
 CREATE TABLE IF NOT EXISTS si_prefix (

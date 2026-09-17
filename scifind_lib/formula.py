@@ -119,11 +119,38 @@ def dimension_matches(row_dimensions, dimension_filter, dim_mode, conn):
     return any(checks) if dim_mode == "or" else all(checks)
 
 
+def _summed_unit_dims(cols, unit_qty, qid_dims, unit_json):
+    """Rounded dimension vector for a compound-unit JSON list."""
+    total = [0.0] * len(cols)
+    for unit_id, exponent in parse_compound_unit(unit_json):
+        dims = qid_dims.get(unit_qty.get(unit_id))
+        if dims:
+            total = [t + v * exponent for t, v in zip(total, dims)]
+    return _rounded(total)
+
+
+def constant_dimensions(conn, quantity_id, unit_json):
+    """Dimension vector for a constant: explicit unit JSON wins, else quantity row, else zeros."""
+    cols = dimension_columns(conn)
+    if unit_json:
+        unit_qty = {r["id"]: r["quantity_id"] for r in conn.execute("SELECT id, quantity_id FROM unit")}
+        qid_dims = {r["id"]: [r[c] for c in cols] for r in conn.execute(f"SELECT id, {', '.join(cols)} FROM quantity")}
+        return _summed_unit_dims(cols, unit_qty, qid_dims, unit_json)
+    if quantity_id:
+        row = conn.execute(f"SELECT {', '.join(cols)} FROM quantity WHERE id = ?", (quantity_id,)).fetchone()
+        if row:
+            return [row[c] for c in cols]
+    return [0] * len(cols)
+
+
 def _collect_qid_dimensions(conn):
     cols = dimension_columns(conn)
     dims_by_qid = {r["id"]: [r[c] for c in cols] for r in conn.execute(f"SELECT id, {', '.join(cols)} FROM quantity")}
-    for r in conn.execute("SELECT id, quantity_id FROM constant WHERE quantity_id IS NOT NULL"):
-        if r["quantity_id"] in dims_by_qid:
+    unit_qty = {r["id"]: r["quantity_id"] for r in conn.execute("SELECT id, quantity_id FROM unit")}
+    for r in conn.execute("SELECT id, quantity_id, unit FROM constant"):
+        if r["unit"]:
+            dims_by_qid[r["id"]] = _summed_unit_dims(cols, unit_qty, dims_by_qid, r["unit"])
+        elif r["quantity_id"] in dims_by_qid:
             dims_by_qid[r["id"]] = list(dims_by_qid[r["quantity_id"]])
     return dims_by_qid
 
@@ -188,14 +215,8 @@ def compute_rpn_dimensions(conn, tokens):
 
 def compute_compound_unit_dimensions(conn, compound_unit_json):
     cols = dimension_columns(conn)
-    total = [0.0] * len(cols)
     unit_qty = {r["id"]: r["quantity_id"] for r in conn.execute("SELECT id, quantity_id FROM unit")}
-    qid_dims = _collect_qid_dimensions(conn)
-    for unit_id, exponent in parse_compound_unit(compound_unit_json):
-        dims = qid_dims.get(unit_qty.get(unit_id))
-        if dims:
-            total = [t + v * exponent for t, v in zip(total, dims)]
-    return _rounded(total)
+    return _summed_unit_dims(cols, unit_qty, _collect_qid_dimensions(conn), compound_unit_json)
 
 
 def compute_all_formula_dimensions(conn, formula_ids=None):

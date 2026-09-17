@@ -154,7 +154,7 @@ EXPORT_TABLE_COLUMNS = {
                  "associativity", "type",
                  "latex_template", "dim_spec"],
     "constant": ["id", "name", "symbol", "difficulty", "description",
-                 "links", "value", "quantity_id", "unit_id", "compound_unit_id"],
+                 "links", "value", "quantity_id", "unit"],
     "compound_unit": [
         "quantity_id", "name_overwrite", "symbol_overwrite", "unit",
         "system", "is_base",
