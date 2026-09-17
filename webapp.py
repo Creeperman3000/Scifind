@@ -17,6 +17,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 from flask import Flask, render_template, request, g, Response, redirect, session, url_for
 from markupsafe import Markup
+from pylatexenc.latex2text import LatexNodes2Text
 
 _PROJECT_DIR = Path(__file__).resolve().parent
 _LOCALE_DIR = _PROJECT_DIR / "locales"
@@ -283,6 +284,18 @@ _LATEX_TEXTCMD_RE = re.compile(r"\\(?:mathrm|text)\{([^}]*)\}")
 
 def _strip_textcmd(latex):
     return _LATEX_TEXTCMD_RE.sub(r"\1", latex)
+
+
+def _latex_to_unicode(latex):
+    """Unicode approximation of a LaTeX fragment for copy-to-clipboard."""
+    if not isinstance(latex, str) or not latex.strip():
+        return ""
+    try:
+        # Scifind stores raw math fragments; $...$ enables math rendering.
+        return LatexNodes2Text().latex_to_text(f"${latex.strip()}$")
+    except Exception as exc:
+        logger.warning("latex_to_unicode failed for %r: %s", latex, exc)
+        return latex
 
 
 def _join_names(names, locale="en-us", conj_key="heading.and"):
@@ -1012,9 +1025,10 @@ def formula_detail(formula_id):
     if err:
         return err
     formula_sql, token_sql = build_formula_insert_sql(conn, formula_id)
+    latex = render_formula_latex(conn, formula_id, locale=locale)
     return render_template(
         "formula.html",
-        formula=row, latex=render_formula_latex(conn, formula_id, locale=locale),
+        formula=row, latex=latex, latex_unicode=_latex_to_unicode(latex),
         relations=_with_latex(conn, fetch_formula_relations(conn, formula_id),
                               locale, id_key="related_id"),
         detail_items=_build_formula_detail_items(conn, formula_id, locale),
@@ -1191,6 +1205,16 @@ def quantities_filter_data():
         rows = []
     return _json_cached({"quantities": [
         {"id": q["id"], "name": localise(q["name"], locale), "symbol": q["symbol"] or ""} for q in rows]}, 3600)
+
+
+LATEX_UNICODE_MAX_LENGTH = 4000
+
+
+@app.route("/api/latex2unicode")
+def latex2unicode():
+    """Unicode approximation of a LaTeX fragment (live-preview pages)."""
+    tex = request.args.get("tex", "")[:LATEX_UNICODE_MAX_LENGTH]
+    return _json_cached({"unicode": _latex_to_unicode(tex)}, 86400)
 
 
 

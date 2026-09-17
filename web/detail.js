@@ -180,8 +180,15 @@
     }
     var doCopy = null;
     if (fmt === 'unicode') {
-      doCopy = import('https://cdn.jsdelivr.net/npm/unicodeit@0.7.5/+esm').then(function(mod) {
-        return navigator.clipboard.writeText(mod.replace(tex));
+      /* Server pre-renders Unicode for the formula page; the live create
+         preview has no precomputed span, so convert via the API instead. */
+      var pre = $('formula-unicode');
+      if (pre && pre.textContent) {
+        window.SFUtils.copyText(pre.textContent, labelMap[fmt]);
+        return;
+      }
+      doCopy = window.SFApi.getJSON('/api/latex2unicode?tex=' + encodeURIComponent(tex)).then(function(data) {
+        return navigator.clipboard.writeText(data.unicode);
       });
     } else if (fmt === 'png' || fmt === 'svg') {
       var url = 'https://latex.codecogs.com/' + fmt + '.latex?' + encodeURIComponent((fmt === 'png' ? '\\dpi{3000}' : '') + tex);

@@ -54,7 +54,7 @@
     if (modal) modal.classList.toggle('open', !!open);
   }
 
-  // Single owner for promise-based copies (codecogs PNG/SVG, unicode):
+  // Single owner for promise-based copies (codecogs PNG/SVG, API-fallback unicode):
   // same toast contract as copyText (toast.copied / toast.copy_failed).
   function copyPromise(promise, label) {
     if (!promise || typeof promise.then !== 'function') return;
