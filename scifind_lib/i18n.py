@@ -17,56 +17,63 @@ def load_locale_config(locale):
     if locale not in _locale_configs:
         path = LOCALE_DIR / f"{locale}.json"
         try:
-            with open(path, encoding="utf-8") as f:
-                _locale_configs[locale] = json.load(f).get("meta", {})
+            with open(path, encoding="utf-8") as f: _locale_configs[locale] = json.load(f).get("meta", {})
         except (OSError, ValueError) as exc:
             logger.warning("locale %r: failed to load %s: %s", locale, path, exc)
             _locale_configs[locale] = {}
     return _locale_configs[locale]
 
 
-def localise(value, locale, default="en-us"):
-    """Resolve a JSON i18n string, dict, or plain text to the active locale."""
-    if not value:
-        return ""
-    if isinstance(value, dict):
-        translations = value
+def locale_chain(locale):
+    chain, seen = [], set()
+    while locale and locale not in seen:
+        seen.add(locale)
+        chain.append(locale)
+        locale = load_locale_config(locale).get("fallback")
+    return chain
+
+
+def localise(value, locale):
+    if not value: return ""
+    if isinstance(value, dict): translations = value
     else:
         stripped = value.strip()
-        if not stripped.startswith("{"):
-            return stripped
+        if not stripped.startswith("{"): return stripped
         translations = safe_json_dict(stripped, default="")
         if not translations:
-            logger.warning("localise: bad JSON for locale %r", locale)
-            return ""
-    return translations.get(locale) or translations.get(default) or ""
+            return stripped
+    for code in locale_chain(locale):
+        if translations.get(code): return translations[code]
+    return ""
+
+
+def _chain_get(locale, key):
+    for code in locale_chain(locale):
+        if value := load_locale_config(code).get(key):
+            return value
+    return None
 
 
 def locale_unit_words(locale):
-    config = load_locale_config(locale)
-    return config.get("unitWords", load_locale_config("en-us").get("unitWords", {}))
+    return _chain_get(locale, "unitWords") or {}
 
 
 def locale_sibilants(locale):
-    return load_locale_config(locale).get("sibilants", {"chars": [], "preposition": {"suffix": ""}})
-
-
-def _format_ordinal(n, locale="en-us"):
-    suffix = load_locale_config(locale).get("ordinalSuffix", "th")
-    return f"{n}." if suffix == "." else f"{n}{suffix}"
+    return _chain_get(locale, "sibilants") or {"chars": [], "preposition": {"suffix": ""}}
 
 
 def unit_exponent_word(exp, locale="en-us", denominator=False):
-    """Return the natural-language word for a unit exponent."""
     words = locale_unit_words(locale)
-    if exp == 1:
-        return ""
-    if exp == -1:
-        return words.get("inverse", "inverse")
+    if exp in (1, 0): return ""
+    if exp == -1: return words.get("inverse") or ""
     if exp in (2, 3):
         base = "squared" if exp == 2 else "cubed"
-        return words.get(base + "Special" if denominator else base, base)
-    return f"{words.get('toThe', 'to the')} {_format_ordinal(exp, locale)}" if exp > 3 else ""
+        return words.get(base + "Special" if denominator else base) or ""
+    suffix = _chain_get(locale, "ordinalSuffix")
+    if suffix is None:
+        suffix = ""
+    ordinal = f"{exp}." if suffix == "." else f"{exp}{suffix}"
+    return f"{words.get('toThe') or ''} {ordinal}".strip()
 
 
 def difficulty_to_stars(difficulty, max_dots=5):
@@ -76,8 +83,7 @@ def difficulty_to_stars(difficulty, max_dots=5):
 
 def wrap_symbol_in_latex(symbol):
     r"""Wrap a plain-text identifier in \mathrm{...}; LaTeX passes through."""
-    if not symbol:
-        return ""
+    if not symbol: return ""
     trailing = symbol[-1] if symbol[-1].isspace() else ""
     stripped = symbol.strip()
     if not stripped or (stripped.startswith("\\mathrm{") and stripped.endswith("}")):
@@ -87,7 +93,6 @@ def wrap_symbol_in_latex(symbol):
 
 def with_subscript(sym, label):
     """Append a subscript unless the symbol already carries one."""
-    if not label or "_" in sym:
-        return sym
+    if not label or "_" in sym: return sym
     label = str(label)
     return f"{sym}_{label}" if len(label) == 1 else f"{sym}_{{{label}}}"

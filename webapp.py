@@ -33,6 +33,8 @@ from scifind_lib.db import (
 )
 from scifind_lib.formula import (
     build_dimension_symbol_triplet,
+    dimension_quantity_ids,
+    dimension_symbols,
     format_dimensions_latex,
     render_formulas_latex_batched,
 )
@@ -65,13 +67,12 @@ from scifind_lib.tree import (
     walk_tree,
 )
 from scifind_lib.constants import SUPERSCRIPT_DIGITS
-from scifind_lib.formula import dimension_symbols, dimension_quantity_ids
-
 from scifind_lib.conversion import UnitGraph, convert_value, validate_graph
 from scifind_lib.formula import (
     compute_all_formula_dimensions,
     compute_formula_dimensions,
     constant_dimensions,
+    dimension_columns,
     dimension_matches,
     dimensions_from_row,
     parse_and_preview_equation,
@@ -84,11 +85,13 @@ from scifind_lib.display import (
     render_compound_unit,
     render_variable_symbol,
     unit_name_link,
+    units_column,
 )
-from scifind_lib.util import entity_link, format_sci_parts, parse_int_or, render_sci_latex
+from scifind_lib.util import entity_link, format_sci_parts, parse_int_or, render_sci_latex, request_cached, safe_json_list
 from scifind_lib.export import (
     build_create_sql,
     build_formula_insert_sql,
+    export_payload,
 )
 from scifind_lib.fetch import (
     fetch_all_constants,
@@ -120,6 +123,7 @@ from scifind_lib.units import (
     select_base_units_batched,
 )
 from scifind_lib.operators import operand_info, render_template as render_op_template
+from scifind_lib.parser import check_equation_length, parse_bracket_keys
 
 app = Flask(
     __name__,
@@ -133,46 +137,42 @@ def _hide_templates_from_static():
     if request.path.startswith(f"{app.static_url_path}/") and request.path.endswith(
         ".html"
     ):
-        return Response("Not Found", status=404)
+        return Response(_err("error.not_found"), status=404)
 
 
 def _secret_key():
-    env_key = os.environ.get("SCIFIND_SECRET_KEY")
-    if env_key:
+    if env_key := os.environ.get("SCIFIND_SECRET_KEY"):
         return env_key
     key_file = Path(app.instance_path) / "secret_key"
-    fallback = secrets.token_hex(24)
     for _ in range(2):
         try:
-            stored = key_file.read_text(encoding="utf-8").strip()
+            if stored := key_file.read_text(encoding="utf-8").strip():
+                return stored
         except FileNotFoundError:
-            stored = None
+            pass
         except OSError:
-            return fallback
-        if stored:
-            return stored
+            break
         try:
             key_file.parent.mkdir(parents=True, exist_ok=True)
             fd = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        except FileExistsError:
-            continue
         except OSError:
-            return fallback
+            continue  # FileExistsError → re-read; other errors → retry then fallback
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(secrets.token_hex(32))
-        return key_file.read_text(encoding="utf-8").strip()
-    return fallback
+        try:
+            return key_file.read_text(encoding="utf-8").strip()
+        except OSError:
+            break
+    return secrets.token_hex(24)
 
 
 app.secret_key = _secret_key()
-app.config["MAX_CONTENT_LENGTH"] = (
-    int(os.environ.get("SCIFIND_MAX_UPLOAD_MB", "1")) * 1024 * 1024
-)
-app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 365 * 86400
-app.config["SESSION_COOKIE_HTTPONLY"] = True
-app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-app.config["SESSION_COOKIE_SECURE"] = bool(
-    os.environ.get("SCIFIND_COOKIE_SECURE", "").lower() in ("1", "true", "yes")
+app.config.update(
+    MAX_CONTENT_LENGTH=max(1, parse_int_or(os.environ.get("SCIFIND_MAX_UPLOAD_MB", "1"), 1)) * 1024 * 1024,
+    SEND_FILE_MAX_AGE_DEFAULT=365 * 86400,
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=os.environ.get("SCIFIND_COOKIE_SECURE", "").lower() in ("1", "true", "yes"),
 )
 
 
@@ -185,12 +185,12 @@ def _accepts_gzip(header_value):
         if token.strip().lower() != "gzip":
             continue
         q = params.strip().lower()
-        if q.startswith("q="):
-            try:
-                return float(q[2:]) > 0
-            except ValueError:
-                return True
-        return True
+        if not q.startswith("q="):
+            return True
+        try:
+            return float(q[2:]) > 0
+        except ValueError:
+            return True
     return False
 
 
@@ -199,17 +199,17 @@ def gzip_response(response):
     response.vary.add("Accept-Encoding")
     if not _accepts_gzip(request.headers.get("Accept-Encoding", "")):
         return response
-    ct = response.content_type or ''
-    if not ct.startswith(_GZIP_TYPES):
+    if not (response.content_type or "").startswith(_GZIP_TYPES):
         return response
-    response.direct_passthrough = False
+    if response.direct_passthrough or response.is_streamed:
+        return response
     original = response.get_data()
     if len(original) < 200:
         return response
     compressed = gzip.compress(original)
     response.set_data(compressed)
-    response.headers['Content-Encoding'] = 'gzip'
-    response.headers['Content-Length'] = len(compressed)
+    response.headers["Content-Encoding"] = "gzip"
+    response.headers["Content-Length"] = len(compressed)
     return response
 
 
@@ -233,26 +233,13 @@ def _topic_tree_data(tree, name_map, compressed, exclude_all=False, ids_provided
     return [conv(r) for r in tree] if tree else []
 
 
-def _breadcrumbs_for(topic_id, tree, name_map, parent_map):
-    """Single breadcrumb-building path shared by single + batched attach."""
-    ids = topic_path(tree, topic_id, _parent_map=parent_map)
-    return [{"id": n, "name": name_map.get(n, n)} for n in ids] if ids else []
-
-
-def _attach_breadcrumbs(row, locale, _tree=None, _name_map=None, _parent_map=None):
-    tree = _tree if _tree is not None else load_tree(get_db())
-    name_map = _name_map if _name_map is not None else topic_name_map(tree, locale)
-    parent_map = _parent_map if _parent_map is not None else build_tree_indices(tree)["parent"]
-    row["breadcrumbs"] = _breadcrumbs_for(row.get("topic_id"), tree, name_map, parent_map)
-    return row
-
-
 def _attach_breadcrumbs_batched(rows, locale, tree, name_map=None, parent_map=None):
     """Attach breadcrumbs to many rows with one tree + name-map load (no N+1)."""
     name_map = name_map if name_map is not None else topic_name_map(tree, locale)
     parent_map = parent_map if parent_map is not None else build_tree_indices(tree)["parent"]
     for row in rows:
-        row["breadcrumbs"] = _breadcrumbs_for(row.get("topic_id"), tree, name_map, parent_map)
+        ids = topic_path(tree, row.get("topic_id"), _parent_map=parent_map)
+        row["breadcrumbs"] = [{"id": n, "name": name_map.get(n, n)} for n in ids] if ids else []
     return rows
 
 
@@ -264,18 +251,24 @@ def _passes_topic_difficulty(item, topic_filter, fs):
     return diff is None or fs.diff_min <= diff <= fs.diff_max
 
 
+def _cached(key, build): return request_cached(key, build)
+def _cached_tree(conn): return _cached("_tree", lambda: load_tree(conn))
+def _cached_indices(tree): return _cached("_tree_indices", lambda: build_tree_indices(tree))
+def _cached_name_map(tree, locale):
+    return _cached("_topic_name_map_" + str(locale), lambda: topic_name_map(tree, locale))
+
+
 def _list_base(request_args, allowed_sorts, default_sort):
     """Shared setup for /formulas and /quantities: db, filter state, tree, sort."""
     conn = get_db()
     fs = parse_filter_state(request_args, conn)
-    tree = load_tree(conn)
+    tree = _cached_tree(conn)
     # Single index build shared by compress + expand + breadcrumbs.
-    indices = build_tree_indices(tree)
+    indices = _cached_indices(tree)
     compressed = compress_selection(tree, fs.ids, _indices=indices)
     valid = set(indices["id_to_node"])
     sort_key = normalize_sort(request_args.get("sort"), allowed_sorts, default_sort)
-    topic_filter = expand_selection(
-        tree, [tid for tid in fs.ids if tid in valid], _indices=indices)
+    topic_filter = expand_selection(tree, [tid for tid in fs.ids if tid in valid], _indices=indices)
     return conn, fs, tree, compressed, sort_key, topic_filter
 
 
@@ -304,8 +297,6 @@ def _join_names(names, locale="en-us", conj_key="heading.and"):
     if len(names) == 1:
         return names[0]
     conj = _ui_lookup(locale, conj_key)
-    if conj == conj_key:
-        conj = "and"
     if len(names) == 2:
         return f"{names[0]} {conj} {names[1]}"
     return f"{', '.join(names[:-1])} {conj} {names[-1]}"
@@ -319,39 +310,37 @@ def _sibilant_prep(word, prep, locale):
     return prep
 
 
-def _tree_gen_map(tree):
-    gen_map = {}
-    def visit(node):
-        genitive = (node.get("translations") or {}).get("cs-cz-gen")
-        if genitive:
-            gen_map[node["id"]] = genitive
-    walk_tree(tree, visit)
-    return gen_map
+def _operator_display_symbols(conn):
+    """{operator_id: first alias} — first aliases entry is the display (unicode) symbol."""
+    if getattr(g, "_operator_display_symbols", None) is not None:
+        return g._operator_display_symbols
+    try:
+        rows = conn.execute("SELECT id, aliases FROM operator").fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    out = {}
+    for r in rows:
+        try:
+            aliases = safe_json_list(r["aliases"])
+        except (KeyError, TypeError, IndexError):
+            aliases = []
+        first = next((a for a in aliases if isinstance(a, str) and a), None)
+        out[r["id"]] = first or r["id"]
+    g._operator_display_symbols = out
+    return out
 
 
-def _render_list_heading(view_label, tree, compressed, fs, conn, locale):
-    names_by_id = fetch_quantities_by_ids(conn, fs.quantity_ids) if fs.quantity_ids else {}
-    return _heading_from_compressed(
-        view_label, compressed, tree, locale, fs, conn,
-        active_quantity_names=[localise(names_by_id[qid], locale)
-                               for qid in fs.quantity_ids if qid in names_by_id],
-    )
-
-
-def _op_symbols(conn):
-    return {r["id"]: (r["symbol"] or r["id"])
-            for r in conn.execute("SELECT id, symbol FROM operator").fetchall()}
-
-
-def _heading_from_compressed(view_label, compressed, tree, locale, fs, conn,
-                             active_quantity_names=None):
+def _heading_from_compressed(view_label, compressed, tree, locale, fs, conn):
     def _ui(key): return _ui_lookup(locale, key)
     parts = [view_label]
-    name_map = topic_name_map(tree, locale)
+    name_map = _cached_name_map(tree, locale)
 
     if compressed:
         order = topic_tree_order(conn)
-        gen_map = _tree_gen_map(tree) if locale == "cs-cz" else {}
+        gen_map = {}
+        if locale == "cs-cz":
+            walk_tree(tree, lambda n: gen_map.update(
+                {n["id"]: g} if (g := (n.get("translations") or {}).get("cs-cz-gen")) else {}))
         seen, topic_names = set(), []
         for nid in sorted(compressed, key=lambda x: order.get(x, float("inf"))):
             display_name = gen_map.get(nid) or name_map.get(nid, nid)
@@ -362,24 +351,25 @@ def _heading_from_compressed(view_label, compressed, tree, locale, fs, conn,
             joined = _join_names(topic_names, locale)
             parts.append(f"{_sibilant_prep(joined, _ui('heading.from'), locale)} {joined}")
 
-    if active_quantity_names:
-        q_label = _ui("heading.quantity" if len(active_quantity_names) == 1
-                      else "heading.quantities")
-        q_conj = "heading.or" if fs.quantity_mode == "or" else "heading.and"
-        joined = _join_names(active_quantity_names, locale, q_conj)
-        parts.append(f"{_sibilant_prep(joined, _ui('heading.with'), locale)} {q_label} {joined}")
+    if fs.quantity_ids:
+        names_by_id = fetch_quantities_by_ids(conn, fs.quantity_ids)
+        active = [localise(names_by_id[qid], locale) for qid in fs.quantity_ids if qid in names_by_id]
+        if active:
+            q_label = _ui("heading.quantity" if len(active) == 1 else "heading.quantities")
+            q_conj = "heading.or" if fs.quantity_mode == "or" else "heading.and"
+            joined = _join_names(active, locale, q_conj)
+            parts.append(f"{_sibilant_prep(joined, _ui('heading.with'), locale)} {q_label} {joined}")
 
     clauses = []
     if fs.diff_min > MIN_DIFFICULTY or fs.diff_max < MAX_DIFFICULTY:
-        where = _ui("heading.where_difficulty_is")
         diff = str(fs.diff_min) if fs.diff_min == fs.diff_max else f"{fs.diff_min}\u2013{fs.diff_max}"
-        clauses.append(f"{where} {diff}")
+        clauses.append(f"{_ui('heading.where_difficulty_is')} {diff}")
 
     caches = _get_dimension_caches()
     dim_mode = g.get("dim_mode", "dim")
     x_map = caches.get("var" if dim_mode == "unit" else dim_mode, {})
     y_map = caches.get("unit", {})
-    op_symbols = _op_symbols(conn)
+    op_symbols = _operator_display_symbols(conn)
     dim_parts = []
     for symbol in dimension_symbols(conn):
         dim_entry = fs.dimension_filter.get(symbol, {})
@@ -420,20 +410,15 @@ def _load_locales():
                     locale_data = json.load(f)
             except (OSError, ValueError):
                 continue
-            locale = path.stem
-            locales_data[locale] = locale_data
-            lang_map[locale_data.get("meta", {}).get("acceptLanguage", locale)] = locale
-    if DEFAULT_LOCALE not in locales_data:
-        locales_data[DEFAULT_LOCALE] = DEFAULT_LOCALE_FALLBACK
+            locales_data[path.stem] = locale_data
+            lang_map[locale_data.get("meta", {}).get("acceptLanguage", path.stem)] = path.stem
+    locales_data.setdefault(DEFAULT_LOCALE, DEFAULT_LOCALE_FALLBACK)
     lang_map.setdefault("en-US", DEFAULT_LOCALE)
     lang_map.setdefault("en", DEFAULT_LOCALE)
     _LOCALES = (locales_data, lang_map)
     for code, locale_data in locales_data.items():
-        if code == DEFAULT_LOCALE:
-            continue
-        empty_cats = sorted(c for c, children in locale_data.get("ui", {}).items() if not children)
-        if empty_cats:
-            logger.warning("l10n: locale %r has empty ui categories: %s", code, empty_cats)
+        if code != DEFAULT_LOCALE and (empty := sorted(c for c, v in locale_data.get("ui", {}).items() if not v)):
+            logger.warning("l10n: locale %r has empty ui categories: %s", code, empty)
     return _LOCALES
 
 
@@ -445,27 +430,23 @@ def _lang_to_locale():
     return _load_locales()[1]
 
 
-_CSRF_SESSION_KEY = "_csrf_token"
+_CSRF_KEY = "_csrf_token"
 _CSRF_HEADER = "X-CSRF-Token"
-_CSRF_FORM_FIELD = "_csrf_token"
 
 
 def _ensure_csrf_token():
-    token = session.get(_CSRF_SESSION_KEY)
-    if not token:
-        token = secrets.token_urlsafe(32)
-        session[_CSRF_SESSION_KEY] = token
-    return token
+    if _CSRF_KEY not in session:
+        session[_CSRF_KEY] = secrets.token_urlsafe(32)
+    return session[_CSRF_KEY]
 
 
 @app.before_request
 def _csrf_protect():
-    if request.method in ("POST", "PUT", "PATCH", "DELETE") \
-            and request.endpoint not in (None, "static"):
-        sent = request.headers.get(_CSRF_HEADER) or request.form.get(_CSRF_FORM_FIELD) or ""
-        expected = session.get(_CSRF_SESSION_KEY) or ""
-        if not expected or not sent or not secrets.compare_digest(sent, expected):
-            return ("CSRF token missing or invalid", 400)
+    if request.method in ("POST", "PUT", "PATCH", "DELETE") and request.endpoint not in (None, "static"):
+        sent = request.headers.get(_CSRF_HEADER) or request.form.get(_CSRF_KEY) or ""
+        expected = session.get(_CSRF_KEY) or ""
+        if not (sent and expected and secrets.compare_digest(sent, expected)):
+            return (_err("error.csrf"), 400)
     _ensure_csrf_token()
 
 
@@ -487,49 +468,33 @@ def _rate_limit(bucket, max_per_minute):
     if max_n <= 0:
         return None
     now = time.monotonic()
-    cutoff = now - 60.0
-    window = _RATE_LIMIT_BUCKETS.get(bucket)
-    if window is None:
-        window = deque()
-        _RATE_LIMIT_BUCKETS[bucket] = window
-        # Bound memory: evict oldest-inserted buckets past the cap.
-        while len(_RATE_LIMIT_BUCKETS) > _RATE_LIMIT_MAX_BUCKETS:
-            _RATE_LIMIT_BUCKETS.pop(next(iter(_RATE_LIMIT_BUCKETS)))
-    while window and window[0] < cutoff:
+    window = _RATE_LIMIT_BUCKETS.setdefault(bucket, deque())
+    if len(_RATE_LIMIT_BUCKETS) > _RATE_LIMIT_MAX_BUCKETS:
+        _RATE_LIMIT_BUCKETS.pop(next(iter(_RATE_LIMIT_BUCKETS)))
+    while window and window[0] < now - 60.0:
         window.popleft()
     if len(window) >= max_n:
-        return (f"Rate limit exceeded for {bucket}", 429)
+        return (f"{_err('error.rate_limit')}: {bucket}", 429)
     window.append(now)
     return None
 
 
-def _client_key():
-    return (request.remote_addr or "anon") + "|" + (request.endpoint or "?")
-
-
 def _locale_chain(start):
-    locales, _ = _load_locales()
-    chain = []
-    seen = set()
-    locale = start
-    while locale and locale not in seen:
-        seen.add(locale)
-        chain.append(locale)
-        locale = locales.get(locale, {}).get("meta", {}).get("fallback")
+    locales = _available_locales()
+    chain, seen = [], set()
+    while start and start not in seen:
+        seen.add(start)
+        chain.append(start)
+        start = locales.get(start, {}).get("meta", {}).get("fallback")
     return chain
 
 
 def _resolve_locale(header):
-    if not header:
-        return DEFAULT_LOCALE
     lang_map = _lang_to_locale()
-    for part in header.split(","):
+    for part in (header or "").split(","):
         code = part.split(";")[0].strip()[:5]
-        if code in lang_map:
-            return lang_map[code]
-        base = code[:2]
-        if base in lang_map:
-            return lang_map[base]
+        if hit := lang_map.get(code) or lang_map.get(code[:2]):
+            return hit
     return DEFAULT_LOCALE
 
 
@@ -537,33 +502,26 @@ def _build_ui_with_fallback(locale):
     locales = _available_locales()
     merged = {}
     for code in reversed(_locale_chain(locale)):
-        ui = locales.get(code, {}).get("ui", {})
-        for cat, children in ui.items():
+        for cat, children in locales.get(code, {}).get("ui", {}).items():
             merged.setdefault(cat, {}).update(children)
     return merged
 
 
 def _ui_lookup(locale, key):
     locales = _available_locales()
-    parts = key.split(".", 1)
-    if len(parts) != 2:
+    cat, sep, child = key.partition(".")
+    if not sep:
         return key
-    cat, child = parts
-    for code in _locale_chain(locale):
-        val = locales.get(code, {}).get("ui", {}).get(cat, {}).get(child)
-        if val is not None:
+    chain = _locale_chain(locale)
+    for code in chain:
+        if (val := locales.get(code, {}).get("ui", {}).get(cat, {}).get(child)) is not None:
             return val
-    intended = key in locales.get(DEFAULT_LOCALE, {}).get("ui", {}).get(cat, {})
-    if intended:
-        logger.warning(
-            "l10n: key %r (locale %s) fell back to en-us — translation missing in chain %s",
-            key, locale, list(_locale_chain(locale)),
-        )
-    else:
-        logger.warning(
-            "l10n: unknown key %r (locale %s) — not present in any locale file",
-            key, locale,
-        )
+    intended = child in locales.get(DEFAULT_LOCALE, {}).get("ui", {}).get(cat, {})
+    logger.warning(
+        "l10n: %s %r (locale %s) — chain %s",
+        "key fell back to en-us — translation missing in" if intended else "unknown key — not present in any locale file",
+        key, locale, chain,
+    )
     return key
 
 
@@ -571,71 +529,69 @@ def _ui_lookup(locale, key):
 def _(blob_or_key):
     """Resolve a DB i18n JSON blob or a UI-string key for the current locale."""
     locale = getattr(g, "locale", DEFAULT_LOCALE)
-    if blob_or_key and blob_or_key.strip().startswith("{"):
-        result = localise(blob_or_key, locale)
-        if result:
-            return result
+    if blob_or_key and blob_or_key.strip().startswith("{") and (result := localise(blob_or_key, locale)):
+        return result
     return _ui_lookup(locale, blob_or_key)
 
 
 app.template_global()(wrap_symbol_in_latex)
 
 
-def _static_version(filename):
-    try:
-        st = (Path(app.static_folder) / filename).stat()
-        return f"{int(st.st_mtime):x}{st.st_size:x}"
-    except OSError:
-        return ""
-
-
 @app.template_global()
 def static_v(filename):
     """Static URL with an mtime/size version for cache busting."""
+    try:
+        st = (Path(app.static_folder) / filename).stat()
+        v = f"{int(st.st_mtime):x}{st.st_size:x}"
+    except OSError:
+        v = ""
     url = url_for("static", filename=filename)
-    v = _static_version(filename)
     return f"{url}?v={v}" if v else url
 
 
 @app.template_global()
 def page_url(page):
     """Current path with all query args preserved and ``page`` overridden (no-JS fallback)."""
-    args = request.args.to_dict()
-    args["page"] = page
-    qs = urlencode(args)
-    return f"{request.path}?{qs}" if qs else request.path
+    args = request.args.to_dict() | {"page": page}
+    return f"{request.path}?{qs}" if (qs := urlencode(args)) else request.path
 
 
 @app.before_request
 def detect_locale():
     locales = _available_locales()
-    locale = request.args.get("locale") or request.cookies.get("sf_locale")
-    if locale in locales:
+    if (locale := request.args.get("locale") or request.cookies.get("sf_locale")) in locales:
         session["locale"] = locale
-    g.locale = session["locale"] if session.get("locale") in locales \
-        else _resolve_locale(request.headers.get("Accept-Language", ""))
+    g.locale = session["locale"] if session.get("locale") in locales else _resolve_locale(request.headers.get("Accept-Language", ""))
 
     for arg_key, cookie_key, allowed, default in (
         ("dim_mode", "sf_dim_mode", ("dim", "var", "unit"), "dim"),
         ("unit_system", "sf_unit_system", ("SI", "CGS", "Imperial"), "SI"),
     ):
-        value = request.args.get(arg_key) or request.cookies.get(cookie_key)
-        if value in allowed:
+        if (value := request.args.get(arg_key) or request.cookies.get(cookie_key)) in allowed:
             session[arg_key] = value
         setattr(g, arg_key, session.get(arg_key, default))
 
-    meta = load_locale_config(g.locale)
-    fallback = load_locale_config(DEFAULT_LOCALE)
-    g.locale_seo_description = meta.get("seoDescription") or fallback.get("seoDescription", "")
-    g.locale_seo_keywords = meta.get("seoKeywords") or fallback.get("seoKeywords", "")
+    for code in _locale_chain(g.locale):
+        meta = load_locale_config(code)
+        if meta.get("seoDescription") or meta.get("seoKeywords"):
+            break
+    g.locale_seo_description = meta.get("seoDescription", "")
+    g.locale_seo_keywords = meta.get("seoKeywords", "")
 
 
-_NOT_INITIALISED = (
-    "<h1>Database not initialised</h1>"
-    "<p>The SQLite database at <code>{}</code> could not be opened or has no tables.</p>"
-    "<p>Run <code>python scifind_cli.py init</code> to create and seed it, "
-    "then refresh this page.</p>"
-)
+def _err(key):
+    try:
+        locale = g.locale
+    except Exception:
+        locale = DEFAULT_LOCALE
+    return _ui_lookup(locale, key)
+
+
+def _not_initialised_html(path):
+    return (f"<h1>{_err('error.not_initialised_title')}</h1>"
+            f"<p>{_err('error.not_initialised_body')}</p>"
+            f"<p><code>{html_module.escape(str(path))}</code></p>"
+            f"<p>{_err('error.not_initialised_hint')}</p>")
 
 
 def _validate_graph_once():
@@ -684,16 +640,19 @@ def ensure_db_open():
         logger.warning("Database open failed: %s", exc)
         has_table = False
     if not has_table:
-        return (_NOT_INITIALISED.format(os.environ.get("SCIFIND_DB", "scifind.db")), 503)
+        return (_not_initialised_html(os.environ.get("SCIFIND_DB", "scifind.db")), 503)
 
 
 def _get_dimension_caches():
+    if "dim_caches" in g:
+        return g.dim_caches
     try:
         var_map, unit_map, dim_map = build_dimension_symbol_triplet(get_db())
-        return {"var": var_map, "unit": unit_map, "dim": dim_map}
+        g.dim_caches = {"var": var_map, "unit": unit_map, "dim": dim_map}
     except sqlite3.OperationalError as exc:
         logger.warning("Dimension symbol lookup failed: %s", exc)
-        return {"var": {}, "unit": {}, "dim": {}}
+        g.dim_caches = {"var": {}, "unit": {}, "dim": {}}
+    return g.dim_caches
 
 
 _SKIP_GLOBALS_PREFIXES = ("/api/", "/export", "/create/token-sidebar", "/create/breadcrumb")
@@ -701,38 +660,33 @@ _SKIP_GLOBALS_PREFIXES = ("/api/", "/export", "/create/token-sidebar", "/create/
 
 @app.context_processor
 def inject_globals():
-    return _inject_globals_inner()
-
-
-def _inject_globals_inner():
     locale = g.get("locale", "en-us")
     path = request.path or ""
+    sort_context = _sort_context_for(path, request.args.get("sort"))
     # Skip heavy globals for API/export/partial endpoints (no base.html render).
     if path.startswith(_SKIP_GLOBALS_PREFIXES):
-        sort_context = _sort_context_for(path, request.args.get("sort"))
         return dict(
             tree_json=[], diff_min=1, diff_max=10,
             current_view="formulas", dim_filter={}, dim_mode="dim",
-            qty_mode="and",
-            dim_symbols={}, dim_qty_names={}, dimension_symbol_list=[],
-            available_locales=[], locale_ui={},
-            sort=sort_context["sort"], available_sorts=sort_context["available_sorts"],
-            default_sort=sort_context["default_sort"],
+            qty_mode="and", dim_symbols={}, dim_qty_names={},
+            dimension_symbol_list=[], available_locales=[], locale_ui={},
+            filter_op_symbols={},
+            **sort_context,
         )
     try:
         conn = get_db()
     except sqlite3.OperationalError as exc:
         logger.warning("Database unavailable: %s", exc)
         conn = None
-    tree = load_tree(conn) if conn is not None else []
+    tree = _cached_tree(conn) if conn is not None else []
     if conn is not None:
         fs = parse_filter_state(request.args, conn)
-        indices = build_tree_indices(tree)
+        indices = _cached_indices(tree)
         compressed = compress_selection(tree, fs.ids, _indices=indices)
     else:
         fs = QuantityFilter()
         compressed = set()
-    name_map = topic_name_map(tree, locale)
+    name_map = _cached_name_map(tree, locale)
 
     # Filter quantity chips are loaded lazily via /api/quantities-filter.
     dim_qty_names = {}
@@ -740,8 +694,7 @@ def _inject_globals_inner():
     if conn is not None:
         caches = _get_dimension_caches()
         try:
-            qty_ids = dimension_quantity_ids(conn)
-            if qty_ids:
+            if qty_ids := dimension_quantity_ids(conn):
                 qid_to_name = {qid: localise(name, locale) for qid, name in
                                fetch_quantities_by_ids(conn, qty_ids.values()).items()}
                 dim_qty_names = {sym: qid_to_name.get(qid, "") for sym, qid in qty_ids.items()}
@@ -749,7 +702,6 @@ def _inject_globals_inner():
             logger.warning("Base dimension names unavailable: %s", exc)
 
     dim_mode = g.get("dim_mode", "dim")
-    sort_context = _sort_context_for(path, request.args.get("sort"))
 
     return dict(
         tree_json=_topic_tree_data(tree, name_map, compressed, fs.exclude_all, ids_provided=fs.ids_provided),
@@ -763,12 +715,11 @@ def _inject_globals_inner():
         dim_symbols=caches.get(dim_mode, caches.get("dim", {})),
         dim_qty_names=dim_qty_names,
         dimension_symbol_list=dimension_symbols(conn) if conn else [],
-        available_locales=[{"code": code, "name": data.get("meta", {}).get("name", code)}
-                           for code, data in _available_locales().items()],
+        filter_op_symbols=_operator_display_symbols(conn) if conn is not None else {},
+        available_locales=[{"code": code, "name": loc.get("meta", {}).get("name", code)}
+                           for code, loc in _available_locales().items()],
         locale_ui=_build_ui_with_fallback(locale),
-        sort=sort_context["sort"],
-        available_sorts=sort_context["available_sorts"],
-        default_sort=sort_context["default_sort"],
+        **sort_context,
     )
 
 
@@ -790,22 +741,16 @@ def _sort_context_for(path, raw_value):
     }
 
 
-def _formula_latex_map(conn, formula_ids, locale):
-    """Single batched LaTeX lookup shared by lists, details and search."""
-    if not formula_ids:
-        return {}
-    latex_map = render_formulas_latex_batched(conn, list(formula_ids), locale=locale)
-    return {fid: (latex or "") for fid, latex in latex_map.items()}
-
-
 def _list_guard(tree, compressed, target, fs, template, items_key, empty_key,
                 sort_key, sorts):
     """Shared redirect-if-all-selected + empty-filter response for list pages."""
-    if compressed == {r["id"] for r in tree}:
+    if tree and compressed == {r["id"] for r in tree}:
         return redirect(target)
     if fs.exclude_all or (fs.ids_provided and not fs.ids):
         return render_template(template, **{items_key: [], "heading": _(empty_key),
-                                            "sort": sort_key, "available_sorts": sorts})
+                                            "sort": sort_key, "available_sorts": sorts,
+                                            "pagination": {"page": 1, "per_page": 0, "total": 0,
+                                                           "total_pages": 1, "show_all": False}})
     return None
 
 def _format_constant_value(value):
@@ -820,18 +765,12 @@ def _format_constant_value(value):
 
 def _constant_value_latex(display):
     """LaTeX for the big display box; wrappers let the client measure the mantissa."""
-    parts = [
-        "\\htmlClass{cv-int}{" + display["sign"] + (display["int"] or "0") + "}"
-    ]
+    parts = ["\\htmlClass{cv-int}{" + display["sign"] + (display["int"] or "0") + "}"]
     if display["dec"]:
         parts.append("\\htmlClass{cv-dot}{.}")
-        parts.extend(
-            f"\\htmlClass{{cv-dec}}{{{d}}}" for d in display["dec"]
-        )
+        parts.extend(f"\\htmlClass{{cv-dec}}{{{d}}}" for d in display["dec"])
     if display["exp"] is not None:
-        parts.append(
-            "\\htmlClass{cv-times}{\\times}10^{" + str(display["exp"]) + "}"
-        )
+        parts.append("\\htmlClass{cv-times}{\\times}10^{" + str(display["exp"]) + "}")
     return "".join(parts)
 
 
@@ -896,14 +835,14 @@ def _constant_detail_item(conn, item, locale):
     cid = item.get("constant_id")
     if not cid:
         return None
-    name = item.get("constant_name") or cid.replace("_", " ").title()
+    name = localise(item.get("constant_name") or "", locale) or cid
     name_html = entity_link("constant", cid, name)
     rq_id = item.get("related_quantity_id")
-    rq_name = item.get("related_quantity_name")
+    rq_name = localise(item.get("related_quantity_name") or "", locale) or rq_id or ""
     rq_symbol = (item.get("related_quantity_symbol") or "").strip()
     paren_html = ""
     if rq_name:
-        sym = f"${rq_symbol}$ " if rq_symbol else ""
+        sym = f"${html_module.escape(rq_symbol)}$ " if rq_symbol else ""
         paren_html = f"({sym}{entity_link('quantity', rq_id, rq_name)})"
 
     base = resolve_constant_base(conn, {
@@ -930,16 +869,14 @@ def _build_formula_detail_items(conn, formula_id, locale, tokens=None):
                 detail_items.append(const_item)
             continue
 
-        qty_name = item.get("quantity_name") or qid.replace("_", " ").title()
+        qty_name = localise(item.get("quantity_name") or "", locale) or qid
         orig_symbol = (item.get("quantity_symbol") or "").strip()
         overwrite = localise(item.get("symbol_overwrite") or "", locale)
         has_overwrite = bool(overwrite and orig_symbol and overwrite != orig_symbol)
         name_override = localise(item.get("name_overwrite") or "", locale)
         quantity_link = entity_link("quantity", qid, qty_name)
 
-        paren_parts = []
-        if has_overwrite and orig_symbol:
-            paren_parts.append(f"${orig_symbol}$")
+        paren_parts = [f"${orig_symbol}$"] if has_overwrite and orig_symbol else []
 
         if name_override:
             if qid in marker_ids_in(name_override):
@@ -952,52 +889,50 @@ def _build_formula_detail_items(conn, formula_id, locale, tokens=None):
             name_html = quantity_link
 
         paren_html = f"({' '.join(paren_parts)})" if paren_parts else ""
-        base = resolve_base_unit(conn, None, None, qid,
-                                 system=g.unit_system)
+        base = resolve_base_unit(conn, None, None, qid, system=g.unit_system)
         detail_items.append(_detail_row(
-            render_variable_symbol(item, locale), name_html, paren_html,
-            base, locale,
-        ))
+            render_variable_symbol(item, locale), name_html, paren_html, base, locale))
 
     return detail_items
 
 
-def _detail_or_404(fetch_fn, entity_id, label):
-    """Fetch one row as a dict or return a (body, 404) tuple."""
-    row = fetch_fn(get_db(), entity_id)
+def _detail_or_404(fetch_fn, entity_id, label_key):
+    conn = get_db()
+    row = fetch_fn(conn, entity_id)
     if not row:
-        return None, (f"{label} not found", 404)
+        return None, (f"{_ui_lookup(g.locale, label_key)} {_err('error.not_found_detail')}", 404)
     row = dict(row)
-    _attach_breadcrumbs(row, g.locale)
+    _attach_breadcrumbs_batched([row], g.locale, _cached_tree(conn))
     return row, None
 
 
-def _parse_links(raw):
-    from scifind_lib.util import safe_json_list
-    return safe_json_list(raw)
-
-
 def _dim_latex(conn, dimensions):
-    caches = _get_dimension_caches()
-    return format_dimensions_latex(
-        *dimensions,
-        symbols=dimension_symbols(conn),
-        variable_symbols=caches["var"],
-        unit_symbols=caches["unit"],
-        dim_symbols=caches["dim"],
-        mode=g.get("dim_mode", "dim"),
-    )
+    try:
+        if dimensions is None:
+            return _err("error.render_error")
+        caches = _get_dimension_caches()
+        return format_dimensions_latex(
+            *dimensions, symbols=dimension_symbols(conn), variable_symbols=caches["var"],
+            unit_symbols=caches["unit"], dim_symbols=caches["dim"], mode=g.get("dim_mode", "dim"))
+    except Exception:
+        return _err("error.render_error")
+
+
+def _safe_dims(conn, fn, *args):
+    try:
+        return fn(conn, *args)
+    except Exception:
+        cols = dimension_columns(conn)
+        return [None] * len(cols)
 
 
 def _with_latex(conn, rows, locale, id_key="id"):
     """Attach rendered formula latex to each row dict (batched, 3 queries)."""
     annotated = [dict(r) for r in rows]
-    if not annotated:
-        return annotated
-    latex_map = _formula_latex_map(
-        conn, [r.get(id_key) for r in annotated if r.get(id_key)], locale)
+    ids = [r.get(id_key) for r in annotated if r.get(id_key)]
+    latex_map = render_formulas_latex_batched(conn, ids, locale=locale) if ids else {}
     for r in annotated:
-        r["latex"] = latex_map.get(r.get(id_key), "")
+        r["latex"] = latex_map.get(r.get(id_key), "") or ""
     return annotated
 
 
@@ -1010,18 +945,16 @@ def _render_base(base, locale=None):
 
 
 def _units_ctx(conn, quantity_id, ref_unit_id=None):
-    units_table = quantity_units_table(conn, quantity_id, g.unit_system,
-                                       ref_unit_id=ref_unit_id, tr=_)
+    units_table = quantity_units_table(conn, quantity_id, g.unit_system, ref_unit_id=ref_unit_id, tr=_)
     return {"units": units_table["units"], "table_data": units_table["payload"],
-            "si_prefixes": units_table["si_prefixes"],
-            "si_prefix_sections": units_table["si_prefix_sections"]}
+            "si_prefixes": units_table["si_prefixes"], "si_prefix_sections": units_table["si_prefix_sections"]}
 
 
 @app.route("/formula/<formula_id>")
 def formula_detail(formula_id):
     conn = get_db()
     locale = g.locale
-    row, err = _detail_or_404(fetch_formula, formula_id, "Formula")
+    row, err = _detail_or_404(fetch_formula, formula_id, "detail.formula")
     if err:
         return err
     formula_sql, token_sql = build_formula_insert_sql(conn, formula_id)
@@ -1032,8 +965,8 @@ def formula_detail(formula_id):
         relations=_with_latex(conn, fetch_formula_relations(conn, formula_id),
                               locale, id_key="related_id"),
         detail_items=_build_formula_detail_items(conn, formula_id, locale),
-        dim_latex=_dim_latex(conn, compute_formula_dimensions(conn, formula_id)),
-        links=_parse_links(row.get("links")),
+        dim_latex=_dim_latex(conn, _safe_dims(conn, compute_formula_dimensions, formula_id)),
+        links=safe_json_list(row.get("links")),
         formula_sql=formula_sql, token_sql=token_sql,
     )
 
@@ -1042,7 +975,7 @@ def formula_detail(formula_id):
 def quantity_detail(quantity_id):
     conn = get_db()
     locale = g.locale
-    quantity, err = _detail_or_404(fetch_quantity, quantity_id, "Quantity")
+    quantity, err = _detail_or_404(fetch_quantity, quantity_id, "detail.quantity")
     if err:
         return err
     primary, non_primary = fetch_quantity_formulas_by_side(conn, quantity_id)
@@ -1070,26 +1003,26 @@ def quantity_detail(quantity_id):
 def constant_detail(constant_id):
     conn = get_db()
     locale = g.locale
-    constant, err = _detail_or_404(fetch_constant, constant_id, "Constant")
+    constant, err = _detail_or_404(fetch_constant, constant_id, "detail.constant")
     if err:
         return err
     if constant.get("related_quantity_id"):
         constant["quantity_name_localized"] = (
             localise(constant.get("related_quantity_name"), locale)
-            or localise(constant.get("related_quantity_name"), "en-us")
+            or constant.get("related_quantity_id")
         )
 
     base, _, unit_symbol_latex = _render_base(
         resolve_constant_base(conn, constant, system=g.unit_system), locale)
-    dimensions = constant_dimensions(
-        conn, constant.get("quantity_id") or constant.get("related_quantity_id"),
+    dimensions = _safe_dims(conn, constant_dimensions,
+        constant.get("quantity_id") or constant.get("related_quantity_id"),
         constant.get("unit"))
     display = format_sci_parts(constant["value"]) if constant.get("value") is not None else None
 
     return render_template(
         "constant.html",
         constant=constant,
-        links=_parse_links(constant.get("links")),
+        links=safe_json_list(constant.get("links")),
         formulas=_with_latex(conn, fetch_constant_formulas(conn, constant_id), locale),
         dim_latex=_dim_latex(conn, dimensions),
         display=display,
@@ -1102,7 +1035,7 @@ def constant_detail(constant_id):
 @app.route("/unit/<unit_id>")
 def unit_detail(unit_id):
     conn = get_db()
-    unit, err = _detail_or_404(fetch_unit, unit_id, "Unit")
+    unit, err = _detail_or_404(fetch_unit, unit_id, "detail.unit")
     if err:
         return err
     locale = g.locale
@@ -1129,11 +1062,13 @@ def base_units_page():
 
 @app.route("/search")
 def search_page():
+    limited = _rate_limit(f"search:{request.remote_addr or 'anon'}", 30)
+    if limited is not None:
+        return limited
     query = request.args.get("q", "").strip()[:SEARCH_QUERY_MAX_LENGTH]
     conn = get_db()
     locale = g.locale
-    sort_key = normalize_sort(request.args.get("sort"), SEARCH_SORT_KEYS,
-                              DEFAULT_SEARCH_SORT)
+    sort_key = normalize_sort(request.args.get("sort"), SEARCH_SORT_KEYS, DEFAULT_SEARCH_SORT)
     hits = search_entities(conn, query, locale=locale)
     meta_by_kind = fetch_search_meta(conn, hits)
     hits = sort_search_rows(conn, hits, sort_key, locale, meta_by_kind)
@@ -1152,14 +1087,12 @@ def search_page():
 
 def _enrich_search_hits(conn, hits, locale, meta_by_kind=None):
     """Attach latex / symbol data to each search hit for card-style rendering."""
-    if meta_by_kind is None:
-        meta_by_kind = fetch_search_meta(conn, hits)
-    meta = {kind: meta_by_kind.get(kind, {}) for kind in ("formula", "quantity", "unit", "constant")}
+    meta_by_kind = meta_by_kind if meta_by_kind is not None else fetch_search_meta(conn, hits)
+    meta = {k: meta_by_kind.get(k, {}) for k in ("formula", "quantity", "unit", "constant")}
     detail_keys = {"formula": "detail.formula", "quantity": "detail.quantity",
                    "unit": "detail.unit", "constant": "detail.constant"}
-
-    formula_ids = [ent_id for kind, ent_id, _ in hits if kind == "formula"]
-    latex_map = _formula_latex_map(conn, formula_ids, locale)
+    ids = [ent_id for kind, ent_id, _ in hits if kind == "formula"]
+    latex_map = render_formulas_latex_batched(conn, ids, locale=locale) if ids else {}
     enriched = []
     for kind, ent_id, display_name in hits:
         if kind not in meta:
@@ -1168,21 +1101,21 @@ def _enrich_search_hits(conn, hits, locale, meta_by_kind=None):
         item = {"kind": kind, "id": ent_id, "href": f"/{kind}/{ent_id}",
                 "relation": _(detail_keys[kind])}
         if kind == "formula":
-            item["latex"] = latex_map.get(ent_id, "")
-            item["name"] = display_name or item_meta.get("name_en") or ent_id
+            item["latex"] = latex_map.get(ent_id, "") or ""
+            item["name"] = display_name or item_meta.get("name_en") or ""
         else:
             item["symbol"] = item_meta.get("symbol") or ""
             if kind == "unit" and not display_name and item_meta.get("name"):
                 item["name"] = localise(item_meta["name"], locale)
             else:
-                item["name"] = display_name or ent_id
+                item["name"] = display_name or ""
         enriched.append(item)
     return enriched
 
 
 def _json_cached(payload, max_age):
     resp = app.response_class(response=json.dumps(payload), mimetype="application/json")
-    resp.headers["Cache-Control"] = f"public, max-age={max_age}"
+    resp.headers["Cache-Control"] = f"private, max-age={max_age}"
     return resp
 
 
@@ -1213,8 +1146,27 @@ LATEX_UNICODE_MAX_LENGTH = 4000
 @app.route("/api/latex2unicode")
 def latex2unicode():
     """Unicode approximation of a LaTeX fragment (live-preview pages)."""
+    limited = _rate_limit(f"latex:{request.remote_addr or 'anon'}", 30)
+    if limited is not None:
+        return limited
     tex = request.args.get("tex", "")[:LATEX_UNICODE_MAX_LENGTH]
     return _json_cached({"unicode": _latex_to_unicode(tex)}, 86400)
+
+
+@app.route("/api/units-column")
+def units_column_data():
+    """One conversion column for a quantity's unit tables (lazy ref-switch)."""
+    limited = _rate_limit(f"unitscol:{request.remote_addr or 'anon'}", 30)
+    if limited is not None:
+        return limited
+    qid = (request.args.get("quantity") or "").strip()[:100]
+    ref = (request.args.get("ref") or "").strip()[:200]
+    ids = [i for i in request.args.getlist("id")
+           if re.fullmatch(r"[A-Za-z0-9_-]+", i or "")][:300]
+    if not qid or not re.fullmatch(r"[A-Za-z0-9_-]+", qid) or not ref or not ids:
+        return {"error": _err("error.params_required")}, 400
+    column = units_column(get_db(), qid, ref, ids, getattr(g, "locale", DEFAULT_LOCALE))
+    return _json_cached({"ref": ref, "column": column}, 3600)
 
 
 
@@ -1223,18 +1175,12 @@ MAX_PER_PAGE = 500
 
 
 def _pagination_params(args):
-    if (args.get("all") or "") in ("1", "true", "yes") or (args.get("per_page") or "").strip().lower() in ("all", "0"):
-        return 1, None, True
-    per_page = parse_int_or(args.get("per_page"), DEFAULT_PER_PAGE)
-    per_page = max(1, min(per_page, MAX_PER_PAGE))
-    page = max(parse_int_or(args.get("page"), 1), 1)
-    return page, per_page, False
+    per_page = max(1, min(parse_int_or(args.get("per_page"), DEFAULT_PER_PAGE), MAX_PER_PAGE))
+    return max(parse_int_or(args.get("page"), 1), 1), per_page, False
 
 
-def _paginate_list(items, page, per_page, show_all):
+def _paginate_list(items, page, per_page, show_all=False):
     total = len(items)
-    if show_all or per_page is None:
-        return items, {"page": 1, "per_page": total or 1, "total": total, "total_pages": 1, "show_all": True}
     total_pages = max(1, (total + per_page - 1) // per_page)
     page = max(1, min(page, total_pages))
     start = (page - 1) * per_page
@@ -1254,7 +1200,9 @@ def _prefiltered(conn, fetch_fn, fetch_all_fn, fs, topic_filter, extra_blocked=F
 def _page_batch(rows, locale, tree):
     page, per_page, show_all = _pagination_params(request.args)
     page_items, pagination = _paginate_list(rows, page, per_page, show_all)
-    _attach_breadcrumbs_batched(page_items, locale, tree)
+    _attach_breadcrumbs_batched(page_items, locale, tree,
+                                name_map=_cached_name_map(tree, locale),
+                                parent_map=_cached_indices(tree)["parent"])
     return page_items, pagination
 
 
@@ -1284,9 +1232,8 @@ def all_quantities():
         quantity["default_unit_html"], quantity["default_unit_symbol_latex"] = render_compound_unit(
             base_map.get(quantity["id"]), locale)
 
-    heading = _("detail.base_quantities") if fs.base_quantity_only else _render_list_heading(
-        _("detail.quantities"), tree, compressed, fs, conn, locale,
-    )
+    heading = _("detail.base_quantities") if fs.base_quantity_only else _heading_from_compressed(
+        _("detail.quantities"), compressed, tree, locale, fs, conn)
     return render_template(
         "quantities.html",
         quantities=page_items,
@@ -1322,13 +1269,9 @@ def all_formulas():
             formulas = [f for f in formulas if f["id"] in matching_ids]
 
     page_items, pagination = _page_batch(sort_formulas(conn, formulas, sort_key, locale), locale, tree)
-    latex_map = _formula_latex_map(conn, [f["id"] for f in page_items], locale)
-    for formula in page_items:
-        formula["latex"] = latex_map.get(formula["id"], "")
+    page_items = _with_latex(conn, page_items, locale)
 
-    heading = _render_list_heading(
-        _("nav.formulas"), tree, compressed, fs, conn, locale,
-    )
+    heading = _heading_from_compressed(_("nav.formulas"), compressed, tree, locale, fs, conn)
     return render_template(
         "formulas.html",
         formulas=page_items,
@@ -1343,18 +1286,19 @@ def all_formulas():
 
 @app.route("/export")
 def export():
-    limited = _rate_limit("export:" + _client_key(), 6)
+    limited = _rate_limit(f"export:{request.remote_addr or 'anon'}|{request.endpoint or '?'}", 6)
     if limited is not None:
         return limited
     fmt = request.args.get("format") or request.cookies.get("sf_export_format", "csv")
-    conn = get_db()
-    from scifind_lib.export import export_payload
+    if fmt not in ("csv", "zip", "xlsx", "ods", "sql"):
+        return {"error": _err("error.unknown_format")}, 400
     # Web serves zip for csv (multi-table); map plain csv -> zip.
-    payload, mimetype, filename = export_payload(conn, "zip" if fmt == "csv" else fmt)
+    payload, mimetype, filename = export_payload(get_db(), "zip" if fmt == "csv" else fmt)
 
     resp = Response(payload, mimetype=mimetype,
-                    headers={"Content-Disposition": f"attachment; filename={filename}"})
-    resp.set_cookie("sf_export_format", fmt, max_age=365 * 24 * 3600, path="/")
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+    resp.set_cookie("sf_export_format", fmt, max_age=365 * 24 * 3600, path="/",
+                    httponly=True, samesite="Lax", secure=app.config.get("SESSION_COOKIE_SECURE", False))
     return resp
 
 
@@ -1366,29 +1310,28 @@ def create_formula():
 
 
 
-def _parse_bracket(prefix, nparts, fields=None):
-    """Parse `prefix[a][b]...` form keys; blanks omitted, last non-blank wins."""
-    from scifind_lib.parser import parse_bracket_keys
+def _bracket(prefix, nparts, fields=None):
     return parse_bracket_keys(request.form.lists(), prefix, nparts, fields)
 
 
-def _check_equation():
-    """Return (equation, error) enforcing CREATE_EQUATION_MAX_LENGTH."""
-    from scifind_lib.parser import check_equation_length
+def _equation_error():
     return check_equation_length(request.form.get("equation") or "",
-                                 CREATE_EQUATION_MAX_LENGTH)
+                                 CREATE_EQUATION_MAX_LENGTH)[1]
 
 
 @app.route("/create/preview-render", methods=["POST"])
 def create_preview_render():
     """Form-POST version of /api/preview that also returns detail_items HTML."""
-    equation, error = _check_equation()
-    if error:
+    limited = _rate_limit(f"preview:{request.remote_addr or 'anon'}", 20)
+    if limited is not None:
+        return limited
+    if error := _equation_error():
         return {"error": error}, 400
     conn = get_db()
     result = parse_and_preview_equation(
-        conn, equation.strip(), locale=g.locale, dim_caches=_get_dimension_caches(),
-        overrides=_parse_bracket("override", 2, ("symbol", "name")),
+        conn, (request.form.get("equation") or "").strip(), locale=g.locale,
+        dim_caches=_get_dimension_caches(),
+        overrides=_bracket("override", 2, ("symbol", "name")),
         dim_mode=g.get("dim_mode", "dim"))
     if result.get("error") or not result.get("latex"):
         return result
@@ -1400,16 +1343,16 @@ def create_preview_render():
 def _operator_latex(item):
     """LaTeX for an operator in the token sidebar via its own template."""
     try:
-        arity = int(item.get("arity") or 2)
+        arity = max(min(int(item.get("arity") or 2), 4), 1)
     except (TypeError, ValueError):
         arity = 2
-    operands = ["x", "y", "z", "w"][:max(arity, 1)]
+    operands = ["x", "y", "z", "w"][:arity]
     try:
         return render_op_template(
             item.get("latex_template") or "[[0]] [[1]]", operands,
-            [operand_info("operator")] * len(operands), item.get("id"))
-    except ValueError:
-        return item.get("symbol") or item["id"]
+            [operand_info("operator")] * arity, item.get("id"))
+    except (ValueError, KeyError, TypeError):
+        return item.get("symbol") or item.get("id") or ""
 
 
 def _render_token_item(item, kind, locale, selected=False):
@@ -1418,31 +1361,30 @@ def _render_token_item(item, kind, locale, selected=False):
     item = dict(item)
     if kind == "op":
         sym_text, name = _operator_latex(item), item["id"]
-        insert = item.get("symbol") or item["id"]
-        search = f'{item["id"]} {item.get("symbol") or ""}'
-        chip_attrs = ""
+        insert, search, chip = item.get("symbol") or item["id"], \
+            f'{item["id"]} {item.get("symbol") or ""}', ""
     else:
         sym_text = item.get("symbol") or ""
-        name = localise(item.get("name") or "", locale, default="en-us") or item["id"]
+        name = localise(item.get("name") or "", locale)
         insert = item["id"]
         search = f'{item["id"]} {item.get("symbol") or ""} {item.get("name") or ""}'
-        chip_attrs = f' data-action="add-qty-chip" data-qty="{esc(item["id"])}" tabindex="0"'
-    sel_cls = " selected" if selected else ""
-    sym_html = f'<span class="qty-result-sym">${esc(sym_text)}$</span>' if sym_text else '<span class="qty-result-sym"></span>'
-    return (f'<div class="qty-result{sel_cls}" data-kind="{kind}" data-insert="{esc(insert)}"'
-            f' data-search="{esc(search.lower())}"{chip_attrs}>{sym_html}'
+        chip = f' data-action="add-qty-chip" data-qty="{esc(item["id"])}" tabindex="0"'
+    sym = f'<span class="qty-result-sym">${esc(sym_text)}$</span>' if sym_text else '<span class="qty-result-sym"></span>'
+    return (f'<div class="qty-result{" selected" if selected else ""}" role="option" data-kind="{kind}"'
+            f' data-insert="{esc(insert)}" data-search="{esc(search.lower())}"{chip}>{sym}'
             f'<span class="qty-result-name">{esc(name)}</span></div>')
 
 
 def _render_token_section(label, target_id, items, kind, locale, no_match_label):
     """One labelled <section> of token items with a collapse toggle."""
     esc = html_module.escape
+    tid = esc(target_id)
     body = "".join(_render_token_item(it, kind, locale) for it in items)
     return (f'<div class="section-label-row"><div class="section-label">{esc(label)}</div>'
             f'<div class="filter-buttons"><button class="filter-btn" data-action="toggle-token-section"'
-            f' data-target="{target_id}" type="button"><span class="token-section-icon">'
+            f' data-target="{tid}" type="button"><span class="token-section-icon">'
             f'<i data-lucide="chevron-up" width="16" height="16"></i></span></button></div></div>'
-            f'<div class="token-list" id="{target_id}">{body}</div>'
+            f'<div class="token-list" id="{tid}">{body}</div>'
             f'<div class="token-empty">{esc(no_match_label)}</div>')
 
 
@@ -1451,11 +1393,11 @@ def create_token_sidebar():
     """Server-rendered Q/C/O token sidebar for the /create page."""
     conn, locale = get_db(), g.locale
     no_results = _("create.no_results")
-    sections = "".join(_render_token_section(label, tid, fetch_fn(conn), kind, locale, no_results)
-                       for label, tid, fetch_fn, kind in (
-                           (_("detail.quantities"), "token-qty", fetch_all_quantities, "qty"),
-                           (_("nav.constants"), "token-const", fetch_all_constants, "const"),
-                           (_("nav.operators"), "token-op", fetch_all_operators, "op")))
+    sections = "".join(_render_token_section(_(key), tid, fn(conn), kind, locale, no_results)
+                       for key, tid, fn, kind in (
+                           ("detail.quantities", "token-qty", fetch_all_quantities, "qty"),
+                           ("nav.constants", "token-const", fetch_all_constants, "const"),
+                           ("nav.operators", "token-op", fetch_all_operators, "op")))
     return Markup(
         '<div class="filter-qty-search-wrap">'
         f'<input type="text" class="text-field" id="token-search" placeholder="{html_module.escape(_("create.search_placeholder"))}" autocomplete="off">'
@@ -1467,17 +1409,17 @@ def create_token_sidebar():
 def _render_breadcrumb(selected_id, tree, name_map):
     """Server-rendered topic breadcrumb (root > ... > selected > child trigger)."""
     esc = html_module.escape
-    node = _find_node(tree, selected_id) if selected_id else None
-    kids, path = (node.get("children") or [], topic_path(tree, selected_id) or [selected_id]) \
-        if node is not None else (tree, None)
+    node = build_tree_indices(tree)["id_to_node"].get(selected_id) if selected_id else None
+    kids = node.get("children") or [] if node else tree
+    path = (topic_path(tree, selected_id) or [selected_id]) if node else None
     parts = [' &gt; '.join(
-        f'<span class="topic-current" data-id="{esc(tid)}">{esc(name_map.get(tid, tid))}</span>'
-        for tid in path)] if path else []
+        f'<span class="topic-current" data-id="{esc(t)}">{esc(name_map.get(t, t))}</span>'
+        for t in path)] if path else []
     if kids:
-        if parts:
-            parts.append(' &gt; ')
         label = _("create.topic")
-        menu = "".join(_render_menu_item(kid, name_map) for kid in kids)
+        menu = "".join(_render_menu_item(k, name_map) for k in kids)
+        if parts:
+            parts.append(" &gt; ")
         parts.append(
             f'<span class="topic-current has-menu" data-text="{esc(label)}">'
             f'<button class="topic-dropdown-trigger" type="button">{esc(label)}</button>'
@@ -1485,32 +1427,22 @@ def _render_breadcrumb(selected_id, tree, name_map):
     return Markup("".join(parts))
 
 
-def _find_node(tree, node_id):
-    stack = list(tree)
-    while stack:
-        node = stack.pop()
-        if node["id"] == node_id:
-            return node
-        stack.extend(node.get("children") or [])
-    return None
-
-
 def _render_menu_item(node, name_map):
     """One entry of the topic dropdown."""
     esc = html_module.escape
-    node_id, name = node["id"], name_map.get(node["id"], node["id"])
+    nid, name = node["id"], name_map.get(node["id"], node["id"])
     if kids := node.get("children"):
         sub = "".join(_render_menu_item(c, name_map) for c in kids)
-        return (f'<div class="topic-menu-item" data-id="{esc(node_id)}">'
+        return (f'<div class="topic-menu-item" data-id="{esc(nid)}">'
                 f'<span>{esc(name)}</span><span class="caret"></span>'
                 f'<div class="topic-submenu">{sub}</div></div>')
-    return (f'<button type="button" class="topic-menu-item" data-id="{esc(node_id)}">'
+    return (f'<button type="button" class="topic-menu-item" data-id="{esc(nid)}">'
             f'<span>{esc(name)}</span></button>')
 
 
 @app.route("/create/breadcrumb")
 def create_breadcrumb():
-    topic = (request.args.get("topic") or "").strip() or None
+    topic = (request.args.get("topic") or "").strip()[:200] or None
     tree = load_tree(get_db())
     name_map = topic_name_map(tree, g.locale)
     return _render_breadcrumb(topic, tree, name_map)
@@ -1519,62 +1451,59 @@ def create_breadcrumb():
 @app.route("/create/languages")
 def create_languages():
     """Available locales plus the GitHub repo slug for new-issue links."""
-    items = [
-        {"code": code, "name": locale_data.get("meta", {}).get("name", code)}
-        for code, locale_data in sorted(_available_locales().items())
-    ]
-    repo = os.environ.get("SCIFIND_GITHUB_REPO", "Creeperman3000/Scifind")
-    return {"current": getattr(g, "locale", DEFAULT_LOCALE), "locales": items, "repo": repo}
+    items = [{"code": code, "name": loc.get("meta", {}).get("name", code)}
+             for code, loc in sorted(_available_locales().items())]
+    return {"current": getattr(g, "locale", DEFAULT_LOCALE), "locales": items,
+            "repo": os.environ.get("SCIFIND_GITHUB_REPO", "Creeperman3000/Scifind")}
 
 
 def _build_create_sql_payload(conn, form):
     """Parse the /create form fields and return (formula_sql, token_sql)."""
-    form_text = lambda field: (form.get(field) or "").strip()
-    links = [line.strip() for line in form_text("links").splitlines() if line.strip()] or None
-    tr_top = _parse_bracket("tr", 2)
-    tr_ov = _parse_bracket("tr_overrides", 3, ("symbol", "name"))
-    translations = {}
-    for locale_code in set(tr_top) | set(tr_ov):
-        entry = {k: tr_top[locale_code][k] for k in ("name", "description") if k in tr_top.get(locale_code, {})}
-        if locale_code in tr_ov:
-            entry["overrides"] = tr_ov[locale_code]
-        if entry:
-            translations[locale_code] = entry
+    field = lambda f: (form.get(f) or "").strip()
+    links = [ln.strip() for ln in field("links").splitlines() if ln.strip()] or None
+    tr_top, tr_ov = _bracket("tr", 2), _bracket("tr_overrides", 3, ("symbol", "name"))
+    translations = {loc: ({k: tr_top[loc][k] for k in ("name", "description") if k in tr_top.get(loc, {})}
+                          | ({"overrides": tr_ov[loc]} if loc in tr_ov else {}))
+                    for loc in set(tr_top) | set(tr_ov)}
+    translations = {loc: e for loc, e in translations.items() if e}
     return build_create_sql(
-        conn, name_en=form_text("name_en"), topic=form_text("topic"),
-        difficulty=form_text("difficulty") or "2", equation=form.get("equation") or "",
-        overrides=_parse_bracket("override", 2, ("symbol", "name")),
-        description=form_text("description") or None, links=links,
-        translations=translations, formula_id=form_text("formula_id"))
-
-
-def _sql_block(pre_id, sql, action):
-    esc = html_module.escape
-    return (f'<div class="sql-block"><button class="formula-copy-btn" type="button"'
-            f' data-action="{action}" title="Copy"><i data-lucide="copy" width="16" height="16"></i></button>'
-            f'<pre id="{pre_id}">{esc(sql)}</pre></div>')
+        conn, name_en=field("name_en"), topic=field("topic"),
+        difficulty=field("difficulty") or "2", equation=form.get("equation") or "",
+        overrides=_bracket("override", 2, ("symbol", "name")),
+        description=field("description") or None, links=links,
+        translations=translations, formula_id=field("formula_id"))
 
 
 def _render_sql_modal_html(formula_sql, token_sql):
+    esc = html_module.escape
+    copy_title = esc(_("tooltip.copy"))
+    block = lambda pid, sql, act: (
+        f'<div class="sql-block"><button class="formula-copy-btn" type="button"'
+        f' data-action="{act}" title="{copy_title}"><i data-lucide="copy" width="16" height="16"></i></button>'
+        f'<pre id="{pid}">{esc(sql)}</pre></div>')
     return Markup(
-        _sql_block("formula-sql", formula_sql, "copy-formula-sql")
-        + f'<h3>{html_module.escape(_("create.token_inserts"))}</h3>'
-        + _sql_block("token-sql", token_sql, "copy-token-sql"))
+        f'<h3>{esc(_("create.formula_insert"))}</h3>'
+        + block("formula-sql", formula_sql, "copy-formula-sql-export")
+        + f'<h3>{esc(_("create.token_inserts"))}</h3>'
+        + block("token-sql", token_sql, "copy-token-sql-export"))
 
 
 def _sql_error(message, code=None):
-    message_html, error_code = html_module.escape(str(message)), html_module.escape(code or str(message))
+    msg, err_code = str(message)[:200], code or "error"
     # JSON error contract (client prefers JSON, falls back to HTML data-error).
     if "application/json" in (request.headers.get("Accept") or ""):
-        return {"error": str(message), "code": code or "error"}, 400
-    return Markup(f'<p class="detail-desc" data-error="{error_code}">{message_html}</p>'), 400
+        return {"error": msg, "code": err_code}, 400
+    esc = html_module.escape
+    return Markup(f'<p class="detail-desc" data-error="{esc(err_code)}">{esc(msg)}</p>'), 400
 
 
 @app.route("/create/build-sql", methods=["POST"])
 def create_build_sql():
     """Form-POST equivalent of /api/build-sql returning rendered modal HTML."""
-    _, error = _check_equation()
-    if error:
+    limited = _rate_limit(f"buildsql:{request.remote_addr or 'anon'}", 20)
+    if limited is not None:
+        return limited
+    if error := _equation_error():
         return _sql_error(error, "equation-too-long")
     try:
         formula_sql, token_sql = _build_create_sql_payload(get_db(), request.form)
@@ -1587,6 +1516,5 @@ def create_build_sql():
 
 if __name__ == "__main__":
     host = os.environ.get("SCIFIND_HOST", "127.0.0.1")
-    port = int(os.environ.get("SCIFIND_PORT", "5000"))
-    debug = os.environ.get("SCIFIND_DEBUG", "").lower() in ("1", "true", "yes")
-    app.run(host=host, port=port, debug=debug)
+    port = parse_int_or(os.environ.get("SCIFIND_PORT", "5000"), 5000)
+    app.run(host=host, port=port)

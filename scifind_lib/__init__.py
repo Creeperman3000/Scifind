@@ -45,7 +45,7 @@ from scifind_lib.fetch import (  # noqa: F401
     fetch_all_operators, fetch_all_quantities,
     fetch_compound_units, fetch_constant, fetch_constant_formulas,
     fetch_detail_items,
-    fetch_first_unit, fetch_formula, fetch_formula_token_quantities,
+    fetch_formula, fetch_formula_token_quantities,
     fetch_formula_quantities, fetch_formula_relations,
     fetch_formulas_filtered, fetch_formulas_with_quantities,
     fetch_prefixable_base_units, fetch_quantities_by_ids, fetch_quantity,

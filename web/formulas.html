@@ -7,7 +7,7 @@
 {% if formulas %}
 <div class="formula-grid" data-list-container>
 {% for f in formulas %}
-  {{ formula_card('/formula/' ~ f['id'], f.latex, _(f.name), relation=_('relation.' ~ f.relation_type) if f.relation_type else None) }}
+  {{ card('/formula/' ~ f['id'], latex=f.latex, name=_(f.name), relation=_('relation.' ~ f.relation_type) if f.relation_type else None) }}
 {% endfor %}
 </div>
 {{ load_more_bar(pagination) }}

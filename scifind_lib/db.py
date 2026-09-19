@@ -17,12 +17,9 @@ def database_path():
 
 def sql_literal(value):
     """Render a Python value as a SQL literal string; for SQL *files* only, never live queries."""
-    if value is None:
-        return "NULL"
-    if isinstance(value, bool):
-        return "1" if value else "0"
-    if isinstance(value, (int, float)):
-        return repr(value)
+    if value is None: return "NULL"
+    if isinstance(value, bool): return "1" if value else "0"
+    if isinstance(value, (int, float)): return repr(value)
     return "'" + str(value).replace("'", "''") + "'"
 
 
@@ -40,8 +37,7 @@ def in_clause(ids):
 
 def keyed_rows(conn, sql, ids):
     """``{id: dict(row)}`` for a SELECT with one ``{}`` IN-list slot; {} for empty ids."""
-    if not ids:
-        return {}
+    if not ids: return {}
     marks, params = in_clause(ids)
     return {r["id"]: dict(r) for r in conn.execute(sql.format(marks), params).fetchall()}
 
@@ -52,8 +48,7 @@ def open_database():
         os.makedirs(parent, exist_ok=True)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
-    for pragma in ("foreign_keys = ON", "journal_mode = WAL", "busy_timeout = 5000", "synchronous = NORMAL"):
-        conn.execute(f"PRAGMA {pragma}")
+    for pragma in ("foreign_keys = ON", "journal_mode = WAL", "busy_timeout = 5000", "synchronous = NORMAL"): conn.execute(f"PRAGMA {pragma}")
     return conn
 
 
@@ -61,10 +56,8 @@ def open_database():
 def database_connection():
     """Yield an open DB connection, always closing it afterwards."""
     conn = open_database()
-    try:
-        yield conn
-    finally:
-        conn.close()
+    try: yield conn
+    finally: conn.close()
 
 
 def database_has_formula_table(conn):
@@ -85,12 +78,9 @@ def initialize_database(force=False, schema_path=None, seed_path=None):
         conn.execute("PRAGMA foreign_keys = OFF")
         try:
             if force:
-                for table in tables + legacy_tables:
-                    conn.execute(f"DROP TABLE IF EXISTS {table}")
-            for script_path in (schema_path, seed_path):
-                conn.executescript(Path(script_path).read_text(encoding="utf-8"))
-            for table in legacy_tables:
-                conn.execute(f"DROP TABLE IF EXISTS {table}")
+                for table in tables + legacy_tables: conn.execute(f"DROP TABLE IF EXISTS {table}")
+            for script_path in (schema_path, seed_path): conn.executescript(Path(script_path).read_text(encoding="utf-8"))
+            for table in legacy_tables: conn.execute(f"DROP TABLE IF EXISTS {table}")
             conn.execute("PRAGMA foreign_keys = ON")
             conn.commit()
         except Exception as exc:

@@ -2,7 +2,7 @@
 
 import re
 
-from scifind_lib.util import safe_json_list
+from scifind_lib.util import request_cached, safe_json_list
 
 DIM_TOLERANCE = 1e-9
 
@@ -34,14 +34,20 @@ class OperatorDefinition:
 
 OPERATOR_COLUMNS = "id, symbol, aliases, arity, precedence, associativity, type, latex_template, dim_spec"
 
-def load_operators(conn):
+def _load_operators_uncached(conn):
     return {r["id"]: OperatorDefinition(dict(r)) for r in conn.execute(f"SELECT {OPERATOR_COLUMNS} FROM operator")}
+
+
+def load_operators(conn):
+    return request_cached("_operators", lambda: _load_operators_uncached(conn))
 
 def alias_to_id_map(operators):
     mapping = {}
     for op in operators.values():
         for spelling in [op.id, *op.aliases]:
             if spelling:
+                if spelling in mapping and mapping[spelling] != op.id:
+                    raise ValueError(f"duplicate operator alias: {spelling!r}")
                 mapping.setdefault(spelling, op.id)
     return mapping
 
@@ -52,110 +58,110 @@ _PLACEHOLDER_RE = re.compile(r"\[\[(\d+)(!)?")
 _MATCHER_RE = re.compile(r"(num|const|qty):")
 _MATCHER_BAD = re.compile(r"[\[\]{}?:]")
 
-def _check_indexes(kind, rest, arity, op_id):
-    if kind == "text":
-        return
-    if kind == "slot":
-        if rest[0] >= arity:
-            raise ValueError(f"operator {op_id!r}: template slot {{{rest[0]}}} exceeds arity {arity}")
-        return
-    cond_idx, _, then_toks, else_toks = rest
-    if cond_idx >= arity:
-        raise ValueError(f"operator {op_id!r}: template condition {{{cond_idx}?...}} exceeds arity {arity}")
-    for tok in then_toks + else_toks:
-        _check_indexes(tok[0], tok[1:], arity, op_id)
-
 def _validate_template(template, arity, op_id):
     if not isinstance(template, str) or not template:
         raise ValueError(f"operator {op_id!r}: latex_template must be non-empty")
-    for kind, *rest in _parse_template(template, op_id):
-        _check_indexes(kind, rest, arity, op_id)
-
-def _parse_matcher(s, pos, op_id):
-    m = _MATCHER_RE.match(s[pos:])
+    def walk(tokens):
+        for kind, *rest in tokens:
+            if kind == "text":
+                continue
+            if kind == "slot":
+                if rest[0] >= arity:
+                    raise ValueError(f"operator {op_id!r}: template slot {{{rest[0]}}} exceeds arity {arity}")
+            else:
+                cond, _, then_toks, else_toks = rest
+                if cond >= arity:
+                    raise ValueError(f"operator {op_id!r}: template condition {{{cond}?...}} exceeds arity {arity}")
+                walk(then_toks)
+                walk(else_toks)
+    walk(_parse_template(template, op_id))
+def _parse_matcher(template_text, pos, op_id):
+    m = _MATCHER_RE.match(template_text[pos:])
     if not m:
-        raise ValueError(f"operator {op_id!r}: bad matcher in latex_template {s!r} (expected num:<float>, const:<id> or qty:<id>)")
-    kind = m.group(1)
-    pos += len(m.group(0))
-    end = s.find("?", pos)
+        raise ValueError(f"operator {op_id!r}: bad matcher in latex_template {template_text!r} (expected num:<float>, const:<id> or qty:<id>)")
+    kind, pos = m.group(1), pos + len(m.group(0))
+    end = template_text.find("?", pos)
     if end == -1:
-        raise ValueError(f"operator {op_id!r}: matcher without '?then:else' in {s!r}")
-    arg = s[pos:end]
+        raise ValueError(f"operator {op_id!r}: matcher without '?then:else' in {template_text!r}")
+    arg = template_text[pos:end]
     if kind == "num":
         try:
             return ("num", float(arg)), end
         except ValueError as exc:
-            raise ValueError(f"operator {op_id!r}: bad num matcher {arg!r} in {s!r}") from exc
+            raise ValueError(f"operator {op_id!r}: bad num matcher {arg!r} in {template_text!r}") from exc
     if not arg or _MATCHER_BAD.search(arg):
-        raise ValueError(f"operator {op_id!r}: bad {kind} matcher {arg!r} in {s!r}")
+        raise ValueError(f"operator {op_id!r}: bad {kind} matcher {arg!r} in {template_text!r}")
     return (kind, arg), end
 
-def _parse_seq(s, pos, op_id, closing):
+
+def _parse_seq(template_text, pos, op_id, closing):
     toks, buf = [], []
     def flush():
         if buf:
             toks.append(("text", "".join(buf)))
-            del buf[:]
-    while pos < len(s):
-        if s.startswith("[[", pos):
-            m = _PLACEHOLDER_RE.match(s[pos:])
+            buf.clear()
+    while pos < len(template_text):
+        if template_text.startswith("[[", pos):
+            m = _PLACEHOLDER_RE.match(template_text[pos:])
             if not m:
                 buf.append("[")
                 pos += 1
                 continue
-            idx = int(m.group(1))
-            bare = m.group(2) == "!"
+            idx, bare = int(m.group(1)), m.group(2) == "!"
             pos += len(m.group(0))
             matcher = None
-            if s[pos:pos + 1] == "=":
+            if template_text[pos:pos + 1] == "=":
                 if bare:
-                    raise ValueError(f"operator {op_id!r}: '[[{idx}!=' mixes grouping with matching in {s!r}; put '!' on the slots inside the branches")
-                pos += 1
-                matcher, pos = _parse_matcher(s, pos, op_id)
-            if s.startswith("]]", pos):
+                    raise ValueError(f"operator {op_id!r}: '[[{idx}!=' mixes grouping with matching in {template_text!r}; put '!' on the slots inside the branches")
+                matcher, pos = _parse_matcher(template_text, pos + 1, op_id)
+            if template_text.startswith("]]", pos):
                 if matcher is not None:
-                    raise ValueError(f"operator {op_id!r}: matcher without '?then:else' in {s!r}")
+                    raise ValueError(f"operator {op_id!r}: matcher without '?then:else' in {template_text!r}")
                 flush()
                 toks.append(("slot", idx, bare))
                 pos += 2
-                continue
-            if s[pos:pos + 1] == "?":
+            elif template_text[pos:pos + 1] == "?":
                 flush()
-                then_toks, pos = _parse_seq(s, pos + 1, op_id, closing=":")
-                if s[pos:pos + 1] != ":":
-                    raise ValueError(f"operator {op_id!r}: '[[{idx}?...' misses ':' in {s!r}")
-                else_toks, pos = _parse_seq(s, pos + 1, op_id, closing="]]")
-                if not s.startswith("]]", pos):
-                    raise ValueError(f"operator {op_id!r}: '[[{idx}?...:...' misses ']]' in {s!r}")
+                then_toks, pos = _parse_seq(template_text, pos + 1, op_id, ":")
+                if template_text[pos:pos + 1] != ":":
+                    raise ValueError(f"operator {op_id!r}: '[[{idx}?...' misses ':' in {template_text!r}")
+                else_toks, pos = _parse_seq(template_text, pos + 1, op_id, "]]")
+                if not template_text.startswith("]]", pos):
+                    raise ValueError(f"operator {op_id!r}: '[[{idx}?...:...' misses ']]' in {template_text!r}")
                 toks.append(("cond", idx, matcher, then_toks, else_toks))
                 pos += 2
-                continue
-            raise ValueError(f"operator {op_id!r}: bad '[[{idx}' in latex_template {s!r}")
-        if s.startswith("]]", pos):
+            else:
+                raise ValueError(f"operator {op_id!r}: bad '[[{idx}' in latex_template {template_text!r}")
+        elif template_text.startswith("]]", pos):
             if closing in (":", "]]"):
                 break
             buf.append("]]")
             pos += 2
-        elif s[pos:pos + 1] == ":" and closing == ":":
+        elif template_text[pos] == ":" and closing == ":":
             break
         else:
-            buf.append(s[pos])
+            buf.append(template_text[pos])
             pos += 1
     flush()
     return toks, pos
 
+_TEMPLATE_CACHE: dict = {}
+
+
 def _parse_template(template, op_id):
-    toks, pos = _parse_seq(template, 0, op_id, closing=None)
+    if (hit := _TEMPLATE_CACHE.get((template, op_id))) is not None:
+        return hit
+    parsed, pos = _parse_seq(template, 0, op_id, closing=None)
     if pos != len(template):
         raise ValueError(f"operator {op_id!r}: bad latex_template {template!r}")
-    return toks
+    _TEMPLATE_CACHE[(template, op_id)] = parsed
+    return parsed
 
 def _matcher_matches(matcher, info):
     kind, arg = matcher
     if kind == "num":
-        return info.get("kind") == "number" and info.get("value") is not None and info["value"] == arg
-    want = {"const": "constant", "qty": "quantity"}.get(kind)
-    return want is not None and info.get("kind") == want and info.get("ref") == arg
+        return info.get("kind") == "number" and info.get("value") == arg
+    return info.get("kind") == ("constant" if kind == "const" else "quantity") and info.get("ref") == arg
 
 def _render_tokens(toks, operands, infos):
     chunks = []
@@ -166,8 +172,8 @@ def _render_tokens(toks, operands, infos):
             chunks.append(operands[tok[1]])
         else:
             _, idx, matcher, then_toks, else_toks = tok
-            take_then = _matcher_matches(matcher, infos[idx]) if matcher is not None else operands[idx]
-            chunks.append(_render_tokens(then_toks if take_then else else_toks, operands, infos))
+            take = _matcher_matches(matcher, infos[idx]) if matcher else operands[idx]
+            chunks.append(_render_tokens(then_toks if take else else_toks, operands, infos))
     return "".join(chunks)
 
 def render_template(template, operands, infos, op_id="<template>"):
@@ -180,10 +186,9 @@ def render_template(template, operands, infos, op_id="<template>"):
         raise ValueError(f"operator {op_id!r}: template {template!r} needs {len(operands)} operands") from exc
 
 def _slot_info(template, op_id="<template>"):
-    top, bare = -1, set()
-    def walk(ts):
-        nonlocal top
-        for t in ts:
+    top, bare, stack = -1, set(), [_parse_template(template, op_id)]
+    while stack:
+        for t in stack.pop():
             if t[0] == "text":
                 continue
             top = max(top, t[1])
@@ -191,16 +196,11 @@ def _slot_info(template, op_id="<template>"):
                 if t[2]:
                     bare.add(t[1])
             else:
-                walk(t[3])
-                walk(t[4])
-    walk(_parse_template(template, op_id))
+                stack.extend((t[3], t[4]))
     return top + 1, bare
 
-def template_arity(template, op_id="<template>"):
-    return _slot_info(template, op_id)[0]
-
-def template_bare_slots(template, op_id="<template>"):
-    return _slot_info(template, op_id)[1]
+def template_arity(template, op_id="<template>"): return _slot_info(template, op_id)[0]
+def template_bare_slots(template, op_id="<template>"): return _slot_info(template, op_id)[1]
 
 _DIM_CLAUSE_EXAMPLES = "'drop(0)', 'require same(all)', 'require dimless(1)', 'result same', 'result zero', 'result any', 'result dims(0)+dims(1)'"
 _DROP_RE = re.compile(r"^drop\s*\(\s*(?P<args>.*)\s*\)$", re.IGNORECASE)
@@ -221,27 +221,24 @@ def _parse_idx_list(arg, arity, op_id, what):
         return True
     if not arg:
         raise ValueError(f"operator {op_id!r}: dim_spec {what} needs indexes or 'all' (e.g. {what}(all), {what}(0, 1))")
-    indexes = []
+    out = []
     for part in arg.split(","):
-        part = part.strip()
-        if not re.fullmatch(r"-?\d+", part or ""):
-            raise ValueError(f"operator {op_id!r}: dim_spec {what} has bad index {part!r} (expected e.g. {what}(all), {what}(0, 1))")
-        j = _wrap_dim_index(int(part), arity, op_id, what)
-        if j in indexes:
+        p = part.strip()
+        if not re.fullmatch(r"-?\d+", p or ""):
+            raise ValueError(f"operator {op_id!r}: dim_spec {what} has bad index {p!r} (expected e.g. {what}(all), {what}(0, 1))")
+        j = _wrap_dim_index(int(p), arity, op_id, what)
+        if j in out:
             raise ValueError(f"operator {op_id!r}: dim_spec {what} repeats index {j}")
-        indexes.append(j)
-    return sorted(indexes)
+        out.append(j)
+    return sorted(out)
 
 def _split_terms(expr, op_id):
     terms, buf, sign, depth = [], [], 1, 0
     def bad(msg):
         raise ValueError(f"operator {op_id!r}: dim_spec result expression {expr!r} {msg}")
     for ch in expr:
-        if ch == "(":
-            depth += 1
-            buf.append(ch)
-        elif ch == ")":
-            depth -= 1
+        if ch in "()":
+            depth += 1 if ch == "(" else -1
             if depth < 0:
                 bad("has unbalanced ')'")
             buf.append(ch)
@@ -251,8 +248,7 @@ def _split_terms(expr, op_id):
                 terms.append((sign, chunk))
             elif terms or sign != 1 or not buf:
                 bad("has an empty term")
-            sign = 1 if ch == "+" else -1
-            buf = []
+            sign, buf = (1 if ch == "+" else -1), []
         else:
             buf.append(ch)
     if depth != 0:
@@ -269,28 +265,27 @@ def _parse_result_expr(expr, arity, op_id):
         m = _TERM_RE.match(term)
         if not m:
             raise ValueError(f"operator {op_id!r}: dim_spec result term {term!r} is not of the form dims(i), n*dims(i), dims(i)*value(j) or dims(i)/value(j)")
-        dim_idx = _wrap_dim_index(int(m.group("dim")), arity, op_id, "dims")
-        if dim_idx in seen:
-            raise ValueError(f"operator {op_id!r}: dim_spec result mentions dims({dim_idx}) twice")
-        seen.add(dim_idx)
+        i = _wrap_dim_index(int(m.group("dim")), arity, op_id, "dims")
+        if i in seen:
+            raise ValueError(f"operator {op_id!r}: dim_spec result mentions dims({i}) twice")
+        seen.add(i)
         coeff = float(m.group("coeff")) if m.group("coeff") else 1.0
         op, weight = m.group("op"), (m.group("weight") or "").strip()
         if not weight:
-            factors[dim_idx] = sign * coeff
-            continue
-        if (vm := _VALUE_RE.match(weight)) is not None:
+            factors[i] = sign * coeff
+        elif (vm := _VALUE_RE.match(weight)) is not None:
             if sign != 1 or coeff != 1.0:
-                raise ValueError(f"operator {op_id!r}: dim_spec value-weighted term {term!r} must be positive with no numeric prefix (e.g. dims({dim_idx})*value(j))")
+                raise ValueError(f"operator {op_id!r}: dim_spec value-weighted term {term!r} must be positive with no numeric prefix (e.g. dims({i})*value(j))")
             j = _wrap_dim_index(int(vm.group("idx")), arity, op_id, "value")
-            factors[dim_idx] = {"value_of": j} if op == "*" else {"value_of": j, "invert": True}
-            continue
-        try:
-            number = float(weight)
-        except ValueError as exc:
-            raise ValueError(f"operator {op_id!r}: dim_spec result term {term!r} has a bad weight") from exc
-        if number == 0 and op == "/":
-            raise ValueError(f"operator {op_id!r}: dim_spec result term {term!r} divides by zero")
-        factors[dim_idx] = sign * coeff * (number if op == "*" else 1.0 / number)
+            factors[i] = {"value_of": j} if op == "*" else {"value_of": j, "invert": True}
+        else:
+            try:
+                number = float(weight)
+            except ValueError as exc:
+                raise ValueError(f"operator {op_id!r}: dim_spec result term {term!r} has a bad weight") from exc
+            if number == 0 and op == "/":
+                raise ValueError(f"operator {op_id!r}: dim_spec result term {term!r} divides by zero")
+            factors[i] = sign * coeff * (number if op == "*" else 1.0 / number)
     return factors
 
 def parse_dim_spec(text, arity, op_id):
@@ -307,9 +302,9 @@ def parse_dim_spec(text, arity, op_id):
             _dup(drop_spec, "'drop(...)'")
             drop_spec = _parse_idx_list(m.group("args"), arity, op_id, "drop")
         elif (m := _REQUIRE_RE.match(clause)):
-            kind = m.group("kind").lower()
-            parsed = _parse_idx_list(m.group("args"), arity, op_id, "same" if kind == "same" else "dimless")
-            if kind == "same":
+            which = "same" if m.group("kind").lower() == "same" else "dimless"
+            parsed = _parse_idx_list(m.group("args"), arity, op_id, which)
+            if which == "same":
                 _dup(same_spec, "'require same(...)'")
                 same_spec = parsed
             else:
@@ -361,17 +356,17 @@ def _norm_indexes(value, arity, op_id, what, allow_true=True):
 
 def _validate_dim_spec(spec, arity, op_id):
     factors = spec.get("factors", 1)
-    valid = _is_broadcast(factors) or (isinstance(factors, list) and len(factors) == arity
-            and all(_is_broadcast(f) or _is_value_ref(f) for f in factors))
-    if not valid:
+    ok = _is_broadcast(factors) or (isinstance(factors, list) and len(factors) == arity
+        and all(_is_broadcast(f) or _is_value_ref(f) for f in factors))
+    if not ok:
         raise ValueError(f"operator {op_id!r}: dim_spec factors must be a number or a list of {arity} numbers / value_of refs")
     for f in factors if isinstance(factors, list) else []:
         if isinstance(f, dict):
             j = f["value_of"] + arity if f["value_of"] < 0 else f["value_of"]
             if not 0 <= j < arity:
                 raise ValueError(f"operator {op_id!r}: dim_spec value_of index {j} outside arity {arity}")
-    _norm_indexes(spec.get("equal"), arity, op_id, "equal")
-    _norm_indexes(spec.get("dimensionless"), arity, op_id, "dimensionless")
+    for key in ("equal", "dimensionless"):
+        _norm_indexes(spec.get(key), arity, op_id, key)
     _norm_indexes(spec.get("placeholders") or [], arity, op_id, "placeholders", allow_true=False)
 
 def _is_value_ref(factor):
@@ -389,20 +384,18 @@ def _resolve_factor(factor, child_infos, op_id):
         raise ValueError(f"operator {op_id!r}: value_of index outside operands")
     info = child_infos[j]
     if info.get("kind") == "number" and info.get("value") is not None:
-        value = info["value"]
         if factor.get("invert"):
-            if value == 0:
+            if info["value"] == 0:
                 raise ValueError("exponent must be non-zero for reciprocal scaling")
-            return 1.0 / value
-        return float(value)
+            return 1.0 / info["value"]
+        return float(info["value"])
     if info.get("kind") in ("quantity", "operator"):
-        return 1.0
-    raise ValueError("exponent must be a number, quantity, or operator expression; " f"got kind={info.get('kind')!r}")
+        raise ValueError(f"exponent must be a number; got kind={info.get('kind')!r}")
+    raise ValueError(f"exponent must be a number; got kind={info.get('kind')!r}")
 
 def apply_dim_spec(spec, child_dims, child_infos, op_id):
     n = len(child_dims)
     width = len(child_dims[0]) if child_dims else 0
-    zeros = [0.0] * width
     spec = spec or {}
     raw = spec.get("factors", 1)
     arity = len(raw) if isinstance(raw, list) else n
@@ -417,7 +410,7 @@ def apply_dim_spec(spec, child_dims, child_infos, op_id):
     eq = _as_set(spec.get("equal"))
     if spec.get("equal") is not None:
         if not eq:
-            return list(zeros)
+            return [0.0] * width
         ordered = sorted(eq)
         first = list(child_dims[ordered[0]])
         for i in ordered[1:]:
@@ -426,12 +419,8 @@ def apply_dim_spec(spec, child_dims, child_infos, op_id):
         return first
     if _is_broadcast(raw):
         weights = [float(raw)] * n
+    elif len(raw) != n:
+        raise ValueError(f"operator {op_id!r}: {len(raw)} factors for {n} operands")
     else:
-        if len(raw) != n:
-            raise ValueError(f"operator {op_id!r}: {len(raw)} factors for {n} operands")
         weights = [_resolve_factor(f, child_infos, op_id) for f in raw]
-    result = list(zeros)
-    for weight, vec in zip(weights, child_dims):
-        for i, v in enumerate(vec):
-            result[i] += weight * v
-    return result
+    return [sum(w * vec[i] for w, vec in zip(weights, child_dims)) for i in range(width)]

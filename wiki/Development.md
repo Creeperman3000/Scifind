@@ -130,10 +130,15 @@ VALUES ('electron_volt', '{"en-us": "Electronvolt"}', '\text{eV}', 1.602176634e-
 Parentheses are decided generically from precedence and associativity:
 a child binding looser than its parent wraps, equal precedence wraps per
 associativity (left-associative wraps the right operand and vice versa,
-non-associative always wraps), and every operand may wrap. Template
-slots written `[[i!]]` skip the precedence parens because the template
-already groups them (e.g. inside `\frac{...}{...}`); explicit source
-parentheses are always honoured.
+non-associative always wraps), and a postfix parent wraps an
+equal-precedence child (so `(m^2)!` keeps its parens — `m^{2}!` would
+attach `!` to `2`). Template slots written `[[i!]]` skip the precedence
+parens because the template already groups them (e.g. inside
+`\frac{...}{...}`); self-delimited children (`frac` blocks, `prefix`
+functions like `\sin{...}`, `abs` delimiters) never wrap either.
+Redundant source parentheses are normalised away — a child wraps only
+when dropping the parens would change the meaning — so `m+(a·t)`
+renders as `m + a t`.
 
 If you are using `create/`, you can force a change in the order of operations with parentheses:
 `(m+m)^(m+m)` renders as `\left(m + m\right)^{m + m}` -> `(m+m)ᵐ⁺ᵐ`.

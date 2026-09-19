@@ -71,7 +71,6 @@ The `/create` page uses AJAX endpoints (not meant to be called directly):
 | ----------- | ------------------------------------------------------------------ |
 | `page`      | Page number, starting at 1 (default `1`)                           |
 | `per_page`  | Items per page, 1–500 (default `100`)                              |
-| `all=1`     | Show everything on one page (also `per_page=all` or `per_page=0`)   |
 
 ### Locale
 
@@ -91,12 +90,12 @@ Toggle how dimensions are shown: `?dim_mode=<setting>`
 
 Press `?` anywhere (or Settings → Keyboard shortcuts) for the full in-app reference. Summary:
 
-- Global: `/` / `Ctrl+K` search, `[` / `]` (`Ctrl+B` / `Ctrl+Shift+B`) sidebars, `g f` / `g q` (`Alt+1` / `Alt+2`) switch views, `Esc` closes/clears/cancels a pending `g`/`f`/`c` prefix (5s hint pill).
-- Filters (`f` prefix, list pages): `f q` quantity, `f d` dimension picker (`m`/`l`/`t`/`i`/`h`/`n`/`j` or `1`–`7`; `e` prefix or `Shift` then `l`/`g`/`e` for ≤/≥/=; `f d f` fills empty dimensions with 0, `f d b` toggles base quantities), `f s` sort (`q`/`i`/`n`/`d`/`D`/`t`/`T`), `f r` difficulty, `f t` tree walker (`1`–`9` drill, `Enter` toggles, `Esc` re-expands; `f t d` deselects all topics). Picker targets show blue key badges.
+- Global: `/` / `Ctrl+K` search, `[` / `]` (`Ctrl+B` / `Ctrl+Shift+B`) sidebars, `g f` / `g q` / `g c` (`Alt+1` / `Alt+2`) switch views / create, `Esc` closes/clears/cancels a pending `g`/`f`/`c` prefix (5s hint pill).
+- Filters (`f` prefix, list pages): `f q` quantity, `f Q` quantity AND/OR toggle, `f d` dimension picker (`m`/`l`/`t`/`i`/`h`/`n`/`j` or `1`–`7`; `e` prefix or `Shift` then `l`/`g`/`e` for ≤/≥/=; `f d f` fills empty dimensions with 0, `f d b` toggles base quantities), `f D` dimension AND/OR toggle, `f s` sort (`q`/`i`/`n`/`d`/`D`/`t`/`T`), `f r <digit>` min difficulty / `f R <digit>` max difficulty (`0` means `10`), `f t` tree walker (`1`–`9` drill, `Enter` toggles, `Esc` re-expands; `f t d` deselects all topics). Picker targets show blue key badges. Pure modifier presses (Shift, Ctrl, Alt, Meta, CapsLock) never cancel a pending prefix.
 - Results & details: `j`/`k`/`↑`/`↓` move up/down (blue highlight), `h`/`l`/`←`/`→` move left/right, `Enter` opens, `Tab` focuses links, `m` loads more.
 - Copy formula as (`c` prefix): `c l`/`c u`/`c p`/`c v` copy LaTeX/Unicode/PNG/SVG, `c s` formula SQL.
 - Clear filter (`c` prefix): `c a` clear all, `c q`/`c d`/`c r`/`c t` clear one filter.
-- Create: `Ctrl+Enter` continues to SQL, `e` focuses the equation field.
+- Create: `g c` opens create, `Ctrl+Enter` continues to SQL, `e` focuses the equation field.
 
 ## Configuration
 

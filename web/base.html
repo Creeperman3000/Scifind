@@ -16,18 +16,10 @@
 </div>
 {%- endmacro %}
 
-{% macro formula_card(href, latex, name, relation=None) -%}
-{{ card(href, latex=latex, name=name, relation=relation) }}
-{%- endmacro %}
-
-{% macro entity_card(href, symbol, name, relation=None) -%}
-{{ card(href, symbol=symbol, name=name, relation=relation) }}
-{%- endmacro %}
-
 {% macro formula_grid(items, id_attr='id') -%}
 <div class="formula-grid">
 {% for f in items %}
-  {{ formula_card('/formula/' ~ f[id_attr], f.latex, _(f.name), relation=_('relation.' ~ f.relation_type) if f.relation_type else None) }}
+  {{ card('/formula/' ~ f[id_attr], latex=f.latex, name=_(f.name), relation=_('relation.' ~ f.relation_type) if f.relation_type else None) }}
 {% endfor %}
 </div>
 {%- endmacro %}
@@ -84,8 +76,8 @@
 {% if units %}
 <div class="detail-section">
   <h3>{{ title }}</h3>
-  <table class="units-table">
-    <colgroup><col class="units-c1"><col class="units-c2"><col class="units-c3"></colgroup>
+  <table class="units-table value-units-table">
+    <colgroup><col class="value-c1"><col class="value-c2"><col class="value-c3"></colgroup>
     <thead>
       <tr>
         <th>{{ _('detail.value') }}</th>
@@ -113,7 +105,11 @@
   <h3>{{ _('detail.links') }}</h3>
   <ol class="link-list">
   {% for url in links %}
+    {% if url.startswith('http://') or url.startswith('https://') %}
     <li><a href="{{ url }}" target="_blank" rel="noopener noreferrer">{{ url }}</a></li>
+    {% else %}
+    <li>{{ url }}</li>
+    {% endif %}
   {% endfor %}
   </ol>
 </div>
@@ -138,6 +134,18 @@
 {% if is_ref %}&ndash;{% elif conv %}<span class="latex-observe" data-latex="{{ conv }}"></span>{% else %}&ndash;{% endif %}
 {%- endmacro %}
 
+{% macro units_sort_btn(col) -%}
+<button type="button" class="units-sort-btn" data-action="units-sort" data-col="{{ col }}" aria-label="{{ _('tooltip.sort_by') }} {{ col }}"><i data-lucide="chevrons-up-down" width="14" height="14"></i></button>
+{%- endmacro %}
+
+{% macro units_head(ref_label=None) -%}
+<tr>
+  <th>{{ _('detail.unit') }}{{ units_sort_btn('unit') }}</th>
+  <th>{{ _('detail.system') }}{{ units_sort_btn('system') }}</th>
+  <th>{{ _('detail.conversion_to') }}{% if ref_label %} <span class="units-ref-name">{{ ref_label }}</span>{% endif %}{{ units_sort_btn('conversion') }}</th>
+</tr>
+{%- endmacro %}
+
 {% macro units_table(units, table_data, si_prefix_sections, fixed_ref=False) -%}
 {% if units or si_prefix_sections %}
 <div class="detail-section">
@@ -146,18 +154,14 @@
   <table class="units-table" data-units-dynamic>
     <colgroup><col class="units-c1"><col class="units-c2"><col class="units-c3"></colgroup>
     <thead>
-      <tr>
-        <th>{{ _('detail.unit') }}</th>
-        <th>{{ _('detail.system') }}</th>
-        <th>{{ _('detail.conversion_to') }}{% if table_data.ref_label %} <span class="units-ref-name">{{ table_data.ref_label }}</span>{% endif %}</th>
-      </tr>
+    {{ units_head(table_data.ref_label) }}
     </thead>
     <tbody>
     {% for u in units %}
-      <tr data-unit-id="{{ u.id }}"{% if u.is_ref %} class="is-ref"{% endif %}>
+      <tr data-unit-id="{{ u.id }}" data-s-sys="{{ u.s_sys }}" data-s-sysname="{{ u.s_sysname }}" data-s-aff="{{ u.s_aff }}" data-s-val="{{ u.s_val }}" data-s-name="{{ u.s_name }}"{% if u.is_ref %} class="is-ref"{% endif %}>
         <td>${{ u.symbol_latex }}$ {{ u.name_html }}{{ ref_btn(fixed_ref, u.id, u.is_ref) }}</td>
         <td>{{ u.system or _('unit.system_any') }}</td>
-        <td class="uv-conv">{{ conv_cell(u.is_ref, u.latex_by_ref.get(table_data.ref)) }}</td>
+        <td class="uv-conv">{{ conv_cell(u.is_ref, u.latex) }}</td>
       </tr>
     {% endfor %}
     </tbody>
@@ -168,12 +172,15 @@
   <div class="si-prefix-section">
     <table class="units-table si-prefix-table" data-units-dynamic>
       <colgroup><col class="units-c1"><col class="units-c2"><col class="units-c3"></colgroup>
+      {% if not units and loop.first %}<thead>
+      {{ units_head(table_data.ref_label) }}
+      </thead>{% endif %}
       <tbody>
       {% for p in section.payload %}
-        <tr data-unit-id="{{ p.id }}"{% if p.exp is defined and p.exp is not none %} data-exp="{{ p.exp }}"{% endif %} class="{% if p.collapsed %}si-extra{% endif %}{% if p.is_ref %} is-ref{% endif %}">
-          <td>${{ p.symbol_latex }}$ {% if p.link_unit_id %}<a href="/unit/{{ p.link_unit_id }}">{{ p.name }}</a>{% else %}{{ p.name | safe }}{% endif %}{{ ref_btn(fixed_ref, p.id, p.is_ref) }}</td>
+        <tr data-unit-id="{{ p.id }}"{% if p.exp is defined and p.exp is not none %} data-exp="{{ p.exp }}"{% endif %} data-s-sys="{{ p.s_sys }}" data-s-sysname="{{ p.s_sysname }}" data-s-aff="{{ p.s_aff }}" data-s-val="{{ p.s_val }}" data-s-name="{{ p.s_name }}" class="{% if p.collapsed %}si-extra{% endif %}{% if p.is_ref %} is-ref{% endif %}">
+          <td>${{ p.symbol_latex }}$ {% if p.link_unit_id %}<a href="/unit/{{ p.link_unit_id }}">{{ p.name }}</a>{% else %}{{ p.name }}{% endif %}{{ ref_btn(fixed_ref, p.id, p.is_ref) }}</td>
           <td>{% if p.system_key %}{{ _(p.system_key) }}{% endif %}</td>
-          <td class="uv-conv">{{ conv_cell(p.is_ref, p.latex_by_ref.get(table_data.ref)) }}</td>
+          <td class="uv-conv">{{ conv_cell(p.is_ref, p.latex) }}</td>
         </tr>
       {% endfor %}
         <tr class="si-toggle-row" data-action="toggle-si-prefixes" aria-expanded="false" title="{{ _('detail.si_show_all') }}" data-more="{{ _('detail.si_show_all') }}" data-less="{{ _('detail.si_show_less') }}">
@@ -205,7 +212,7 @@
 {%- endmacro %}
 
 <!DOCTYPE html>
-<html lang="{{ g.locale or 'en' }}">
+<html lang="{{ (g.locale or 'en').replace('en-us', 'en-US').replace('_', '-') }}">
 <head>
   <meta charset="utf-8">
   <meta name="description" content="{{ g.locale_seo_description }}">
@@ -222,7 +229,7 @@
     onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],macros:window._KATEX_MACROS});document.documentElement.classList.add('katex-ready');if(typeof renderQtyChips==='function')renderQtyChips();"
     onerror="document.documentElement.classList.add('katex-ready');"></script>
   <script defer src="{{ static_v('tree.js') }}" onload="if(typeof window._bootTopicTree==='function')window._bootTopicTree()"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/lucide@0.469.0/dist/umd/lucide.min.js" onload="if(typeof refreshIcons==='function')refreshIcons()"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/lucide@0.496.0/dist/umd/lucide.min.js" onload="if(typeof refreshIcons==='function')refreshIcons()"></script>
   <link rel="stylesheet" href="{{ static_v('base.css') }}">
   {% block styles %}{% endblock %}
 </head>
@@ -233,7 +240,7 @@
   <div class="topbar">
     <div class="topbar-left">
 {% block sidebar_left_btn %}      <button class="topbar-btn" data-action="toggle-sidebar-left" title="{{ _('tooltip.toggle_sidebar') }}" aria-label="{{ _('tooltip.toggle_sidebar') }}" aria-keyshortcuts="[">
-        <span id="left-sidebar-icon"><i data-lucide="panel-left-close" width="18" height="18"></i></span>
+        <span id="left-sidebar-icon"><span data-icon-open hidden><i data-lucide="panel-left-open" width="18" height="18"></i></span><span data-icon-close><i data-lucide="panel-left-close" width="18" height="18"></i></span></span>
       </button>{% endblock %}
       <a href="/" class="topbar-logo">
         <svg width="32" height="32" viewBox="0 0 8.2 4.76" xmlns="http://www.w3.org/2000/svg" fill="none" stroke-width="0.529">
@@ -328,7 +335,7 @@
         </div>
       </div>
 {% block sidebar_right_btn %}      <button class="topbar-btn" data-action="toggle-sidebar-right" title="{{ _('tooltip.toggle_tree') }}" aria-label="{{ _('tooltip.toggle_tree') }}" aria-keyshortcuts="]">
-        <span id="right-sidebar-icon"><i data-lucide="panel-right-close" width="18" height="18"></i></span>
+        <span id="right-sidebar-icon"><span data-icon-open hidden><i data-lucide="panel-right-open" width="18" height="18"></i></span><span data-icon-close><i data-lucide="panel-right-close" width="18" height="18"></i></span></span>
       </button>{% endblock %}
     </div>
   </div>
@@ -376,12 +383,12 @@
         <div class="filter-dim-row" data-dim="{{ dsym }}">
           <span class="dim-symbol">${{ ds }}$</span>
           {% if dname %}<span class="dim-name">{{ dname }}</span>{% endif %}
-          <select class="dim-op" data-action="dim-filter-change" aria-label="{{ dsym }}">
-            <option value="eq"{{ ' selected' if df.op == 'eq' }}> =</option>
-            <option value="geq"{{ ' selected' if df.op == 'geq' }}> ≥</option>
-            <option value="leq"{{ ' selected' if df.op == 'leq' }}> ≤</option>
+          <select class="dim-op" data-action="dim-filter-change" aria-label="{{ dname or dsym }}">
+            <option value="eq"{{ ' selected' if df.op == 'eq' }}> {{ filter_op_symbols['eq'] }}</option>
+            <option value="geq"{{ ' selected' if df.op == 'geq' }}> {{ filter_op_symbols['geq'] }}</option>
+            <option value="leq"{{ ' selected' if df.op == 'leq' }}> {{ filter_op_symbols['leq'] }}</option>
           </select>
-          <input type="text" class="dim-val" value="{{ df.val if df.val is not none else '' }}" inputmode="text" autocomplete="off" spellcheck="false" data-action="dim-filter-change" placeholder="0" aria-label="{{ dsym }}">
+          <input type="text" class="dim-val" value="{{ df.val if df.val is not none else '' }}" inputmode="text" autocomplete="off" spellcheck="false" data-action="dim-filter-change" placeholder="0" aria-label="{{ dname or dsym }} value">
         </div>
         {% endfor %}
         </div>
@@ -397,7 +404,7 @@
         <div class="filter-qty-search-wrap">
           <label for="qty-search" class="sr-only">{{ _('filter.search_quantity') }}</label>
           <input type="text" class="text-field" id="qty-search" placeholder="{{ _('filter.search_quantity') }}" autocomplete="off">
-          <div class="qty-results" id="qty-results"></div>
+          <div class="qty-results" id="qty-results" role="listbox"></div>
           <div class="qty-chips" id="qty-chips"></div>
         </div>
 
@@ -405,13 +412,13 @@
           <div class="section-label">{{ locale_ui.sort.section }}</div>
           <div class="sort-control">
             <button type="button" class="sort-trigger" id="sort-trigger" data-action="toggle-sort-menu" aria-haspopup="listbox" aria-expanded="false" aria-label="{{ locale_ui.sort.section }}">
-              <span id="sort-trigger-label">{{ locale_ui.sort[sort] }}</span>
+              <span id="sort-trigger-label">{{ locale_ui.sort[sort] or sort }}</span>
               <i data-lucide="chevron-down" width="14" height="14"></i>
             </button>
             <div class="dropdown-menu sort-menu" id="sort-menu" role="listbox" data-value="{{ sort }}">
             {# Selected value lives in the trigger, not repeated as a row (matches _renderSortMenu) #}
             {% for key in available_sorts if key != sort %}
-              <button type="button" class="sort-option" role="option" aria-selected="false" data-action="sort-pick" data-sort="{{ key }}"><span>{{ locale_ui.sort[key] }}</span></button>
+              <button type="button" class="sort-option" role="option" aria-selected="false" data-action="sort-pick" data-sort="{{ key }}"><span>{{ locale_ui.sort[key] or key }}</span></button>
             {% endfor %}
             </div>
           </div>
@@ -427,8 +434,8 @@
           <div class="diff-sliders">
             <div class="diff-track"></div>
             <div class="diff-fill" id="diff-fill"></div>
-            <input type="range" id="diff-min" min="1" max="10" value="{{ diff_min }}" step="any" data-action="sync-diff">
-            <input type="range" id="diff-max" min="1" max="10" value="{{ diff_max }}" step="any" data-action="sync-diff">
+            <input type="range" id="diff-min" min="1" max="10" value="{{ diff_min }}" step="any" data-action="sync-diff" aria-label="{{ _('detail.difficulty_min') }}">
+            <input type="range" id="diff-max" min="1" max="10" value="{{ diff_max }}" step="any" data-action="sync-diff" aria-label="{{ _('detail.difficulty_max') }}">
           </div>
           <div class="diff-vals">
             <span id="diff-min-val">{{ diff_min }}</span>
@@ -511,6 +518,7 @@
   <script>
     window._csrfToken = {{ csrf_token()|tojson }};
     window._dimensionSymbols = {{ dimension_symbol_list|tojson|safe }};
+    window._filterOpSymbols = {{ filter_op_symbols|tojson|safe }};
     window._localeUI = {{ locale_ui|tojson|safe }};
     window._availableSorts = {{ available_sorts|tojson|safe }};
     window._defaultSort = {{ default_sort|tojson|safe }};

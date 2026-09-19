@@ -2,7 +2,6 @@
 
 import html
 import json
-import logging
 import re
 
 from markupsafe import Markup
@@ -15,9 +14,7 @@ from scifind_lib.i18n import (
     unit_exponent_word,
     wrap_symbol_in_latex,
 )
-from scifind_lib.util import anchor, safe_json_list
-
-logger = logging.getLogger(__name__)
+from scifind_lib.util import anchor, request_cached, safe_json_list
 
 
 def parse_compound_unit(json_text):
@@ -34,10 +31,8 @@ def _as_triple(entry):
         return None
     prefix = entry.get("prefix")
     if prefix is not None:
-        try:
-            prefix = int(prefix)
-        except (TypeError, ValueError):
-            prefix = None
+        try: prefix = int(prefix)
+        except (TypeError, ValueError): prefix = None
     return (unit_id, exp, prefix)
 
 
@@ -68,73 +63,54 @@ def _fraction_parts(json_text):
 
 def si_prefix_factor(exp):
     """SI prefix multiplier (si_prefix.id is the power of 10)."""
-    return 10 ** int(exp)
-
-
-def _visible_exponents_uncached(conn=None):
-    return set(DEFAULT_VISIBLE_EXPONENTS)
-
-
-def _visible_exponents(conn=None):
-    return set(DEFAULT_VISIBLE_EXPONENTS)
+    return 10 ** exp
 
 
 def _is_dimensionless(conn, quantity_id):
     row = conn.execute("SELECT * FROM quantity WHERE id = ?", (quantity_id,)).fetchone()
+    if row is None:
+        raise ValueError(f"unknown quantity: {quantity_id!r}")
     return all((row[c] or 0) == 0 for c in row.keys()
                if c.startswith("dim_") and c not in ("dim_symbol", "dim_position"))
 
 
-def _canon_int(n):
-    """Slug-safe integer token: 3 -> "3", -2 -> "m2" (slugs allow [a-z0-9_])."""
-    n = int(n)
-    return f"m{-n}" if n < 0 else str(n)
+def _canon_num(number):
+    """Slug-safe numeric token, preserving fractional values."""
+    f = float(number)
+    if f == int(f):
+        n = int(f)
+        return f"m{-n}" if n < 0 else str(n)
+    return ("m" if f < 0 else "") + str(abs(f)).replace(".", "p")
+
+
+def _exp_str(number):
+    f = float(number)
+    return str(int(f)) if f == int(f) else str(f)
 
 
 def _part_slug(unit_id, exponent, prefix):
-    """One (unit_id, exponent, prefix) triple as its contribution to a canonical slug.
-
-    Examples: metre^1 -> "metre"; gram kilo^1 -> "gram_p3";
-    metre centi^2 -> "metre_pm2_squared"; second^-1 alone -> "per_second".
-    """
-    exp = int(exponent)
-    token = unit_id if prefix is None else f"{unit_id}_p{_canon_int(prefix)}"
-    if exp == 1:
-        return token
-    if exp == -1:
-        return f"per_{token}"
-    if exp == 2:
-        return f"{token}_squared"
-    if exp == 3:
-        return f"{token}_cubed"
-    return f"{token}_e{_canon_int(exp)}"
+    """One (unit_id, exponent, prefix) triple as its contribution to a canonical slug."""
+    exp = float(exponent)
+    token = unit_id if prefix is None else f"{unit_id}_p{_canon_num(prefix)}"
+    forms = {1: token, -1: f"per_{token}", 2: f"{token}_squared", 3: f"{token}_cubed"}
+    return forms.get(exp, f"{token}_e{_canon_num(exp)}")
 
 
 def compound_unit_slug(quantity_id, unit_json):
-    """Canonical id for (quantity_id, compound_unit JSON).
-
-    Pure function of the parts: no database access, no locale. The same
-    parts always give the same id, so ids are stable across locales and
-    need no stored column (recomputing can never drift from the parts).
-    """
+    """Canonical id for (quantity_id, compound_unit JSON)."""
     entries = parse_compound_unit_parts(unit_json)
     if not entries:
         return ""
     try:
-        canonical = [(u, int(e), p) for u, e, p in entries]
+        canonical = [(uid, float(exp), prefix) for uid, exp, prefix in entries]
     except (TypeError, ValueError):
         return ""
-    join = lambda parts: "_".join(_part_slug(u, e, p) for u, e, p in parts)
-
+    join = lambda parts: "_".join(_part_slug(uid, exp, prefix) for uid, exp, prefix in parts)
     if len(canonical) == 1:
         base = _part_slug(*canonical[0])
     else:
-        num = [t for t in canonical if t[1] > 0]
-        den = [(u, -e, p) for u, e, p in canonical if e < 0]
-        if num and den:
-            base = f"{join(num)}_per_{join(den)}"
-        else:
-            base = join(num + den)  # one side empty; den holds magnitudes
+        num, den = split_numerator_denominator(canonical)
+        base = f"{join(num)}_per_{join(den)}" if num and den else join(num + den)
 
     if not base or not quantity_id:
         return base
@@ -143,54 +119,29 @@ def compound_unit_slug(quantity_id, unit_json):
 
 def _lower_first_html(fragment):
     """Lowercase the first text character of an HTML fragment (tags preserved)."""
-    out, i, n = [], 0, len(fragment)
-    while i < n:
-        if fragment[i] == "<":
-            end = fragment.find(">", i)
-            if end == -1:
-                break
-            out.append(fragment[i:end + 1])
-            i = end + 1
-        elif fragment[i].isspace():
-            out.append(fragment[i])
-            i += 1
-        else:
-            out.append(fragment[i].lower())
-            out.append(fragment[i + 1:])
-            return "".join(out)
-    return fragment
+    return re.sub(r"((?:<[^>]*>|\s)*)(\S)",
+                  lambda m: m.group(1) + m.group(2).lower(), fragment, count=1)
 
 
 def format_compound_unit_html(
     json_text, unit_url=None, unit_name=None, locale="en-us", unit_quantity_map=None,
     quantity_pers=None, unit_accusatives=None, prefix_name=None,
 ):
-    """Render compound_unit JSON as HTML with optional unit links.
-
-    The "per" word defaults to ``unitWords.per`` for the locale, but a
-    denominator part whose quantity carries ``quantity.per_overwrite``
-    for this locale switches to that word (e.g. Czech time -> "za")
-    and renders the denominator in the accusative (``unit.name_accusative``).
-    Pure-reciprocal denominators stay nominative.
-    """
+    """Render compound_unit JSON as HTML with optional unit links."""
     split = _fraction_parts(json_text)
     if split is None:
         return ""
     numerators, denominators = split
     words = locale_unit_words(locale)
-    num_html = _render_unit_group(numerators, unit_url, unit_name, locale,
-                                   unit_accusatives=unit_accusatives,
-                                   prefix_name=prefix_name,
-                                   decline=False, case="nom")
+    render = lambda items, **kw: _render_unit_group(
+        items, unit_url, unit_name, locale,
+        unit_accusatives=unit_accusatives, prefix_name=prefix_name, **kw)
+    num_html = render(numerators, decline=False, case="nom")
     if not denominators:
         return num_html
     if not num_html:
-        den_html = _render_unit_group(
-            denominators, unit_url, unit_name, locale,
-            unit_accusatives=unit_accusatives,
-            prefix_name=prefix_name, decline=False, case="nom")
-        return f"{words['reciprocal']} {_lower_first_html(den_html)}"
-    use_special, per_word = False, words["per"]
+        return f"{words.get('reciprocal') or ''} {_lower_first_html(render(denominators, decline=False, case='nom'))}".strip()
+    use_special, per_word = False, words.get("per") or ""
     if unit_quantity_map and quantity_pers:
         for uid, _e, _p in denominators:
             qid = unit_quantity_map.get(uid)
@@ -198,23 +149,18 @@ def format_compound_unit_html(
             if override:
                 use_special, per_word = True, override
                 break
-    den_html = _render_unit_group(denominators, unit_url, unit_name, locale,
-                                   use_special_exponents=use_special,
-                                   unit_accusatives=unit_accusatives,
-                                   prefix_name=prefix_name, case="acc")
-    return f"{num_html} {per_word} {den_html}"
+    return f"{num_html} {per_word} {render(denominators, use_special_exponents=use_special, case='acc')}"
 
 
 def _render_symbol_items(items, unit_symbol, prefix_symbol):
     """(unit_id, exponent, prefix) triples as LaTeX factors joined with \\cdot."""
-    factors = []
-    for unit_id, exponent, prefix in items:
+    def _factor(unit_id, exponent, prefix):
         sym = unit_symbol(unit_id) if unit_symbol else unit_id
         if prefix is not None and prefix_symbol:
             sym = prefix_symbol(prefix) + sym
         sym_latex = wrap_symbol_in_latex(sym) if sym else ""
-        factors.append(sym_latex if exponent == 1 else f"{sym_latex}^{{{int(exponent)}}}")
-    return " \\cdot ".join(factors)
+        return sym_latex if exponent == 1 else f"{sym_latex}^{{{_exp_str(exponent)}}}"
+    return " \\cdot ".join(_factor(*t) for t in items)
 
 
 def format_compound_unit_symbol(json_text, unit_symbol=None, prefix_symbol=None):
@@ -245,12 +191,7 @@ def compound_overwrite_cell(overwrite_text, unit_json, locale, *,
                             unit_names, unit_quantity_map=None,
                             quantity_pers=None, unit_accusatives=None,
                             prefix_names=None):
-    """Table-cell HTML for a name overwrite: ``overwrite (linked parts)``.
-
-    The header and ref labels use just `overwrite_text`; the parts stay only
-    in the cell, with their component links intact. When the derived parts
-    name duplicates the overwrite, the cell shows just the overwrite.
-    """
+    """Table-cell HTML for a name overwrite: ``overwrite (linked parts)``."""
     linked_parts = format_compound_unit_html(
         unit_json, locale=locale,
         unit_name=unit_name_callback(unit_names),
@@ -270,19 +211,14 @@ def compound_overwrite_cell(overwrite_text, unit_json, locale, *,
 def _render_unit_group(items, url_func, name_func=None, locale="en-us",
                        use_special_exponents=False, unit_accusatives=None,
                        prefix_name=None, decline=True, case="nom"):
-    """Render (unit_id, exponent, prefix) triples as HTML with natural-language exponents.
-
-    Exponents 2/3 render before the noun ("Square inch") when the locale
-    provides attributive words ("square"/"cubic"); locales without them
-    keep the post-noun form ("Inch squared").
-    """
+    """Render (unit_id, exponent, prefix) triples as HTML with natural-language exponents."""
     words = locale_unit_words(locale)
     fragments = []
     for i, (unit_id, exponent, prefix) in enumerate(items):
-        label = name_func(unit_id) if name_func else unit_id.replace("_", " ").title()
+        label = name_func(unit_id) if name_func else unit_id
         # Feminine nouns carry a distinct accusative; masculine/neuter don't.
-        acc_form = localise((unit_accusatives or {}).get(unit_id) or "", locale)
-        feminine = bool(acc_form) and acc_form.lower() != label.lower()
+        acc = localise((unit_accusatives or {}).get(unit_id) or "", locale) if unit_accusatives else ""
+        feminine = bool(acc) and acc.lower() != label.lower()
         link = url_func(unit_id) if url_func else None
         pref_text = ""
         if prefix is not None and prefix_name:
@@ -298,10 +234,8 @@ def _render_unit_group(items, url_func, name_func=None, locale="en-us",
                 pref_text = pref
             else:
                 label = pref + label
-        if decline and unit_accusatives:
-            acc = localise(unit_accusatives.get(unit_id) or "", locale)
-            if acc:
-                label = acc
+        if decline and acc:
+            label = acc
         if i > 0:
             label = _lower_first(label)
         attr = (None if use_special_exponents else words.get(
@@ -313,23 +247,21 @@ def _render_unit_group(items, url_func, name_func=None, locale="en-us",
                 pref_text = _lower_first(pref_text)
             else:
                 label = _lower_first(label)
-            link_text = (anchor(link, label) if link else html.escape(label))
-            fragments.append(f"{attr} {pref_text}{link_text}")
+            fragments.append(f"{attr} {pref_text}{(anchor(link, label) if link else html.escape(label))}")
             continue
         word = unit_exponent_word(exponent, locale, denominator=use_special_exponents)
         if not use_special_exponents and feminine and abs(exponent) == 3:
             word = words.get("cubed_f_acc" if case == "acc" else "cubed_f_nom") or word
-        link_text = (anchor(link, label) if link else html.escape(label))
-        fragment = pref_text + link_text
+        fragment = pref_text + (anchor(link, label) if link else html.escape(label))
         if word:
             fragment += " " + html.escape(word)
         fragments.append(fragment)
     return " ".join(fragments)
 
 
-def _unit_column_map(conn, column):
+def _column_map(conn, table, column):
     return {r["id"]: r[column]
-            for r in conn.execute(f"SELECT id, {column} FROM unit").fetchall()}
+            for r in conn.execute(f"SELECT id, {column} FROM {table}").fetchall()}
 
 
 def unit_name_map(conn, locale):
@@ -338,34 +270,35 @@ def unit_name_map(conn, locale):
 
 
 def unit_symbol_map(conn):
-    return _unit_column_map(conn, "symbol")
+    return _column_map(conn, "unit", "symbol")
 
 
 def unit_quantity_map(conn):
-    return _unit_column_map(conn, "quantity_id")
+    return _column_map(conn, "unit", "quantity_id")
 
 
 def quantity_per_map(conn):
     """{quantity_id: per_overwrite JSON text} for denominator prepositions."""
-    return {r["id"]: r["per_overwrite"]
-            for r in conn.execute("SELECT id, per_overwrite FROM quantity").fetchall()}
+    return _column_map(conn, "quantity", "per_overwrite")
 
 
 def unit_accusative_map(conn):
     """{unit_id: name_accusative JSON text} for declined denominator names."""
-    return {r["id"]: r["name_accusative"]
-            for r in conn.execute("SELECT id, name_accusative FROM unit").fetchall()}
+    return _column_map(conn, "unit", "name_accusative")
 
 
-def _compound_slug_map(conn, only_base=False):
+def _build_compound_slug_map(conn):
     """{canonical id: row} for compound units (ids derived from parts, never stored)."""
     slug_map = {}
-    sql = "SELECT * FROM compound_unit" + (" WHERE is_base = 1" if only_base else "")
-    for row in conn.execute(sql).fetchall():
+    for row in conn.execute("SELECT * FROM compound_unit").fetchall():
         row_dict = dict(row)
         if slug := compound_unit_slug(row_dict.get("quantity_id"), row_dict.get("unit")):
             slug_map.setdefault(slug, {"kind": "compound_unit", **row_dict, "id": slug})
     return slug_map
+
+
+def _compound_slug_map(conn):
+    return request_cached("_compound_slug_map", lambda: _build_compound_slug_map(conn))
 
 
 def compound_unit_by_slug(conn, slug, quantity_id=None):
@@ -380,36 +313,34 @@ def compound_unit_by_slug(conn, slug, quantity_id=None):
 
 def compound_slug_is_base(conn, slug):
     """True if the compound_unit matching `slug` has is_base = 1."""
-    if not slug:
-        return False
-    return slug in _compound_slug_map(conn, only_base=True)
+    hit = compound_unit_by_slug(conn, slug) if slug else None
+    return bool(hit and hit.get("is_base"))
 
 
 def resolve_base_unit(conn, unit_id=None, compound_id=None, fallback_qid=None,
                       system="SI"):
     """Single base-unit resolve path: explicit unit/compound id, else base-with-fallback."""
-    base = None
     if unit_id:
         from scifind_lib.fetch import fetch_unit
-        row = fetch_unit(conn, unit_id)
-        base = {"kind": "unit", **dict(row)} if row else None
+        if row := fetch_unit(conn, unit_id):
+            return {"kind": "unit", **dict(row)}
+        raise ValueError(f"unknown unit: {unit_id!r}")
     elif compound_id:
-        base = compound_unit_by_slug(conn, compound_id, fallback_qid)
-    if base is None and fallback_qid:
-        base = select_base_unit_with_fallback(conn, fallback_qid, system)
-    return base
+        if base := compound_unit_by_slug(conn, compound_id, fallback_qid):
+            return base
+    if fallback_qid:
+        return select_base_unit_with_fallback(conn, fallback_qid, system)
+    return None
 
 
 def resolve_constant_base(conn, constant, system="SI"):
-    """Base row for a constant: explicit ``unit`` JSON wins, else quantity base, else None.
-
-    NULL unit inherits the quantity's base; NULL quantity with NULL unit
-    means dimensionless (pi).
-    """
+    """Base row for a constant: explicit ``unit`` JSON wins, else quantity base, else None."""
     unit_json = constant.get("unit")
     qid = constant.get("quantity_id") or constant.get("related_quantity_id")
     if unit_json:
         slug = compound_unit_slug(qid, unit_json)
+        if not slug:
+            return None
         return compound_unit_by_slug(conn, slug, qid) or {
             "kind": "compound_unit", "id": slug, "unit": unit_json,
             "quantity_id": qid, "system": "SI"}
@@ -425,8 +356,9 @@ def select_base_unit(conn, quantity_id, system):
 
 def select_base_unit_with_fallback(conn, quantity_id, system):
     """select_base_unit, falling back to SI if the chosen system has no base for this quantity."""
-    return (select_base_unit(conn, quantity_id, system)
-            or (select_base_unit(conn, quantity_id, "SI") if system != "SI" else None))
+    if system != "SI":
+        return select_base_unit(conn, quantity_id, system) or select_base_unit(conn, quantity_id, "SI")
+    return select_base_unit(conn, quantity_id, system)
 
 
 def select_base_units_batched(conn, quantity_ids, system):
@@ -448,9 +380,8 @@ def select_base_units_batched(conn, quantity_ids, system):
         return found
 
     base_by_quantity = _load(qids, system)
-    if missing := [qid for qid in qids if qid not in base_by_quantity]:
-        if system != "SI":
-            base_by_quantity.update({k: v for k, v in _load(missing, "SI").items() if k not in base_by_quantity})
+    if (missing := [qid for qid in qids if qid not in base_by_quantity]) and system != "SI":
+        base_by_quantity.update(_load(missing, "SI"))
     return base_by_quantity
 
 
@@ -460,7 +391,7 @@ def unit_name_callback(names):
 
     def unit_name(uid):
         nonlocal first
-        name = names.get(uid, uid.replace("_", " ")).lower()
+        name = names.get(uid, uid).lower()
         if first:
             first = False
             return name.capitalize()
@@ -508,15 +439,11 @@ def _swapped_entries(parts_with_prefix, part_uid, exp):
     """Parts with `part_uid`'s prefix swapped to `exp` (0 strips it); other parts untouched."""
     entries = []
     for uid, e, old_prefix in parts_with_prefix:
-        if uid == part_uid:
-            entry = {"unit": uid, "exponent": e}
-            if exp != 0:
-                entry["prefix"] = exp
-            entries.append(entry)
-        elif old_prefix is None:
-            entries.append({"unit": uid, "exponent": e})
-        else:
-            entries.append({"unit": uid, "exponent": e, "prefix": int(old_prefix)})
+        prefix = exp if uid == part_uid else old_prefix
+        entry = {"unit": uid, "exponent": e}
+        if prefix is not None and (uid != part_uid or prefix != 0):
+            entry["prefix"] = int(prefix)
+        entries.append(entry)
     return entries
 
 
@@ -527,43 +454,51 @@ def _db_prefix_entries(conn, quantity_id):
     found = {}
     for row in fetch_compound_units(conn, quantity_id, only_non_base=True):
         for u in safe_json_list(row["unit"]):
-            if not isinstance(u, dict) or u.get("prefix") is None:
+            if not isinstance(u, dict) or not u.get("unit") or u.get("prefix") is None:
                 continue
             try:
                 exp = int(u["prefix"])
             except (ValueError, TypeError):
                 continue
-            if u.get("unit"):
-                found.setdefault(u["unit"], {}).setdefault(exp, row)
+            found.setdefault(u["unit"], {}).setdefault(exp, row)
     return found
 
 
 def _prefixable_parts(conn, parts_with_prefix):
-    """[(part_uid, part_exp, base_prefix)] for the prefixable parts.
-
-    The prefix anchor is always the part with its old prefix stripped, so
-    attaching a new prefix is just swapping the exponent — no per-quantity
-    special cases. A part is prefixable when its unit is an SI base unit or
-    the unprefixed part of an SI compound base (the 10^0 of its family).
-    """
+    """[(part_uid, part_exp, base_prefix)] for prefixable parts (SI bases + unprefixed SI compound parts)."""
     from scifind_lib.fetch import fetch_prefixable_base_units
 
     prefixable = fetch_prefixable_base_units(conn)
-    existing_prefix = {}
+    base_prefix = {}
     for uid, _exp, prefix in parts_with_prefix:
-        if prefix is not None and uid not in existing_prefix:
-            existing_prefix[uid] = int(prefix)
-    return [(uid, exp, existing_prefix.get(uid, 0))
+        if prefix is not None and uid not in base_prefix:
+            base_prefix[uid] = int(prefix)
+    return [(uid, exp, base_prefix.get(uid, 0))
             for uid, exp, _prefix in parts_with_prefix if uid in prefixable]
 
 
-def inject_si_prefix_nodes(graph, conn, quantity_id, locale, *, unit_syms):
-    """Inject synthetic SI-prefixed nodes for the prefix table; dimensionless skipped.
+def _prefix_exps(prefix_rows, base_prefix):
+    """Prefix exps except the base's own, plus implicit 0 when the base is prefixed."""
+    exps = [e for e in prefix_rows if e != base_prefix]
+    if base_prefix != 0:
+        # si_prefix table carries no 0 row.
+        exps.append(0)
+    return exps
 
-    The nodes always anchor on the SI base (the SI table is the SI family),
-    so conversions use the same graph path as every other row: the prefix
-    just multiplies the base by 10^k.
-    """
+
+def _finalize_rows(rows, fallback="si_base"):
+    """Collapse flags + exp-desc sort for a prefix-table row list."""
+    visible = set(DEFAULT_VISIBLE_EXPONENTS)
+    for r in rows:
+        # exp 0 is the unprefixed form and is always visible.
+        r["collapsed"] = (not r.get("is_db_entry", False)) and (r["exp"] not in visible) and (r["exp"] != 0)
+        r["payload_id"] = r["id"] or fallback
+    rows.sort(key=lambda x: x["exp"], reverse=True)
+    return rows
+
+
+def inject_si_prefix_nodes(graph, conn, quantity_id, locale, *, unit_syms):
+    """Inject synthetic SI-prefixed nodes for the prefix table; dimensionless skipped."""
     from scifind_lib.fetch import (
         fetch_si_prefixes,
         fetch_unit,
@@ -574,15 +509,15 @@ def inject_si_prefix_nodes(graph, conn, quantity_id, locale, *, unit_syms):
     base = select_base_unit_with_fallback(conn, quantity_id, "SI")
     if not base:
         return
+    prefixes = fetch_si_prefixes(conn)
 
     if base["kind"] == "unit":
-        # A plain-unit base anchors prefixes on itself.
         pref_base_id = base["id"]
         base_unit_row = fetch_unit(conn, pref_base_id)
         if base_unit_row is None:
             return
         base_symbol = base_unit_row["symbol"]
-        for p in fetch_si_prefixes(conn):
+        for p in prefixes:
             exp = int(p["id"])
             pid = f"si_{p['id']}"
             graph.edges[pid] = graph.make_edge(pref_base_id, si_prefix_factor(exp))
@@ -602,39 +537,41 @@ def inject_si_prefix_nodes(graph, conn, quantity_id, locale, *, unit_syms):
         prefixable_parts = _prefixable_parts(conn, parts_with_prefix)
         if not prefixable_parts:
             return
-
+        prefix_rows = {int(p["id"]): p for p in prefixes}
         for part_uid, _part_exp, base_prefix in prefixable_parts:
-            prefix_syms_by_exp = {int(p["id"]): p for p in fetch_si_prefixes(conn)}
-            exps = [e for e in prefix_syms_by_exp if e != base_prefix]
-            if base_prefix != 0:
-                # Implicit unprefixed anchor (10^0 of its family); the
-                # si_prefix table carries no 0 row.
-                exps.append(0)
-            for exp in exps:
+            for exp in _prefix_exps(prefix_rows, base_prefix):
                 pid = f"si_{exp}_{part_uid}"
-                row = prefix_syms_by_exp.get(exp)
+                row = prefix_rows.get(exp)
                 prefix_sym = "" if row is None else localise(row["symbol"], locale)
-                prefixed_sym_latex = _build_compound_sym_latex(
-                    unit_syms, prefix_sym, part_uid, parts
-                )
                 graph.compound_rows[pid] = {
                     "id": pid,
                     "unit": json.dumps(_swapped_entries(parts_with_prefix, part_uid, exp)),
-                    "symbol_overwrite": prefixed_sym_latex,
+                    "symbol_overwrite": _build_compound_sym_latex(unit_syms, prefix_sym, part_uid, parts),
                     "system": "SI",
                     "quantity_id": quantity_id,
                     "is_base": 0,
                 }
 
 
-def _collapse_flags(rows, conn, fallback="si_base"):
-    visible = _visible_exponents(conn)
-    for r in rows:
-        # exp 0 is the unprefixed form and is always visible, independent of
-        # the configured visible set.
-        r["collapsed"] = (not r.get("is_db_entry", False)) and (r["exp"] not in visible) and (r["exp"] != 0)
-        r["payload_id"] = r["id"] or fallback
-    return rows
+def _composition_key(parts_with_prefix):
+    """Canonical composition key: sorted (unit_id, exponent, prefix-or-0) triples."""
+    return tuple(sorted(
+        (uid, int(exp), int(prefix) if prefix is not None else 0)
+        for uid, exp, prefix in parts_with_prefix))
+
+
+def _authoritative_compositions(conn, quantity_id):
+    """Composition keys already covered by real unit/compound_unit rows."""
+    keys = set()
+    for r in conn.execute(
+            "SELECT id FROM unit WHERE quantity_id = ?", (quantity_id,)):
+        keys.add(((r["id"], 1, 0),))
+    for r in conn.execute(
+            "SELECT unit FROM compound_unit WHERE quantity_id = ?", (quantity_id,)):
+        parts = parse_compound_unit_parts(r["unit"])
+        if parts:
+            keys.add(_composition_key(parts))
+    return keys
 
 
 def si_prefix_sections(conn, quantity_id, locale, *,
@@ -642,8 +579,6 @@ def si_prefix_sections(conn, quantity_id, locale, *,
                        quantity_pers=None, unit_accusatives=None):
     """Prefix-table sections for a quantity's SI base unit, or None for dimensionless."""
     from scifind_lib.fetch import (
-        fetch_compound_units,
-        fetch_first_unit,
         fetch_si_prefixes,
         fetch_unit,
     )
@@ -652,157 +587,93 @@ def si_prefix_sections(conn, quantity_id, locale, *,
         return None
     base = select_base_unit_with_fallback(conn, quantity_id, "SI")
     if not base:
-        base = fetch_first_unit(conn, quantity_id)
-        if not base:
-            return None
-        base = {"kind": "unit", **dict(base)}
-    if base["kind"] == "unit":
+        return None
+    # A plain-unit base is a single unprefixed part, so both kinds share
+    # the component-section path below.
+    is_plain = base["kind"] == "unit"
+    if is_plain:
         base_id = base["id"]
         base_unit_row = fetch_unit(conn, base_id)
         if base_unit_row is None:
             return None
-        base_symbol = base_unit_row["symbol"]
-        base_name = localise(base_unit_row["name"], locale)
-
-        def system_key(exp):
-            return "detail.si_base" if exp == 0 else None
-
-        def make_prefix_rows():
-            base_symbol_latex = wrap_symbol_in_latex(base_symbol)
-            prefixed = [{
-                "id": base_id,
-                "exp": 0,
-                "symbol_latex": base_symbol_latex,
-                "name": base_name,
-                "label": base_name,
-                "system_key": system_key(0),
-                "link_unit_id": base_id,
-            }]
-
-            for p in fetch_si_prefixes(conn):
-                exp = int(p["id"])
-                prefix_sym = localise(p["symbol"], locale)
-                normalised_prefix = _normalise_prefix_symbol(prefix_sym, base_symbol)
-                pname = Markup(_render_unit_group(
-                    [(base_id, 1, exp)],
-                    lambda uid: f"/unit/{uid}" if uid in unit_names else None,
-                    unit_name_callback(unit_names),
-                    locale,
-                    prefix_name=prefix_name_callback(prefix_names),
-                ))
-                prefixed.append({
-                    "id": f"si_{p['id']}",
-                    "exp": exp,
-                    "symbol_latex": wrap_symbol_in_latex(normalised_prefix + base_symbol),
-                    # Same renderer as the canonical compound path: prefix as
-                    # plain text, base name linked and joined lowercase.
-                    "name": pname,
-                    "label": strip_compound_html(pname),
-                    "system_key": system_key(exp),
-                    "link_unit_id": None,
-                })
-            _collapse_flags(prefixed, conn, base_id or "si_base")
-            prefixed.sort(key=lambda x: x["exp"], reverse=True)
-            return prefixed
-
-        rows = make_prefix_rows()
-        return {base_id: {"component": base_id, "label": base_name, "rows": rows}}
-
-    parts_with_prefix = parse_compound_unit_parts(base["unit"])
-    parts = [(uid, exp) for uid, exp, _prefix in parts_with_prefix]
-    if not parts:
-        return None
-
-    prefixable_parts = _prefixable_parts(conn, parts_with_prefix)
-    if not prefixable_parts:
-        return None
-
+        parts_with_prefix = [(base_id, 1, None)]
+        parts = [(base_id, 1)]
+        prefixable_parts = [(base_id, 1, 0)]
+    else:
+        parts_with_prefix = parse_compound_unit_parts(base["unit"])
+        parts = [(uid, exp) for uid, exp, _prefix in parts_with_prefix]
+        if not parts:
+            return None
+        prefixable_parts = _prefixable_parts(conn, parts_with_prefix)
+        if not prefixable_parts:
+            return None
     base_id = base.get("id")
-    base_symbol_latex = base.get("symbol_overwrite")
-    if not base_symbol_latex:
-        base_symbol_latex = format_compound_unit_symbol(
+    prefix_map = _db_prefix_entries(conn, quantity_id)
+    prefix_rows = {int(p["id"]): p for p in fetch_si_prefixes(conn)}
+    uqm = unit_quantity_map(conn)
+    pers = quantity_pers or quantity_per_map(conn)
+    accs = unit_accusatives or unit_accusative_map(conn)
+    pname_cb = prefix_name_callback(prefix_names)
+    url = lambda uid: f"/unit/{uid}" if uid in unit_names else None
+
+    def html_for(unit_json):
+        # unit_name_callback capitalises only the first unit it sees.
+        return format_compound_unit_html(
+            unit_json, locale=locale, unit_name=unit_name_callback(unit_names), unit_url=url,
+            unit_quantity_map=uqm, quantity_pers=pers,
+            unit_accusatives=accs, prefix_name=pname_cb,
+        )
+
+    if is_plain:
+        base_symbol_latex = wrap_symbol_in_latex(base_unit_row["symbol"])
+        base_name_html = localise(base_unit_row["name"], locale)
+    else:
+        base_symbol_latex = base.get("symbol_overwrite") or format_compound_unit_symbol(
             base["unit"],
             unit_symbol=lambda uid: unit_syms.get(uid, uid),
             prefix_symbol=lambda exp: prefix_syms.get(exp, str(exp)),
         )
+        base_name_html = html_for(base["unit"])
+    authoritative = _authoritative_compositions(conn, quantity_id)
 
-    prefix_map = _db_prefix_entries(conn, quantity_id)
-
-    def make_component_section(part_uid, part_exp, base_prefix):
-        prefixed = []
+    def make_component_section(part_uid, base_prefix):
         db_prefix_entries = prefix_map.get(part_uid, {})
-
-        base_name_html = format_compound_unit_html(
-            base["unit"], locale=locale,
-            unit_name=unit_name_callback(unit_names),
-            unit_url=lambda uid: f"/unit/{uid}" if uid in unit_names else None,
-            unit_quantity_map=unit_quantity_map(conn),
-            quantity_pers=quantity_pers or quantity_per_map(conn),
-            unit_accusatives=unit_accusatives or unit_accusative_map(conn),
-            prefix_name=prefix_name_callback(prefix_names),
-        )
-        prefixed.append({
-            "id": f"{base_id}_{part_uid}_base",
+        prefixed = [{
+            "id": base_id if is_plain else f"{base_id}_{part_uid}_base",
             "exp": base_prefix,
             "symbol_latex": base_symbol_latex,
             "name": base_name_html,
             "label": strip_compound_html(base_name_html),
             "system_key": "detail.si_base",
-            "link_unit_id": None,
-        })
-
-        prefix_rows = {int(p["id"]): p for p in fetch_si_prefixes(conn)}
-        section_exps = [e for e in prefix_rows if e != base_prefix]
-        if base_prefix != 0:
-            # Implicit unprefixed anchor (10^0 of its family); the
-            # si_prefix table carries no 0 row.
-            section_exps.append(0)
-        for exp in section_exps:
+            "link_unit_id": base_id if is_plain else None,
+        }]
+        for exp in _prefix_exps(prefix_rows, base_prefix):
             p = prefix_rows.get(exp)
-
             if exp in db_prefix_entries:
                 db_entry = db_prefix_entries[exp]
-                name_json = db_entry["name_overwrite"]
-                overwrite = localise(name_json, locale) if name_json else ""
+                overwrite = localise(db_entry["name_overwrite"] or "", locale)
                 if overwrite:
                     db_entry_name = compound_overwrite_cell(
-                        overwrite, db_entry["unit"], locale,
-                        unit_names=unit_names,
-                        unit_quantity_map=unit_quantity_map(conn),
-                        quantity_pers=quantity_pers or quantity_per_map(conn),
-                        unit_accusatives=unit_accusatives or unit_accusative_map(conn),
-                        prefix_names=prefix_names,
+                        overwrite, db_entry["unit"], locale, unit_names=unit_names,
+                        unit_quantity_map=uqm, quantity_pers=pers,
+                        unit_accusatives=accs, prefix_names=prefix_names,
                     )
                     db_entry_label = overwrite
                 else:
-                    # No overwrite (or no translation for this locale):
-                    # derive from the parts through the canonical renderer,
-                    # with per-component links like everywhere else.
-                    db_entry_name = format_compound_unit_html(
-                        db_entry["unit"], locale=locale,
-                        unit_name=unit_name_callback(unit_names),
-                        unit_url=lambda uid: f"/unit/{uid}" if uid in unit_names else None,
-                        unit_quantity_map=unit_quantity_map(conn),
-                        quantity_pers=quantity_pers or quantity_per_map(conn),
-                        unit_accusatives=unit_accusatives or unit_accusative_map(conn),
-                        prefix_name=prefix_name_callback(prefix_names),
-                    ) or db_entry["id"].replace("_", " ").title()
+                    db_entry_name = html_for(db_entry["unit"]) or html.escape(db_entry["id"])
                     db_entry_label = strip_compound_html(db_entry_name)
-                sym_overwrite = db_entry["symbol_overwrite"]
-                if sym_overwrite:
-                    db_sym_latex = sym_overwrite
+                if db_entry["symbol_overwrite"]:
+                    db_sym_latex = db_entry["symbol_overwrite"]
                 else:
                     db_parts = parse_compound_unit(db_entry["unit"])
-                    if db_parts and part_uid and p is not None:
-                        prefix_sym = localise(p["symbol"], locale)
+                    if db_parts and p is not None:
                         db_sym_latex = _build_compound_sym_latex(
-                            unit_syms, prefix_sym, part_uid, db_parts
-                        )
+                            unit_syms, localise(p["symbol"], locale), part_uid, db_parts)
                     else:
                         db_sym_latex = format_compound_unit_symbol(
                             db_entry["unit"],
                             unit_symbol=lambda uid: unit_syms.get(uid, uid),
-                            prefix_symbol=lambda exp: prefix_syms.get(exp, str(exp)),
+                            prefix_symbol=lambda e: prefix_syms.get(e, str(e)),
                         )
                 prefixed.append({
                     "id": db_entry["id"],
@@ -815,49 +686,37 @@ def si_prefix_sections(conn, quantity_id, locale, *,
                     "is_db_entry": True,
                 })
                 continue
-
             prefix_sym = "" if p is None else localise(p["symbol"], locale)
-            # Same swapped entries as the conversion graph, so the displayed
-            # name always describes the converted value (other parts keep
-            # their prefixes; exp 0 strips the anchor prefix).
-            prefixed_parts = _swapped_entries(parts_with_prefix, part_uid, exp)
-            pref_name_html = format_compound_unit_html(
-                json.dumps(prefixed_parts), locale=locale,
-                unit_name=unit_name_callback(unit_names),
-                unit_url=lambda uid: f"/unit/{uid}" if uid in unit_names else None,
-                unit_quantity_map=unit_quantity_map(conn),
-                quantity_pers=quantity_pers or quantity_per_map(conn),
-                unit_accusatives=unit_accusatives or unit_accusative_map(conn),
-                prefix_name=prefix_name_callback(prefix_names),
-            )
-            pref_sym_latex = _build_compound_sym_latex(
-                unit_syms, prefix_sym, part_uid, parts
-            )
+            swapped = _swapped_entries(parts_with_prefix, part_uid, exp)
+            # A real row already covering this composition wins; skip the twin.
+            if _composition_key(
+                    (u["unit"], u["exponent"], u.get("prefix")) for u in swapped
+                    ) in authoritative:
+                continue
+            pref_name_html = html_for(json.dumps(swapped))
             prefixed.append({
-                "id": f"si_{exp}_{part_uid}",
+                "id": f"si_{exp}" if is_plain else f"si_{exp}_{part_uid}",
                 "exp": exp,
-                "symbol_latex": pref_sym_latex,
+                "symbol_latex": _build_compound_sym_latex(unit_syms, prefix_sym, part_uid, parts),
                 "name": pref_name_html,
                 "label": strip_compound_html(pref_name_html),
                 "system_key": None,
                 "link_unit_id": None,
             })
-
-        _collapse_flags(prefixed, conn, f"{base_id}_{part_uid}" or "si_base")
-        prefixed.sort(key=lambda x: x["exp"], reverse=True)
-        return prefixed
+        return _finalize_rows(prefixed, base_id if is_plain else f"{base_id}_{part_uid}")
 
     sections = {}
-    for part_uid, part_exp, base_prefix in prefixable_parts:
-        part_unit_row = fetch_unit(conn, part_uid)
-        if part_unit_row:
-            part_name = localise(part_unit_row["name"], locale)
+    for part_uid, _part_exp, base_prefix in prefixable_parts:
+        if is_plain:
+            label = base_name_html
         else:
-            part_name = part_uid.replace("_", " ").title()
+            part_unit_row = fetch_unit(conn, part_uid)
+            part_name = localise(part_unit_row["name"], locale) if part_unit_row else part_uid
+            label = part_name
         sections[part_uid] = {
             "component": part_uid,
-            "label": f"Prefixed on: {part_name}",
-            "rows": make_component_section(part_uid, part_exp, base_prefix),
+            "label": label,
+            "rows": make_component_section(part_uid, base_prefix),
         }
 
     return sections

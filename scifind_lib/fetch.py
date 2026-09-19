@@ -27,7 +27,7 @@ _DESC_EN = "json_extract(description, '$.en-us') AS description_en"
 def _one(conn, table, row_id):
     """Single ``formula``/``quantity`` row with localisation helpers."""
     return conn.execute(
-        f"SELECT *, {_NAME_EN}, topic_id AS topic_id, {_DESC_EN}"
+        f"SELECT *, {_NAME_EN}, {_DESC_EN}"
         f" FROM {table} WHERE id = ?",
         (row_id,),
     ).fetchone()
@@ -35,6 +35,10 @@ def _one(conn, table, row_id):
 
 def _all(conn, sql, params=()):
     return conn.execute(sql, params).fetchall()
+
+
+def _first(conn, sql, params=()):
+    return conn.execute(sql, params).fetchone()
 
 
 @dataclass
@@ -67,20 +71,22 @@ def _parse_mode(value, switched, key):
     return value if value in _AND_OR else "and"
 
 
+def _dim_val(args, symbol, ops):
+    """First matching dimension value for a symbol across filter ops."""
+    for op in ops:
+        val = eval_dim_expr(args.get(f"{symbol}_{op}"))
+        if val is not None:
+            return op, val
+    return ops[0] if ops else "eq", None
+
+
 def parse_filter_state(args, conn):
     """Parse query-string args into a QuantityFilter for the list pages."""
     mode_switched = set(parse_csv_string(args.get("mode_switched", "")))
 
     ops = filter_ops(conn)
-    default_op = ops[0] if ops else "eq"
-    dimension_filter = {}
-    for symbol in dimension_symbols(conn):
-        dimension_filter[symbol] = {"op": default_op, "val": None}
-        for op in ops:
-            v = eval_dim_expr(args.get(f"{symbol}_{op}"))
-            if v is not None:
-                dimension_filter[symbol] = {"op": op, "val": v}
-                break
+    dimension_filter = {s: dict(zip(("op", "val"), _dim_val(args, s, ops)))
+                        for s in dimension_symbols(conn)}
 
     ids_raw = args.get("ids")
     return QuantityFilter(
@@ -132,12 +138,12 @@ def fetch_formula_token_quantities(conn, formula_id):
     """formula_token operand rows joined with quantity/constant metadata (drop excluded), in token order."""
     return _all(conn,
         "SELECT ft.*, q.symbol AS quantity_symbol,"
-        " json_extract(q.name, '$.en-us') AS quantity_name,"
+        " q.name AS quantity_name,"
         " c.symbol AS constant_symbol,"
         " c.unit AS constant_unit,"
-        " json_extract(c.name, '$.en-us') AS constant_name,"
+        " c.name AS constant_name,"
         " rq.id AS related_quantity_id,"
-        " json_extract(rq.name, '$.en-us') AS related_quantity_name,"
+        " rq.name AS related_quantity_name,"
         " rq.symbol AS related_quantity_symbol"
         " FROM formula_token ft"
         " LEFT JOIN quantity q ON q.id = ft.quantity_id"
@@ -188,7 +194,7 @@ def _quantity_rows(conn, from_join, where="", params=()):
     cols = ", ".join(f"q.{c}" for c in dimension_columns(conn))
     rows = _all(conn,
         f"SELECT DISTINCT q.id, q.name, q.symbol, {_NAME_EN},"
-        f" q.topic_id AS topic_id, q.difficulty, {cols}"
+        f" q.topic_id, q.difficulty, {cols}"
         f" FROM {from_join} {where}", params)
     return sort_quantities_base_first(rows, conn)
 
@@ -221,17 +227,14 @@ def fetch_quantity_formulas(conn, quantity_id):
 
 def fetch_quantity_formulas_by_side(conn, quantity_id):
     """Return (primary, non-primary) formulas; primary holds the quantity left of the first comparison."""
-    op_meta = {
-        r["id"]: (r["arity"], r["type"] == "relational")
-        for r in conn.execute("SELECT id, arity, type FROM operator")
-    }
+    op_meta = {r["id"]: (r["arity"], r["type"] == "relational")
+               for r in conn.execute("SELECT id, arity, type FROM operator")}
 
     def _left_of_first_comparison(token_rows):
         stack = []
         for row in token_rows:
-            kind = row["token_kind"]
-            if kind != "operator":
-                stack.append({row["quantity_id"]} if kind == "quantity" else set())
+            if row["token_kind"] != "operator":
+                stack.append({row["quantity_id"]} if row["token_kind"] == "quantity" else set())
                 continue
             meta = op_meta.get(row["operator_id"])
             if meta is None:
@@ -248,7 +251,7 @@ def fetch_quantity_formulas_by_side(conn, quantity_id):
     rows = _all(conn,
         "SELECT f.id, f.name,"
         f" {_NAME_EN},"
-        " f.topic_id AS topic_id, f.difficulty,"
+        " f.topic_id, f.difficulty,"
         " ft.token_kind, ft.quantity_id, ft.operator_id"
         " FROM formula f"
         " JOIN formula_token ft ON ft.formula_id = f.id"
@@ -258,23 +261,14 @@ def fetch_quantity_formulas_by_side(conn, quantity_id):
         " ORDER BY f.topic_id, f.difficulty, f.id, ft.position",
         (quantity_id,))
 
-    formulas = []
+    primary_out, non_primary_out = [], []
     for fid, token_rows in groupby(rows, key=lambda r: r["id"]):
         token_rows = list(token_rows)
-        header_row = token_rows[0]
-        formulas.append({
-            "id": fid,
-            "name": header_row["name"],
-            "name_en": header_row["name_en"],
-            "topic_id": header_row["topic_id"],
-            "difficulty": header_row["difficulty"],
-            "_tokens": token_rows,
-        })
-
-    primary_out, non_primary_out = [], []
-    for formula in formulas:
-        is_primary = quantity_id in _left_of_first_comparison(formula.pop("_tokens"))
-        (primary_out if is_primary else non_primary_out).append(formula)
+        header = token_rows[0]
+        formula = {"id": fid, "name": header["name"], "name_en": header["name_en"],
+                   "topic_id": header["topic_id"], "difficulty": header["difficulty"]}
+        (primary_out if quantity_id in _left_of_first_comparison(token_rows)
+         else non_primary_out).append(formula)
     return primary_out, non_primary_out
 
 
@@ -299,16 +293,12 @@ def fetch_quantities_by_ids(conn, quantity_ids):
 
 
 def fetch_unit(conn, unit_id):
-    return conn.execute(
-        """
-        SELECT u.*, json_extract(q.name, '$.en-us') AS quantity_name,
-               q.topic_id AS topic_id,
-               json_extract(u.name, '$.en-us') AS name_en
-        FROM unit u JOIN quantity q ON q.id = u.quantity_id
-        WHERE u.id = ?
-        """,
-        (unit_id,),
-    ).fetchone()
+    return _first(conn,
+        "SELECT u.*, json_extract(q.name, '$.en-us') AS quantity_name,"
+        " q.topic_id, json_extract(u.name, '$.en-us') AS name_en"
+        " FROM unit u JOIN quantity q ON q.id = u.quantity_id"
+        " WHERE u.id = ?",
+        (unit_id,))
 
 
 def fetch_si_prefixes(conn):
@@ -327,15 +317,13 @@ def fetch_formulas_with_quantities(conn, quantity_ids, mode="and"):
     if not quantity_ids:
         return None
     placeholders, params = in_clause(quantity_ids)
-    base = (f"FROM formula_token WHERE token_kind = 'quantity'"
+    base = ("FROM formula_token WHERE token_kind = 'quantity'"
             f" AND quantity_id IN ({placeholders})")
     if mode == "or":
-        sql = f"SELECT DISTINCT formula_id {base}"
-    else:
-        sql = (f"SELECT formula_id, COUNT(DISTINCT quantity_id) AS match_count {base}"
-               f" GROUP BY formula_id HAVING match_count = ?")
-        params = params + (len(quantity_ids),)
-    return {r["formula_id"] for r in _all(conn, sql, params)}
+        return {r["formula_id"] for r in _all(conn, f"SELECT DISTINCT formula_id {base}", params)}
+    return {r["formula_id"] for r in _all(conn,
+        f"SELECT formula_id, COUNT(DISTINCT quantity_id) AS match_count {base}"
+        " GROUP BY formula_id HAVING match_count = ?", params + (len(set(quantity_ids)),))}
 
 
 def fetch_all_constants(conn):
@@ -344,8 +332,8 @@ def fetch_all_constants(conn):
 
 def fetch_constant(conn, constant_id):
     """One constant row with localisation helpers and its linked quantity."""
-    return conn.execute(
-        "SELECT c.*, rq.topic_id AS topic_id,"
+    return _first(conn,
+        "SELECT c.*, rq.topic_id,"
         " json_extract(c.name, '$.en-us') AS name_en,"
         " json_extract(c.description, '$.en-us') AS description_en,"
         " rq.id AS related_quantity_id,"
@@ -354,8 +342,7 @@ def fetch_constant(conn, constant_id):
         " FROM constant c"
         " LEFT JOIN quantity rq ON rq.id = c.quantity_id"
         " WHERE c.id = ?",
-        (constant_id,),
-    ).fetchone()
+        (constant_id,))
 
 
 def fetch_constant_formulas(conn, constant_id):
@@ -413,7 +400,7 @@ def fetch_formulas_filtered(conn, topic=None, diff_min=None, diff_max=None,
     ids = topic_ids or ([topic] if topic else None)
     where, params = _topic_diff_where("f", ids, diff_min, diff_max)
     sql = ("SELECT f.id, f.name, json_extract(f.name, '$.en-us') AS name_en,"
-           " f.topic_id AS topic_id, f.difficulty FROM formula f")
+           " f.topic_id, f.difficulty FROM formula f")
     if where:
         sql += " WHERE " + " AND ".join(where)
     return _all(conn, sql + " ORDER BY f.topic_id, f.difficulty, f.id", params)
@@ -424,22 +411,18 @@ def fetch_quantities_filtered(conn, topic_ids=None, diff_min=None, diff_max=None
     """Quantities filtered by topic/difficulty in SQL (base dimensions first)."""
     where, params = _topic_diff_where("q", topic_ids, diff_min, diff_max,
                                       [] if include_hidden else ["q.hidden = 0"])
-    cols = ", ".join(f"q.{c}" for c in dimension_columns(conn))
-    sql = (f"SELECT DISTINCT q.id, q.name, q.symbol, {_NAME_EN},"
-           f" q.topic_id AS topic_id, q.difficulty, {cols} FROM quantity q")
-    if where:
-        sql += " WHERE " + " AND ".join(where)
-    return sort_quantities_base_first(_all(conn, sql, params), conn)
+    return _quantity_rows(conn, "quantity q",
+                          f"WHERE {' AND '.join(where)}" if where else "", params)
 
 
 def fetch_units_with_quantity(conn, quantity_id=None):
     """Unit rows joined with their quantity name, optionally filtered."""
     base = ("SELECT u.*, json_extract(q.name, '$.en-us') AS quantity_name"
             " FROM unit u JOIN quantity q ON q.id = u.quantity_id")
-    where, params, order = "", (), "q.id, u.is_base DESC, u.system, u.id"
     if quantity_id:
-        where, params, order = " WHERE u.quantity_id = ?", (quantity_id,), "u.is_base DESC, u.system, u.id"
-    return _all(conn, f"{base}{where} ORDER BY {order}", params)
+        return _all(conn, f"{base} WHERE u.quantity_id = ?"
+                     " ORDER BY u.is_base DESC, u.system, u.id", (quantity_id,))
+    return _all(conn, f"{base} ORDER BY q.id, u.is_base DESC, u.system, u.id")
 
 
 def fetch_compound_units(conn, quantity_id, only_non_base=False):
@@ -454,88 +437,68 @@ def fetch_compound_units(conn, quantity_id, only_non_base=False):
 
 def fetch_detail_items(conn, tokens):
     """Detail-items-shaped dicts from in-memory RPN tokens + overrides."""
-    qids = {tok["quantity_id"] for tok in tokens
-            if tok.get("token_kind") == "quantity"}
-    cids = {tok["constant_id"] for tok in tokens
-            if tok.get("token_kind") == "constant"}
+    def _ids(kind, field):
+        return {tok[field] for tok in tokens if tok.get("token_kind") == kind}
     qrows = keyed_rows(
-        conn, "SELECT id, name, symbol FROM quantity WHERE id IN ({})", qids,
-    )
+        conn, "SELECT id, name, symbol, hidden FROM quantity WHERE id IN ({})",
+        _ids("quantity", "quantity_id"))
     crows = keyed_rows(
         conn,
-        "SELECT c.id, c.name, c.symbol,"
-        " c.unit,"
+        "SELECT c.id, c.name, c.symbol, c.unit,"
         " rq.id AS related_quantity_id,"
         " rq.name AS related_quantity_name,"
         " rq.symbol AS related_quantity_symbol"
         " FROM constant c"
         " LEFT JOIN quantity rq ON rq.id = c.quantity_id"
         " WHERE c.id IN ({})",
-        cids,
-    )
+        _ids("constant", "constant_id"))
     items = []
     for tok in tokens:
-        kind = tok.get("token_kind")
-        if kind == "quantity":
+        if tok.get("token_kind") == "quantity":
             qrow = qrows.get(tok["quantity_id"])
-            if not qrow:
+            # Hidden sentinels (e.g. `drop`) never appear in detail tables,
+            # mirroring fetch_formula_token_quantities.
+            if not qrow or qrow.get("hidden"):
                 continue
             qid = tok["quantity_id"]
-            qty_name = localise(qrow["name"], "en-us") or qid.replace("_", " ").title()
             items.append({
                 "quantity_id": qid,
                 "quantity_symbol": qrow["symbol"],
-                "quantity_name": qty_name,
+                "quantity_name": qrow["name"],
                 "symbol_overwrite": tok.get("symbol_overwrite") or "",
                 "name_overwrite": tok.get("name_overwrite") or "",
                 "label": tok.get("label") or "",
             })
-        elif kind == "constant":
+        elif tok.get("token_kind") == "constant":
             crow = crows.get(tok["constant_id"])
-            if not crow:
-                continue
-            items.append({
-                "constant_id": tok["constant_id"],
-                "constant_symbol": crow["symbol"],
-                "constant_name": localise(crow["name"], "en-us"),
-                "related_quantity_id": crow["related_quantity_id"] or "",
-                "related_quantity_name": localise(crow["related_quantity_name"] or "", "en-us") or None,
-                "related_quantity_symbol": crow["related_quantity_symbol"] or "",
-                "constant_unit": crow["unit"],
-            })
+            if crow:
+                items.append({
+                    "constant_id": tok["constant_id"],
+                    "constant_symbol": crow["symbol"],
+                    "constant_name": crow["name"],
+                    "related_quantity_id": crow["related_quantity_id"] or "",
+                    "related_quantity_name": crow["related_quantity_name"],
+                    "related_quantity_symbol": crow["related_quantity_symbol"] or "",
+                    "constant_unit": crow["unit"],
+                })
     return items
 
 
 def unit_is_base(conn, unit_id):
     """True if the unit row carries is_base = 1."""
-    return bool(unit_id) and bool(_all(conn,
-        "SELECT 1 FROM unit WHERE id = ? AND is_base = 1 LIMIT 1", (unit_id,)))
+    return bool(unit_id) and _first(conn,
+        "SELECT 1 FROM unit WHERE id = ? AND is_base = 1 LIMIT 1", (unit_id,)) is not None
 
 
 def fetch_prefixable_base_units(conn):
-    """Ids of units that can carry an SI prefix: SI bases plus the unprefixed
-    parts of SI compound bases.
-
-    The unprefixed part is the 10^0 anchor of its prefix family (e.g. gram
-    for mass, whose SI base is the kilo-prefixed gram compound) — derived
-    from the data, with no per-unit exceptions.
-    """
+    """Ids of units that can carry an SI prefix."""
     ids = {r["id"] for r in _all(conn,
         "SELECT id FROM unit WHERE is_base = 1 AND system = 'SI'")}
     for r in _all(conn,
             "SELECT unit FROM compound_unit WHERE is_base = 1 AND system = 'SI'"):
-        for entry in safe_json_list(r["unit"]):
-            if isinstance(entry, dict) and entry.get("unit"):
-                ids.add(entry["unit"])
+        ids.update(entry["unit"] for entry in safe_json_list(r["unit"])
+                   if isinstance(entry, dict) and entry.get("unit"))
     return ids
-
-
-def fetch_first_unit(conn, quantity_id):
-    """First unit row for a quantity (fallback when no base row exists)."""
-    return conn.execute(
-        "SELECT * FROM unit WHERE quantity_id = ? LIMIT 1",
-        (quantity_id,),
-    ).fetchone()
 
 
 def fetch_si_prefix_map(conn, field="symbol", locale="en-us"):
@@ -558,40 +521,34 @@ _SEARCH_SOURCES = (
 )
 
 
-def _search_entities_like(conn, needle, like_pattern, limit, locale):
-    locale_clauses = [
-        f"LOWER(json_extract(name, '$.{loc}')) LIKE ?"
-        for loc in SEARCHABLE_LOCALES
-    ]
-    union_parts, params = [], []
-    for table, kind, extra, extra_clauses in _SEARCH_SOURCES:
-        match = locale_clauses + ["LOWER(id) LIKE ?"] + ([f"LOWER({extra}) LIKE ?"] if extra else [])
-        where = f"({' OR '.join(match)})" + (" AND " + " AND ".join(extra_clauses) if extra_clauses else "")
-        union_parts.append(f"SELECT id, '{kind}' AS kind, name AS raw_name FROM {table} WHERE {where}")
-        params.extend([like_pattern] * len(match))
-    rows = conn.execute(
-        f"SELECT * FROM ({' UNION ALL '.join(union_parts)})", params
-    ).fetchall()
-    hits = [(r["kind"], r["id"], localise(r["raw_name"], locale)) for r in rows]
-    hits.sort(key=lambda hit: (hit[2].strip().lower() != needle, len(hit[2])))
-    return hits[:limit] if limit is not None else hits
-
-
 def search_entities(conn, query, limit=30, locale=DEFAULT_LOCALE):
     """Substring search over entity names/symbols/ids."""
     if not query or not query.strip():
         return []
     needle = query.strip().lower()
-    like_pattern = f"%{needle}%"
-    return _search_entities_like(conn, needle, like_pattern, limit, locale)
+    like_pattern = f"%{needle.replace(chr(92), chr(92)*2).replace('%', chr(92)+'%').replace('_', chr(92)+'_')}%"
+    locale_clauses = [f"LOWER(json_extract(name, '$.{loc}')) LIKE ? ESCAPE '{chr(92)}'"
+                      for loc in SEARCHABLE_LOCALES]
+    union_parts, params = [], []
+    for table, kind, symbol_col, extra_clauses in _SEARCH_SOURCES:
+        match = locale_clauses + ["LOWER(id) LIKE ? ESCAPE '\\'"]
+        if symbol_col:
+            match.append(f"LOWER({symbol_col}) LIKE ? ESCAPE '\\'")
+        where = f"({' OR '.join(match)})"
+        if extra_clauses:
+            where += " AND " + " AND ".join(extra_clauses)
+        union_parts.append(f"SELECT id, '{kind}' AS kind, name AS raw_name FROM {table} WHERE {where}")
+        params.extend([like_pattern] * len(match))
+    rows = conn.execute(f"SELECT * FROM ({' UNION ALL '.join(union_parts)})", params).fetchall()
+    hits = [(r["kind"], r["id"], localise(r["raw_name"], locale)) for r in rows]
+    hits.sort(key=lambda hit: (hit[2].strip().lower() != needle, len(hit[2])))
+    return hits[:limit] if limit is not None else hits
 
 
 _BASE_SORT_KEYS = ("id", "name", "diff_asc", "diff_desc", "topic_tree", "topic_alpha")
 FORMULA_SORT_KEYS = _BASE_SORT_KEYS + ("qty",)
 QUANTITY_SORT_KEYS = _BASE_SORT_KEYS
-SEARCH_SORT_KEYS = (
-    "relevance", "id", "name", "diff_asc", "diff_desc", "qty",
-)
+SEARCH_SORT_KEYS = ("relevance", "id", "name", "diff_asc", "diff_desc", "qty")
 DEFAULT_FORMULA_SORT = "id"
 DEFAULT_QUANTITY_SORT = "id"
 DEFAULT_SEARCH_SORT = "relevance"
@@ -606,12 +563,6 @@ def normalize_sort(sort_key, allowed, default):
 
 def _difficulty_key(diff, sort_key, *tail):
     return ((diff if sort_key == "diff_asc" else -diff), *tail)
-
-
-def _qty_token_key(tokens, ent_id):
-    if ent_id is None:
-        return []
-    return [f"{p:06d} {t} {i}" for p, t, i in tokens.get(ent_id, [])]
 
 
 def entity_sort_key(row, sort_key, locale, tree_order, qty_const_tokens=None):
@@ -634,9 +585,9 @@ def _sort_entities(conn, rows, sort_key, allowed, default, locale, with_qty):
     sort_key = normalize_sort(sort_key, allowed, default)
     qty_const_tokens = fetch_formula_quantity_constant_tokens(conn) if sort_key == "qty" else {}
     tree_order = topic_tree_order(conn) if sort_key == "topic_tree" else {}
-    return sorted(rows, key=lambda r: entity_sort_key(
-        r, sort_key, locale, tree_order,
-        qty_const_tokens if with_qty else None))
+    tokens = qty_const_tokens if with_qty else None
+    rows = [r if isinstance(r, dict) else dict(r) for r in rows]
+    return sorted(rows, key=lambda r: entity_sort_key(r, sort_key, locale, tree_order, tokens))
 
 
 def sort_formulas(conn, rows, sort_key, locale="en-us"):
@@ -655,7 +606,8 @@ def sort_search_rows(conn, rows, sort_key, locale="en-us", meta_by_kind=None):
         return sorted(rows, key=lambda r: (r[0], r[1]))
     if sort_key == "name":
         return sorted(rows, key=lambda r: ((r[2] or r[1]).lower(), r[0], r[1]))
-    meta_by_kind = meta_by_kind if meta_by_kind is not None else fetch_search_meta(conn, rows)
+    if meta_by_kind is None:
+        meta_by_kind = fetch_search_meta(conn, rows)
     tokens = fetch_formula_quantity_constant_tokens(conn) if sort_key == "qty" else {}
 
     def _key(row):
@@ -665,11 +617,9 @@ def sort_search_rows(conn, rows, sort_key, locale="en-us", meta_by_kind=None):
             diff = meta.get("difficulty") or meta.get("quantity_difficulty") or 0
             return _difficulty_key(diff, sort_key, kind, ent_id)
         if kind == "formula":
-            qty_tokens = _qty_token_key(tokens, ent_id)
-        elif kind == "quantity":
-            qty_tokens = [f"quantity {ent_id}"]
-        elif kind == "unit" and meta.get("quantity_id"):
-            qty_tokens = [f"quantity {meta['quantity_id']}"]
+            qty_tokens = [f"{p:06d} {t} {i}" for p, t, i in tokens.get(ent_id, [])]
+        elif kind == "quantity" or (kind == "unit" and meta.get("quantity_id")):
+            qty_tokens = [f"quantity {meta['quantity_id'] if kind == 'unit' else ent_id}"]
         else:
             qty_tokens = []
         return (qty_tokens, kind, ent_id)

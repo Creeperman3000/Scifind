@@ -9,9 +9,9 @@
 <div class="formula-grid" data-list-container>
 {% for r in results %}
   {% if r.kind == 'formula' %}
-    {{ formula_card(r.href, r.latex, r.name, r.relation) }}
+    {{ card(r.href, latex=r.latex, name=r.name, relation=r.relation) }}
   {% else %}
-    {{ entity_card(r.href, r.symbol, r.name, r.relation) }}
+    {{ card(r.href, symbol=r.symbol, name=r.name, relation=r.relation) }}
   {% endif %}
 {% endfor %}
 </div>

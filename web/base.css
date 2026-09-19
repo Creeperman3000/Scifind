@@ -308,7 +308,7 @@ html.suppress-transitions .sidebar { transition: none !important; }
 .sidebar.left { width: var(--sidebar-width-left); }
 .sidebar.right { width: var(--sidebar-width-right); border-right: none; border-left: 1px solid var(--border); }
 .sidebar.collapsed { width: 0 !important; padding: 0; border-width: 0; overflow: hidden; }
-.sidebar-scroll { overflow-y: auto; overflow-x: hidden; flex: 1; }
+.sidebar-scroll { overflow-y: auto; overflow-x: hidden; flex: 1; scrollbar-gutter: stable; }
 .sidebar-inner { padding: 12px 12px 35vh; }
 .sidebar.left .sidebar-inner { width: var(--sidebar-width-left); }
 .sidebar.right .sidebar-inner { width: var(--sidebar-width-right); }
@@ -325,17 +325,18 @@ html.suppress-transitions .sidebar { transition: none !important; }
 .main {
   flex: 1;
   overflow-y: auto;
+  scrollbar-gutter: stable both-edges;
   padding: 20px 24px;
   min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
 }
-.main h2, .modal-content h2 { font-size: 1.3rem; margin-bottom: 16px; line-height: 24.95px; height: 24.95px; color: var(--text); }
-.main h2 .katex { display: inline-block; vertical-align: baseline; }
-.main-inner { max-width: 800px; width: 100%; }
+.main h2, .modal-content h2 { font-size: 1.3rem; margin-bottom: 16px; line-height: 24.95px; min-height: 24.95px; color: var(--text); }
+.main h2 .katex { display: inline-block; height: 1em; overflow: visible; vertical-align: baseline; font-size: 1.106em; line-height: 1; }
+.main-inner { max-width: 1040px; width: 100%; }
 .main table { border-collapse: collapse; font-size: 0.9rem; width: 100%; }
-.main table th, .main table td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
+.main table th, .main table td { border: 1px solid var(--border); padding: 6px 28px 6px 10px; text-align: left; }
 .main table th { background: var(--bg-secondary); font-weight: 600; }
 .main::after { content: ''; display: block; height: 35vh; flex-shrink: 0; }
 .main.no-overflow::after { display: none; }
@@ -434,7 +435,8 @@ html.suppress-transitions .sidebar { transition: none !important; }
   font-size: 0.75rem;
   cursor: default;
 }
-.qty-chip-x { cursor: pointer; font-weight: 700; opacity: 0.85; padding: 0 2px; }
+.qty-chip-x { display: inline-flex; align-items: center; cursor: pointer; font-weight: 700; opacity: 0.85; padding: 0 2px; }
+.qty-chip-x svg { display: block; }
 .qty-chip-x:hover { opacity: 1; }
 .qty-results {
   position: absolute;
@@ -601,7 +603,7 @@ html.suppress-transitions .sidebar { transition: none !important; }
 
 /* ---- 8. Topic tree (infinite-tree) ---- */
 #science-tree .infinite-tree-content { outline: none; }
-#sidebar-right .tree-row { display: flex; align-items: flex-start; cursor: pointer; font-size: 0.85rem; line-height: 1.25; }
+#sidebar-right .tree-row { display: flex; content-visibility: auto; contain-intrinsic-size: auto 28px; align-items: flex-start; cursor: pointer; font-size: 0.85rem; line-height: 1.25; }
 #sidebar-right .tree-toggler,
 #sidebar-right .tree-leaf-spacer { position: relative; width: 18px; height: 24px; flex-shrink: 0; }
 /* Opacity transition lives on the toggler only. */
@@ -796,6 +798,7 @@ html.suppress-transitions .sidebar { transition: none !important; }
 
 /* ---- 10. Cards + detail pages ---- */
 .formula-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+.formula-grid > * { content-visibility: auto; contain-intrinsic-size: auto 160px; }
 .formula-card {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -815,6 +818,10 @@ html.suppress-transitions .sidebar { transition: none !important; }
   margin-bottom: 10px;
   color: var(--text);
   min-height: 2.6em;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .formula-card .formula-name { font-size: 0.85rem; color: var(--accent); text-align: center; margin-top: auto; }
 .formula-card .formula-relation-label { font-size: 0.75rem; color: var(--text-secondary); text-align: center; margin-top: 4px; }
@@ -915,17 +922,44 @@ html.suppress-transitions .sidebar { transition: none !important; }
 }
 
 /* ---- 11. Tables: variables, units, SI prefixes ---- */
-.var-table, .units-table, .link-list { max-width: 700px; }
+/* Tables stretch the full main-inner width (.main table already sets width: 100%). */
 .var-table td:first-child, .units-table td:first-child { white-space: nowrap; }
+/* Header labels may wrap around the sort caret; the caret itself never wraps. */
+.units-sort-btn {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  margin: 0;
+  border: none;
+  background: none;
+  padding: 0;
+  line-height: 1;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.units-sort-btn:hover { color: var(--text); background: var(--bg-secondary); }
+.units-sort-btn svg { display: block; }
 .si-prefix-table { margin-top: 16px; }
 .si-prefix-table tr.si-extra { display: none; }
 .si-prefix-table.si-expanded tr.si-extra { display: table-row; }
-/* Fixed, identical column widths so both tables align; widths live on <col> elements. */
-table[data-units-dynamic] { table-layout: fixed; }
-table[data-units-dynamic] .units-c1 { width: 46%; }
-table[data-units-dynamic] .units-c2 { width: 22%; }
-table[data-units-dynamic] .units-c3 { width: 32%; }
+/* Column widths are dynamic: 1px + nowrap fits one line, % grows slowly, auto takes the rest. */
+table[data-units-dynamic] .units-c1 { width: 35%; }
+table[data-units-dynamic] .units-c2 { width: 130px; } /* fits label + sort caret */
+table[data-units-dynamic] th:nth-child(2), table[data-units-dynamic] td:nth-child(2) { white-space: nowrap; }
+table[data-units-dynamic] th { position: relative; }
 table[data-units-dynamic] td:first-child { position: relative; }
+/* System width matches the table above. */
+table.value-units-table .value-c1 { width: 40%; }
+table.value-units-table .value-c3 { width: 130px; } /* fits label + sort caret */
+table.value-units-table th:nth-child(3), table.value-units-table td:nth-child(3) { white-space: nowrap; }
+/* Constant mirrors the unit column above. */
+table.constants-table .constants-c1 { width: 35%; }
+table.var-table .var-c1, table.qty-list-table .qty-c1 { width: 1px; }
+table.var-table th:first-child,
+table.qty-list-table th:first-child, table.qty-list-table td:first-child { white-space: nowrap; }
+table.var-overrides-table .var-c1 { width: 1px; }
 /* Overlay avoids shoving long unit names onto another line; touch keeps in-flow below */
 .units-ref-btn {
   position: absolute;
@@ -963,12 +997,15 @@ tr.is-ref .units-ref-btn .ref-ic-active { display: inline-block; }
 .si-prefix-table.si-expanded .si-caret-btn { transform: rotate(180deg); }
 
 @media (hover: none), (width < 768px) {
-  /* No hover, so buttons stay visible and in normal flow. */
+  /* Touch has no hover: keep buttons in flow by the unit name. Right-floating
+     strands them off-screen when names overflow. */
   table[data-units-dynamic] td:first-child { position: static; }
   .units-ref-btn {
     position: static;
     /* Absolute offsets/transforms above do not apply to static positioning. */
-    float: right;
+    float: none;
+    display: inline-block;
+    vertical-align: middle;
     margin-left: 6px;
     pointer-events: auto;
     opacity: 1;
@@ -1019,6 +1056,8 @@ tr.is-ref .units-ref-btn .ref-ic-active { display: inline-block; }
     background: rgba(0, 0, 0, 0.3);
     z-index: 49;
   }
+  /* Collapsed left leaves no in-flow sidebar to keep interactive. */
+  body:has(#sidebar-left.collapsed) .sidebar-backdrop { left: 0; }
 }
 
 /* ---- 14. Responsive: mobile bottom sheets + dock ---- */
@@ -1469,8 +1508,9 @@ kbd {
 }
 #science-tree .kb-hint { right: 8px; top: 2px; }
 .shortcut-pending {
-  /* Overlay pinned to the bottom of the viewport. Out of flow, so content
-     height and scroll position don't matter. */
+  /* Overlay pinned to the bottom of the main column (inline left/right are
+     synced to #main-content by shortcuts.js so the sidebars stay clear).
+     Out of flow, so content height and scroll position don't matter. */
   position: fixed;
   left: 0;
   right: 0;

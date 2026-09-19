@@ -39,13 +39,17 @@
     };
   }
 
+  function notifyCopy(ok, label, detail) {
+    if (typeof window.showToast !== 'function') return;
+    var base = ok ? t('toast.copied', 'Copied') : t('toast.copy_failed', 'Copy failed');
+    window.showToast(base + (label ? ' ' + label : '') + (ok || !detail ? '' : ': ' + detail), ok ? 'success' : 'error');
+  }
+
   function copyText(text, label) {
     if (!(navigator.clipboard && navigator.clipboard.writeText)) return;
-    var okMsg = t('toast.copied', 'Copied');
-    var failMsg = t('toast.copy_failed', 'Copy failed');
     navigator.clipboard.writeText(text).then(
-      function() { if (typeof window.showToast === 'function') window.showToast(okMsg + (label ? ' ' + label : ''), 'success'); },
-      function(e) { if (typeof window.showToast === 'function') window.showToast(failMsg + ': ' + (e && e.message || e), 'error'); }
+      function() { notifyCopy(true, label); },
+      function(e) { notifyCopy(false, label, e && e.message || e); }
     );
   }
 
@@ -59,23 +63,16 @@
   function copyPromise(promise, label) {
     if (!promise || typeof promise.then !== 'function') return;
     promise.then(
-      function() { if (typeof window.showToast === 'function') window.showToast(t('toast.copied', 'Copied') + (label ? ' ' + label : ''), 'success'); },
-      function(e) { if (typeof window.showToast === 'function') window.showToast(t('toast.copy_failed', 'Copy failed') + ': ' + ((e && e.message) || e), 'error'); }
+      function() { notifyCopy(true, label); },
+      function(e) { notifyCopy(false, label, (e && e.message) || e); }
     );
   }
 
-  // Single owner for SQL <pre> blocks (formula + create modals).
   function copySqlBlock(btn) {
     var block = btn && btn.closest ? btn.closest('.sql-block') : null;
     var pre = block ? block.querySelector('pre') : null;
     if (!pre || !pre.textContent.trim()) return;
     copyText(pre.textContent, 'SQL');
-  }
-
-  function copyPreById(id, label) {
-    var pre = typeof id === 'string' ? byId(id) : id;
-    if (!pre || !pre.textContent.trim()) return;
-    copyText(pre.textContent, label || 'SQL');
   }
 
   // Single data-action registry + central click dispatch (single listener,
@@ -126,16 +123,14 @@
   }
 
   // Filter-URL param hygiene shared by list navigations.
-  var PAGING_PARAMS = ['page', 'per_page', 'all'];
+  function stripParams(params, keys) {
+    (keys || []).forEach(function(k) { params.delete(k); });
+    return params;
+  }
+  var PAGING_PARAMS = ['page', 'per_page'];
   var TOPIC_PARAMS = ['subbranch', 'topic', 'id', 'exclude_all'];
-  function stripPagingParams(params) {
-    PAGING_PARAMS.forEach(function(k) { params.delete(k); });
-    return params;
-  }
-  function stripTopicParams(params) {
-    TOPIC_PARAMS.forEach(function(k) { params.delete(k); });
-    return params;
-  }
+  function stripPagingParams(params) { return stripParams(params, PAGING_PARAMS); }
+  function stripTopicParams(params) { return stripParams(params, TOPIC_PARAMS); }
   function stripSearchParam(params, keepQ) {
     if (!keepQ) params.delete('q');
     return params;
@@ -145,12 +140,9 @@
     var dimOn = (dims || []).some(function(v) { return v === true; });
     return dimOn || (qtyCount || 0) > 0 || diffMin > 1 || diffMax < 10;
   }
-  // Single-source slug helpers mirroring export.resolve_formula_id + constants.is_slug.
+  // Single-source slug helper mirroring export.resolve_formula_id + constants.is_slug.
   function slugify(s) {
     return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-  }
-  function isSlug(s) {
-    return /^[a-z0-9]+(?:_[a-z0-9]+)*$/.test(s || '');
   }
   // Single sidebar/nav owner: attr-based open check + pure URL builders.
   // isSidebarOpen/sidebarClosed previously disagreed on class checks; the attr
@@ -191,10 +183,8 @@
     copyText: copyText,
     copyPromise: copyPromise,
     copySqlBlock: copySqlBlock,
-    copyPreById: copyPreById,
     setModal: setModal,
     registerActions: registerActions,
-    dispatchAction: dispatchAction,
     registerPreHandler: registerPreHandler,
     registerOverlayCloser: registerOverlayCloser,
     installSingleClickListener: installSingleClickListener,
@@ -204,7 +194,6 @@
     stripSearchParam: stripSearchParam,
     filtersActive: filtersActive,
     slugify: slugify,
-    isSlug: isSlug,
     sidebarOpenAttr: sidebarOpenAttr,
     stripQFromUrl: stripQFromUrl,
     viewUrl: viewUrl,

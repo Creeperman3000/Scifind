@@ -19,32 +19,33 @@
     return fetch(url, opts).then(checkOk).then(function(r) { return r.text(); });
   }
 
-  function getJSON(url, opts) {
-    var headers = { 'Accept': 'application/json' };
-    if (opts && opts.headers) {
-      Object.keys(opts.headers).forEach(function(k) { headers[k] = opts.headers[k]; });
-    }
-    var merged = { headers: headers };
+  function mergeOpts(opts, extra) {
+    var merged = extra || {};
     if (opts) {
       Object.keys(opts).forEach(function(k) { if (k !== 'headers') merged[k] = opts[k]; });
     }
-    return fetch(url, merged).then(checkOk).then(function(r) { return r.json(); });
+    return merged;
+  }
+
+  function mergeHeaders(base, extra) {
+    var headers = base || {};
+    Object.keys(extra || {}).forEach(function(k) { headers[k] = extra[k]; });
+    return headers;
+  }
+
+  function getJSON(url, opts) {
+    var headers = mergeHeaders({ 'Accept': 'application/json' }, opts && opts.headers);
+    return fetch(url, mergeOpts(opts, { headers: headers })).then(checkOk).then(function(r) { return r.json(); });
   }
 
   // On !ok throw enriched Error (.data/.html) so callers can surface the server message.
   function postJSON(url, fd, opts) {
-    var headers = { 'Accept': 'application/json' };
-    Object.keys(csrfHeaders()).forEach(function(k) { headers[k] = csrfHeaders()[k]; });
-    if (opts && opts.headers) {
-      Object.keys(opts.headers).forEach(function(k) { headers[k] = opts.headers[k]; });
-    }
+    var csrf = csrfHeaders();
+    var headers = mergeHeaders(mergeHeaders({ 'Accept': 'application/json' }, csrf), opts && opts.headers);
     if (window._csrfToken && fd && typeof fd.has === 'function' && !fd.has('_csrf_token')) {
       fd.set('_csrf_token', window._csrfToken);
     }
-    var merged = { method: 'POST', body: fd, headers: headers };
-    if (opts) {
-      Object.keys(opts).forEach(function(k) { if (k !== 'headers') merged[k] = opts[k]; });
-    }
+    var merged = mergeOpts(opts, { method: 'POST', body: fd, headers: headers });
     return fetch(url, merged).then(function(r) {
       var ct = (r.headers.get('content-type') || '').toLowerCase();
       var isJSON = ct.indexOf('application/json') !== -1;

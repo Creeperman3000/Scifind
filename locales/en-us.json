@@ -106,7 +106,9 @@
       "si_base": "SI base",
       "si_show_all": "Show all prefixes",
       "si_show_less": "Show fewer prefixes",
-      "formulas_with_constant": "Appears in formulas"
+      "formulas_with_constant": "Appears in formulas",
+      "difficulty_min": "Minimum difficulty",
+      "difficulty_max": "Maximum difficulty"
     },
     "unit": {
       "system_any": "any",
@@ -151,7 +153,20 @@
       "close": "Close",
       "copy": "Copy",
       "shortcuts": "Keyboard shortcuts",
-      "focus_search": "Focus search"
+      "focus_search": "Focus search",
+      "sort_by": "Sort by"
+    },
+    "error": {
+      "not_found": "Not Found",
+      "not_found_detail": "not found",
+      "csrf": "CSRF token missing or invalid",
+      "rate_limit": "Rate limit exceeded",
+      "not_initialised_title": "Database not initialised",
+      "not_initialised_body": "The SQLite database could not be opened or has no tables.",
+      "not_initialised_hint": "Run python scifind_cli.py init to create and seed it, then refresh this page.",
+      "render_error": "ERROR",
+      "unknown_format": "unknown format",
+      "params_required": "quantity, ref and id[] required"
     },
     "create": {
       "title": "Create Formula",

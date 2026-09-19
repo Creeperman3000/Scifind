@@ -17,6 +17,7 @@
 <div class="detail-section">
   <h3>{{ _('detail.quantities') }}</h3>
   <table class="var-table">
+    <colgroup><col class="var-c1"><col class="var-c2"></colgroup>
     <thead>
       <tr>
         <th>{{ _('detail.quantity') }}</th>
@@ -39,12 +40,13 @@
 
 {{ links_list(links) }}
 
-<div class="modal-overlay" id="formula-sql-modal" role="dialog" aria-modal="true">
+<div class="modal-overlay" id="formula-sql-modal" role="dialog" aria-modal="true" aria-labelledby="formula-sql-title">
   <div class="modal-content">
     <button class="modal-close formula-copy-btn" type="button" aria-label="{{ _('tooltip.close') }}" data-action="close-formula-sql">
       <i data-lucide="x" width="16" height="16"></i>
     </button>
-    <h3>{{ _('create.formula_insert') }}</h3>
+    <div class="modal-body">
+    <h3 id="formula-sql-title">{{ _('create.formula_insert') }}</h3>
     <div class="sql-block">
       <button class="formula-copy-btn" type="button" data-action="copy-formula-sql-export" title="{{ _('tooltip.copy') }}">
         <i data-lucide="copy" width="16" height="16"></i>
@@ -57,6 +59,7 @@
         <i data-lucide="copy" width="16" height="16"></i>
       </button>
       <pre id="token-sql">{{ token_sql }}</pre>
+    </div>
     </div>
   </div>
 </div>

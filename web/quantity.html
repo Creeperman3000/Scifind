@@ -11,8 +11,8 @@
 {% if constants %}
 <div class="detail-section">
   <h3>{{ _('detail.constants') }}</h3>
-  <table class="units-table">
-    <colgroup><col class="units-c1"><col class="units-c2"></colgroup>
+  <table class="units-table constants-table">
+    <colgroup><col class="constants-c1"><col class="constants-c2"></colgroup>
     <thead>
       <tr>
         <th>{{ _('detail.constant') }}</th>
@@ -22,7 +22,7 @@
     <tbody>
     {% for c in constants %}
       <tr>
-        <td><span class="latex-observe" data-latex="{{ c.symbol }}"></span> <a href="/constant/{{ c.id }}">{{ _(c.name) }}</a></td>
+        <td><span class="latex-observe" data-latex="{{ c.symbol or '' }}"></span> <a href="/constant/{{ c.id }}">{{ _(c.name) }}</a></td>
         <td>{% if c.value_latex %}<span class="latex-observe" data-latex="{{ c.value_latex }}{% if c.unit_symbol_latex %} \; {{ c.unit_symbol_latex }}{% endif %}"></span>{% else %}&ndash;{% endif %}</td>
       </tr>
     {% endfor %}

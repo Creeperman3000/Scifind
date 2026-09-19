@@ -111,7 +111,9 @@
       "si_base": "Základní SI",
       "si_show_all": "Zobrazit všechny předpony",
       "si_show_less": "Zobrazit méně předpon",
-      "formulas_with_constant": "Vyskytuje se ve vzorcích"
+      "formulas_with_constant": "Vyskytuje se ve vzorcích",
+      "difficulty_min": "Minimální obtížnost",
+      "difficulty_max": "Maximální obtížnost"
     },
     "unit": {
       "system_any": "libovolný",
@@ -156,7 +158,20 @@
       "close": "Zavřít",
       "copy": "Kopírovat",
       "shortcuts": "Klávesové zkratky",
-      "focus_search": "Hledat"
+      "focus_search": "Hledat",
+      "sort_by": "Řadit podle"
+    },
+    "error": {
+      "not_found": "Nenalezeno",
+      "not_found_detail": "nenalezeno",
+      "csrf": "CSRF token chybí nebo je neplatný",
+      "rate_limit": "Překročen limit požadavků",
+      "not_initialised_title": "Databáze není inicializována",
+      "not_initialised_body": "SQLite databázi se nepodařilo otevřít nebo neobsahuje tabulky.",
+      "not_initialised_hint": "Spusťte python scifind_cli.py init pro vytvoření a naplnění, poté obnovte stránku.",
+      "render_error": "CHYBA",
+      "unknown_format": "neznámý formát",
+      "params_required": "quantity, ref a id[] jsou povinné"
     },
     "create": {
       "title": "Vytvořit vzorec",
@@ -186,7 +201,7 @@
       "formula_sql": "SQL vzorce",
       "token_sql": "SQL tokenů",
       "pick_languages_heading": "Vyberte jazyky na překlad",
-      "pick_languages_hint": "en-us je vždy zahrnuto",
+      "pick_languages_hint": "en-us je vždy vybráno",
       "translate_heading": "Přeložit do {lang}",
       "translate_open_issue": "Otevřít GitHub issue"
     },
