@@ -16,7 +16,7 @@
 {% if detail_items %}
 <div class="detail-section">
   <h3>{{ _('detail.quantities') }}</h3>
-  <table class="var-table">
+  <table class="var-table has-select">
     <colgroup><col class="var-c1"><col class="var-c2"></colgroup>
     <thead>
       <tr>
@@ -27,7 +27,7 @@
     <tbody>
     {% for item in detail_items %}
       <tr>
-        <td>${{ item.symbol_latex }}$ {% if item.name_html %}{{ item.name_html }} {% endif %}{% if item.paren_html %}{{ item.paren_html }}{% endif %}</td>
+        <td>{% if item.qid %}<button type="button" class="select-check inline" data-sel-href="/quantity/{{ item.qid }}" aria-pressed="false" aria-label="{{ _('tooltip.select_mode') }}" title="{{ _('tooltip.select_mode') }}"><span class="box" aria-hidden="true"></span></button> {% endif %}${{ item.symbol_latex }}$ {% if item.name_html %}{{ item.name_html }} {% endif %}{% if item.paren_html %}{{ item.paren_html }}{% endif %}</td>
         <td>{% if item.default_unit_symbol_latex %}${{ item.default_unit_symbol_latex }}${% endif %} {{ item.default_unit_html }}</td>
       </tr>
     {% endfor %}

@@ -5,7 +5,7 @@
 <h2>{{ heading }}</h2>
 
 {% if quantities %}
-<table class="qty-list-table">
+<table class="qty-list-table has-select">
 <colgroup><col class="qty-c1"><col class="qty-c2"></colgroup>
 <thead>
 <tr><th>{{ _('detail.quantity') }}</th><th>{{ _('detail.unit') }}</th></tr>
@@ -13,7 +13,7 @@
 <tbody data-list-container>
 {% for q in quantities %}
 <tr>
-  <td><span class="latex-observe" data-latex="{{ q.symbol }}"></span> <a href="/quantity/{{ q.id }}">{{ _(q.name) }}</a></td>
+  <td><button type="button" class="select-check inline" data-sel-href="/quantity/{{ q.id }}" aria-pressed="false" aria-label="{{ _('tooltip.select_mode') }}" title="{{ _('tooltip.select_mode') }}"><span class="box" aria-hidden="true"></span></button> <span class="latex-observe" data-latex="{{ q.symbol }}"></span> <a href="/quantity/{{ q.id }}">{{ _(q.name) }}</a></td>
   <td><span class="latex-observe" data-latex="{{ q.default_unit_symbol_latex }}"></span> {{ q.default_unit_html }}</td>
 </tr>
 {% endfor %}

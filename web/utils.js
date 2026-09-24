@@ -128,7 +128,7 @@
     return params;
   }
   var PAGING_PARAMS = ['page', 'per_page'];
-  var TOPIC_PARAMS = ['subbranch', 'topic', 'id', 'exclude_all'];
+  var TOPIC_PARAMS = ['topics', 'exclude_all'];
   function stripPagingParams(params) { return stripParams(params, PAGING_PARAMS); }
   function stripTopicParams(params) { return stripParams(params, TOPIC_PARAMS); }
   function stripSearchParam(params, keepQ) {

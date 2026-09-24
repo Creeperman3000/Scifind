@@ -253,17 +253,15 @@
   /* ---- Filter (f-prefix): focus targets + AND/OR toggles (f D / f Q) ---- */
   function toggleDimMode() { if (isListView()) clickId('dim-mode-toggle'); }
   function toggleQtyMode() { if (isListView()) clickId('qty-mode-toggle'); }
-  /* Mirrors the sidebar AND/OR button titles (mode_switched holds 'dim'/'fml' when OR is on). */
+  /* Mirrors the sidebar AND/OR button titles (qty_mode/dim_mode hold 'or' when OR is on). */
   function isOrMode(key) {
     try {
-      var parts = typeof getSwitched === 'function'
-        ? getSwitched(new URL(window.location))
-        : (new URL(window.location).searchParams.get('mode_switched') || '').split(',').filter(Boolean);
-      return parts.indexOf(key) !== -1;
+      var name = key === 'dim' ? 'dim_mode' : 'qty_mode';
+      return new URL(window.location).searchParams.get(name) === 'or';
     } catch (e) { return false; }
   }
   function modeToggleLabel(isDim) {
-    var or = isOrMode(isDim ? 'dim' : 'fml');
+    var or = isOrMode(isDim ? 'dim' : 'qty');
     return t(isDim ? (or ? 'filter.dim_mode_or' : 'filter.dim_mode_and') : (or ? 'filter.qty_mode_or' : 'filter.qty_mode_and'),
       isDim ? 'Dimension AND/OR' : 'Quantity AND/OR');
   }

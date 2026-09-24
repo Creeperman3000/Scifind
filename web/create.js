@@ -346,7 +346,8 @@
       if (page && page.kind === 'translate') captureTranslationForm(page.code);
       popPage();
     },
-    'toggle-token-section': (el) => {
+    'toggle-token-section': (e, el) => {
+      if (!el) return;
       const list = $(el.dataset.target);
       if (!list) return;
       const collapsed = list.dataset.collapsed === '1';

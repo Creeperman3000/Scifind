@@ -9,7 +9,9 @@ import os
 import re
 import secrets
 import sqlite3
+import subprocess
 import sys
+import tempfile
 import time
 
 from collections import deque
@@ -116,6 +118,7 @@ from scifind_lib.fetch import (
     sort_quantities,
     sort_search_rows,
 )
+from scifind_lib.print_tex import PAPERS_MM, build_print_tex
 from scifind_lib.units import (
     parse_compound_unit,
     resolve_base_unit,
@@ -220,8 +223,8 @@ CREATE_EQUATION_MAX_LENGTH = 2000
 logger = logging.getLogger("scifind")
 
 
-def _topic_tree_data(tree, name_map, compressed, exclude_all=False, ids_provided=False):
-    if not compressed and not exclude_all and not ids_provided:
+def _topic_tree_data(tree, name_map, compressed, exclude_all=False, topic_ids_provided=False):
+    if not compressed and not exclude_all and not topic_ids_provided:
         compressed = {r["id"] for r in tree} if tree else set()
     def conv(node):
         return {
@@ -265,10 +268,10 @@ def _list_base(request_args, allowed_sorts, default_sort):
     tree = _cached_tree(conn)
     # Single index build shared by compress + expand + breadcrumbs.
     indices = _cached_indices(tree)
-    compressed = compress_selection(tree, fs.ids, _indices=indices)
+    compressed = compress_selection(tree, fs.topic_ids, _indices=indices)
     valid = set(indices["id_to_node"])
     sort_key = normalize_sort(request_args.get("sort"), allowed_sorts, default_sort)
-    topic_filter = expand_selection(tree, [tid for tid in fs.ids if tid in valid], _indices=indices)
+    topic_filter = expand_selection(tree, [tid for tid in fs.topic_ids if tid in valid], _indices=indices)
     return conn, fs, tree, compressed, sort_key, topic_filter
 
 
@@ -564,12 +567,18 @@ def detect_locale():
     g.locale = session["locale"] if session.get("locale") in locales else _resolve_locale(request.headers.get("Accept-Language", ""))
 
     for arg_key, cookie_key, allowed, default in (
-        ("dim_mode", "sf_dim_mode", ("dim", "var", "unit"), "dim"),
         ("unit_system", "sf_unit_system", ("SI", "CGS", "Imperial"), "SI"),
     ):
         if (value := request.args.get(arg_key) or request.cookies.get(cookie_key)) in allowed:
             session[arg_key] = value
         setattr(g, arg_key, session.get(arg_key, default))
+    # Dimension display mode is cookie + session only; URL dim_mode means the
+    # dimension filter (and/or). No ?dim_mode=dim|var|unit override.
+    if (dim_view := request.cookies.get("sf_dim_mode")) in ("dim", "var", "unit"):
+        session["dim_mode"] = dim_view
+    g.dim_mode = session.get("dim_mode", "dim")
+    if g.dim_mode not in ("dim", "var", "unit"):
+        g.dim_mode = "dim"
 
     for code in _locale_chain(g.locale):
         meta = load_locale_config(code)
@@ -682,7 +691,7 @@ def inject_globals():
     if conn is not None:
         fs = parse_filter_state(request.args, conn)
         indices = _cached_indices(tree)
-        compressed = compress_selection(tree, fs.ids, _indices=indices)
+        compressed = compress_selection(tree, fs.topic_ids, _indices=indices)
     else:
         fs = QuantityFilter()
         compressed = set()
@@ -704,7 +713,7 @@ def inject_globals():
     dim_mode = g.get("dim_mode", "dim")
 
     return dict(
-        tree_json=_topic_tree_data(tree, name_map, compressed, fs.exclude_all, ids_provided=fs.ids_provided),
+        tree_json=_topic_tree_data(tree, name_map, compressed, fs.exclude_all, topic_ids_provided=fs.topic_ids_provided),
         diff_min=fs.diff_min,
         diff_max=fs.diff_max,
         current_view="quantities" if path == "/quantities"
@@ -746,7 +755,7 @@ def _list_guard(tree, compressed, target, fs, template, items_key, empty_key,
     """Shared redirect-if-all-selected + empty-filter response for list pages."""
     if tree and compressed == {r["id"] for r in tree}:
         return redirect(target)
-    if fs.exclude_all or (fs.ids_provided and not fs.ids):
+    if fs.exclude_all or (fs.topic_ids_provided and not fs.topic_ids):
         return render_template(template, **{items_key: [], "heading": _(empty_key),
                                             "sort": sort_key, "available_sorts": sorts,
                                             "pagination": {"page": 1, "per_page": 0, "total": 0,
@@ -890,8 +899,10 @@ def _build_formula_detail_items(conn, formula_id, locale, tokens=None):
 
         paren_html = f"({' '.join(paren_parts)})" if paren_parts else ""
         base = resolve_base_unit(conn, None, None, qid, system=g.unit_system)
-        detail_items.append(_detail_row(
-            render_variable_symbol(item, locale), name_html, paren_html, base, locale))
+        row = _detail_row(
+            render_variable_symbol(item, locale), name_html, paren_html, base, locale)
+        row["qid"] = qid
+        detail_items.append(row)
 
     return detail_items
 
@@ -1057,7 +1068,7 @@ def index():
 
 @app.route("/base-units")
 def base_units_page():
-    return redirect("/quantities?is_dim=1")
+    return redirect("/quantities?base_only=1")
 
 
 @app.route("/search")
@@ -1206,6 +1217,93 @@ def _page_batch(rows, locale, tree):
     return page_items, pagination
 
 
+_SEL_ID_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,80}$")
+
+_FETCH_COLS = {"formula": "id, name", "quantity": "id, name, symbol"}
+
+
+def _sel_ids(value, limit=500):
+    vals = value.split(",") if isinstance(value, str) else value
+    if not isinstance(vals, (list, tuple)):
+        return []
+    return list(dict.fromkeys(
+        s for v in vals if (s := v.strip() if isinstance(v, str) else "") and _SEL_ID_RE.match(s)))[:limit]
+
+
+def _show_ids(name):
+    return _sel_ids(request.args.get(name)), request.args.get("show_selected") == "1" and name in request.args
+
+
+def _show_only_heading(total):
+    return f"{_('select.show_selected_only')} ({total})"
+
+
+def _order_by_ids(rows, ids):
+    by_id = {r.get("id"): r for r in rows}
+    return [by_id[i] for i in ids if i in by_id]
+
+
+def _fetch_by_ids(conn, table, ids, extra=""):
+    if not ids or table not in _FETCH_COLS:
+        return []
+    rows = conn.execute(
+        f"SELECT {_FETCH_COLS[table]} FROM {table} WHERE id IN ({','.join('?' for _ in ids)}){extra}", ids)
+    return _order_by_ids([dict(r) for r in rows], ids)
+
+
+def _enrich_quantities(conn, rows, locale, system):
+    rows = [dict(r) for r in rows]
+    base_map = select_base_units_batched(conn, [q["id"] for q in rows], system)
+    for q in rows:
+        q["unit_latex"] = render_compound_unit(base_map.get(q["id"]), locale)[1]
+    return rows
+
+
+def _selection_payload(conn, f_ids, q_ids, locale, system):
+    return (_with_latex(conn, _fetch_by_ids(conn, "formula", f_ids), locale),
+            _enrich_quantities(conn, _fetch_by_ids(conn, "quantity", q_ids, " AND hidden = 0"), locale, system))
+
+
+def _loc_name(item, locale):
+    return localise(item.get("name"), locale) or item["id"]
+
+
+def _formula_dict(formula, locale):
+    return {"id": formula["id"], "name": _loc_name(formula, locale), "latex": formula.get("latex") or ""}
+
+
+def _quantity_row(row, locale):
+    return {"id": row["id"], "name": _loc_name(row, locale), "symbol": row.get("symbol") or "", "unit_latex": row.get("unit_latex") or ""}
+
+
+def _filtered_formulas(conn, fs, topic_filter):
+    """Formulas matching the current filter state (no sort, page, or selection)."""
+    formulas = _prefiltered(conn, fetch_formulas_filtered, fetch_all_formulas, fs, topic_filter)
+    formulas = [f for f in formulas if _passes_topic_difficulty(f, topic_filter, fs)]
+
+    if fs.has_dimension_filter:
+        dim_map = compute_all_formula_dimensions(conn, {f["id"] for f in formulas})
+        formulas = [f for f in formulas
+                    if dimension_matches(dim_map.get(f["id"], {}), fs.dimension_filter, fs.dim_mode, conn)]
+
+    if fs.quantity_ids:
+        matching_ids = fetch_formulas_with_quantities(conn, fs.quantity_ids, fs.quantity_mode)
+        if matching_ids is not None:
+            formulas = [f for f in formulas if f["id"] in matching_ids]
+    return formulas
+
+
+def _filtered_quantities(conn, fs, topic_filter):
+    """Quantities matching the current filter state (no sort, page, or selection)."""
+    dim_qty_ids = set(dimension_quantity_ids(conn).values()) if fs.base_quantity_only else None
+    all_rows = _prefiltered(conn, fetch_quantities_filtered, fetch_all_quantities,
+                            fs, topic_filter, extra_blocked=dim_qty_ids is not None)
+    return [q for q in all_rows if _passes_topic_difficulty(q, topic_filter, fs)
+            and (not fs.has_dimension_filter or dimension_matches(q, fs.dimension_filter, fs.dim_mode, conn))
+            and (not fs.quantity_ids or q["id"] in fs.quantity_ids)
+            and (dim_qty_ids is None or q["id"] in dim_qty_ids)]
+
+
 @app.route("/quantities")
 def all_quantities():
     conn, fs, tree, compressed, sort_key, topic_filter = _list_base(
@@ -1218,15 +1316,12 @@ def all_quantities():
     if guard is not None:
         return guard
 
-    dim_qty_ids = set(dimension_quantity_ids(conn).values()) if fs.base_quantity_only else None
     system = g.unit_system
-    all_rows = _prefiltered(conn, fetch_quantities_filtered, fetch_all_quantities,
-                            fs, topic_filter, extra_blocked=dim_qty_ids is not None)
-    filtered = [q for q in all_rows if _passes_topic_difficulty(q, topic_filter, fs)
-           and (not fs.has_dimension_filter or dimension_matches(q, fs.dimension_filter, fs.dim_mode, conn))
-           and (not fs.quantity_ids or q["id"] in fs.quantity_ids)
-           and (dim_qty_ids is None or q["id"] in dim_qty_ids)]
-    page_items, pagination = _page_batch(sort_quantities(conn, filtered, sort_key, locale), locale, tree)
+    filtered = _filtered_quantities(conn, fs, topic_filter)
+    qsel, show_only = _show_ids("selected_quantities")
+    filtered = _order_by_ids([dict(r) for r in fetch_all_quantities(conn)], qsel) if show_only \
+        else sort_quantities(conn, filtered, sort_key, locale)
+    page_items, pagination = _page_batch(filtered, locale, tree)
     base_map = select_base_units_batched(conn, [q["id"] for q in page_items], system)
     for quantity in page_items:
         quantity["default_unit_html"], quantity["default_unit_symbol_latex"] = render_compound_unit(
@@ -1234,6 +1329,8 @@ def all_quantities():
 
     heading = _("detail.base_quantities") if fs.base_quantity_only else _heading_from_compressed(
         _("detail.quantities"), compressed, tree, locale, fs, conn)
+    if show_only:
+        heading = _show_only_heading(len(filtered))
     return render_template(
         "quantities.html",
         quantities=page_items,
@@ -1255,23 +1352,17 @@ def all_formulas():
     if guard is not None:
         return guard
 
-    formulas = _prefiltered(conn, fetch_formulas_filtered, fetch_all_formulas, fs, topic_filter)
-    formulas = [f for f in formulas if _passes_topic_difficulty(f, topic_filter, fs)]
+    formulas = _filtered_formulas(conn, fs, topic_filter)
 
-    if fs.has_dimension_filter:
-        dim_map = compute_all_formula_dimensions(conn, {f["id"] for f in formulas})
-        formulas = [f for f in formulas
-                    if dimension_matches(dim_map.get(f["id"], {}), fs.dimension_filter, fs.dim_mode, conn)]
-
-    if fs.quantity_ids:
-        matching_ids = fetch_formulas_with_quantities(conn, fs.quantity_ids, fs.quantity_mode)
-        if matching_ids is not None:
-            formulas = [f for f in formulas if f["id"] in matching_ids]
-
-    page_items, pagination = _page_batch(sort_formulas(conn, formulas, sort_key, locale), locale, tree)
+    sel, show_only = _show_ids("selected_formulas")
+    formulas = _order_by_ids([dict(r) for r in fetch_all_formulas(conn)], sel) if show_only \
+        else sort_formulas(conn, formulas, sort_key, locale)
+    page_items, pagination = _page_batch(formulas, locale, tree)
     page_items = _with_latex(conn, page_items, locale)
 
     heading = _heading_from_compressed(_("nav.formulas"), compressed, tree, locale, fs, conn)
+    if show_only:
+        heading = _show_only_heading(len(formulas))
     return render_template(
         "formulas.html",
         formulas=page_items,
@@ -1280,8 +1371,6 @@ def all_formulas():
         available_sorts=FORMULA_SORT_KEYS,
         pagination=pagination,
     )
-
-
 
 
 @app.route("/export")
@@ -1301,6 +1390,112 @@ def export():
                     httponly=True, samesite="Lax", secure=app.config.get("SESSION_COOKIE_SECURE", False))
     return resp
 
+
+@app.route("/api/selection-preview")
+def selection_preview():
+    conn = get_db()
+    locale = getattr(g, "locale", DEFAULT_LOCALE)
+    system = g.unit_system
+    f_ids = _sel_ids(request.args.get("selected_formulas"))
+    q_ids = _sel_ids(request.args.get("selected_quantities"))
+
+    formulas, q_rows = _selection_payload(conn, f_ids, q_ids, locale, system)
+
+    new = []
+    if f_ids:
+        marks = ",".join("?" for _ in f_ids)
+        seen = [dict(r) for r in conn.execute(
+            "SELECT DISTINCT q.id, q.name, q.symbol FROM formula_token ft"
+            f" JOIN quantity q ON q.id = ft.quantity_id WHERE ft.formula_id IN ({marks}) AND q.hidden = 0", f_ids)]
+        qset = set(q_ids)
+        new = sorted((r for r in _enrich_quantities(conn, seen, locale, system) if r["id"] not in qset),
+                     key=lambda r: _loc_name(r, locale))
+
+    return _json_cached({
+        "formulas": [_formula_dict(f, locale) for f in formulas],
+        "quantities": [_quantity_row(r, locale) for r in q_rows],
+        "in_formula_new": [_quantity_row(r, locale) for r in new],
+    }, 60)
+
+
+@app.route("/api/filter-ids")
+def filter_ids():
+    """All ids matching the current list filters (across pages), for select-all."""
+    view = request.args.get("view")
+    locale = getattr(g, "locale", DEFAULT_LOCALE)
+    if view == "formulas":
+        conn, fs, tree, compressed, sort_key, topic_filter = _list_base(
+            request.args, FORMULA_SORT_KEYS, DEFAULT_FORMULA_SORT)
+        rows = sort_formulas(conn, _filtered_formulas(conn, fs, topic_filter), sort_key, locale)
+        ids = [f["id"] for f in rows[:500]]
+    elif view == "quantities":
+        conn, fs, tree, compressed, sort_key, topic_filter = _list_base(
+            request.args, QUANTITY_SORT_KEYS, DEFAULT_QUANTITY_SORT)
+        rows = sort_quantities(conn, _filtered_quantities(conn, fs, topic_filter), sort_key, locale)
+        ids = [q["id"] for q in rows[:500]]
+    else:
+        return {"error": _err("error.params_required")}, 400
+    return _json_cached({"ids": ids}, 60)
+
+
+def _clamp_num(value, default, lo, hi, cast=float):
+    try:
+        return max(lo, min(hi, cast(value)))
+    except (TypeError, ValueError):
+        return default
+
+
+@app.route("/api/print-pdf", methods=["POST"])
+def print_pdf():
+    limited = _rate_limit(f"printpdf:{request.remote_addr or 'anon'}", 12)
+    if limited is not None:
+        return limited
+    payload = request.get_json(force=True, silent=True)
+    if not isinstance(payload, dict):
+        return {"error": _err("error.params_required")}, 400
+    conn = get_db()
+    locale = getattr(g, "locale", DEFAULT_LOCALE)
+    system = g.unit_system
+    f_ids = _sel_ids(payload.get("selected_formulas"))
+    q_ids = _sel_ids(payload.get("selected_quantities"))
+    if not f_ids and not q_ids:
+        return {"error": _err("print.empty")}, 400
+    if len(f_ids) + len(q_ids) > 500:
+        return {"error": _err("print.failed")}, 400
+    layout = payload.get("layout") if payload.get("layout") in ("l1", "l2", "l3") else "l2"
+    cols = _clamp_num(payload.get("cols", 4), 4, 1, 32, int)
+    rows = _clamp_num(payload.get("rows", 16), 16, 1, 32, int)
+    borders_raw = payload.get("borders", True)
+    borders = str(borders_raw).lower() in ("1", "true", "yes", "on") if isinstance(borders_raw, str) else bool(borders_raw)
+    paper = payload.get("paper") if payload.get("paper") in PAPERS_MM else ("letter" if system == "Imperial" else "a4")
+    area = payload.get("area") if payload.get("area") in (*PAPERS_MM, "custom", "paper") else "paper"
+    pw, ph = PAPERS_MM[paper]
+    area_w, area_h = ((_clamp_num(payload.get("cw"), pw, 10.0, 1200.0), _clamp_num(payload.get("ch"), ph, 10.0, 1200.0)) if area == "custom" else PAPERS_MM.get(area, (pw, ph)))
+
+    formulas, q_rows = _selection_payload(conn, f_ids, q_ids, locale, system)
+    if not formulas and not q_rows:
+        return {"error": _err("print.empty")}, 400
+    tex = build_print_tex([_formula_dict(f, locale) for f in formulas], [_quantity_row(r, locale) for r in q_rows],
+                          layout=layout, cols=cols, rows=rows, borders=borders, paper=paper, area_w=area_w, area_h=area_h)
+    try:
+        pdf = _compile_tex(tex)
+    except Exception as exc:
+        logger.warning("print-pdf compile failed: %s", exc)
+        return {"error": _err("print.failed")}, 500
+    return Response(pdf, mimetype="application/pdf",
+                    headers={"Content-Disposition": 'inline; filename="scifind-print.pdf"'})
+
+
+def _compile_tex(tex):
+    with tempfile.TemporaryDirectory(prefix="scifind-print-") as tmp:
+        Path(tmp, "doc.tex").write_text(tex, encoding="utf-8")
+        proc = subprocess.run(["xelatex", "-interaction=nonstopmode", "-halt-on-error",
+                               "-no-shell-escape", "doc.tex"],
+                              cwd=tmp, capture_output=True, timeout=60)
+        pdf = Path(tmp, "doc.pdf")
+        if proc.returncode or not pdf.exists():
+            raise RuntimeError("xelatex failed rc=%s" % proc.returncode)
+        return pdf.read_bytes()
 
 
 @app.route("/create")

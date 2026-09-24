@@ -19,7 +19,7 @@ The DB is created automatically on first run if missing.
 | `/quantity/<id>`                    | Quantity details                                     |
 | `/constant/<id>`                    | Constant details                                     |
 | `/unit/<id>`                        | Unit details                                         |
-| `/base-units`                       | Redirects to `/quantities?is_dim=1` (base quantities)|
+| `/base-units`                       | Redirects to `/quantities?base_only=1` (base quantities)|
 | `/search?q=<query>`                 | Search across formulas, quantities, units, constants |
 | `/api/search-suggestions?q=<query>` | JSON autocomplete suggestions                        |
 | `/api/quantities-filter`            | JSON quantity list for the filter chips              |
@@ -46,16 +46,17 @@ The `/create` page uses AJAX endpoints (not meant to be called directly):
 
 | Name        | Parameter                            | Description                                     |
 | ----------- | ------------------------------------ | ----------------------------------------------- |
-| Tree        | `ids=id1,id2,...`                    | Restrict to tree's nodes (children included)    |
-| Difficulty  | `diff_min`, `diff_max`               | Difficulty range 1-10                           |
+| Tree        | `topics=id1,id2,...`                 | Restrict to tree's nodes (children included)    |
+| Difficulty  | `difficulty_min`, `difficulty_max`   | Difficulty range 1-10                           |
 | Dimension   | `<dim>_eq`, `<dim>_geq`, `<dim>_leq` | Dimension exponent filter (M, L, T, I, Θ, N, J) |
-|             | `dim_mode=and\|or`                   | Do all or any dimensions match\*                |
+|             | `dim_mode=and\|or`                   | Do all or any dimensions match                  |
 | Quantity    | `qty=id1,id2`                        | Formulas containing these quantities            |
-|             | `qty_mode=and\|or`                   | Require all or any quantities\*                 |
+|             | `qty_mode=and\|or`                   | Require all or any quantities                   |
+| Base only   | `base_only=1`                        | Only base quantities (`/quantities`)            |
 | Sort        | `sort=<key>`                         | Sort order                                      |
 | Exclude all | `exclude_all=1`                      | Empty result set (nothing selected)             |
-
-\* - Shared parameter
+| Selection   | `selected_formulas`, `selected_quantities` | Print selection (CSV ids)                 |
+|             | `select_mode=1`, `show_selected=1`   | Selection UI mode / selected-only view          |
 
 ### Sorting
 
@@ -80,11 +81,14 @@ Switchable via the settings menu.
 
 ### Dimensions Setting
 
-Toggle how dimensions are shown: `?dim_mode=<setting>`
+Toggle how dimensions are shown via the settings menu (stored in the
+`sf_dim_mode` cookie + session, not in the URL):
 
 - **Dimensions** `dim` (default): M, L, T, I, Θ, N, J
 - **Variables** `var`: m, l, t, i, T, n, Iᵥ
 - **Units** `unit`: kg, m, s, A, K, mol, cd
+
+URL `dim_mode` unambiguously means the dimension filter (`and|or`).
 
 ## Keyboard shortcuts
 

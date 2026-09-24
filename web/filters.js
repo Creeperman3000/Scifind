@@ -164,15 +164,15 @@ function bindSidebarLeft() {
     applyFilters();
   });
 
-  on('dim-mode-toggle', 'click', function() { toggleModeSwitched('dim'); });
+  on('dim-mode-toggle', 'click', function() { toggleExplicitMode('dim_mode'); });
 
   on('dim-base-qty', 'click', function() {
     var url = new URL(window.location);
-    url.searchParams.get('is_dim') === '1' ? url.searchParams.delete('is_dim') : url.searchParams.set('is_dim', '1');
+    url.searchParams.get('base_only') === '1' ? url.searchParams.delete('base_only') : url.searchParams.set('base_only', '1');
     loadPage(url.pathname + url.search, true);
   });
 
-  on('qty-mode-toggle', 'click', function() { if (isFormulasView()) toggleModeSwitched('fml'); });
+  on('qty-mode-toggle', 'click', function() { if (isFormulasView()) toggleExplicitMode('qty_mode'); });
 
   on('qty-reset', 'click', function() {
     window._qtySelected = [];
@@ -199,18 +199,12 @@ function bindSidebarLeft() {
 window._bindSidebarLeft = bindSidebarLeft;
 bindSidebarLeft();
 
-/* mode_switched is a comma list ('dim' = dim OR, 'fml' = qty OR). */
-function getSwitched(url) { return (url.searchParams.get('mode_switched') || '').split(',').filter(Boolean); }
-function setSwitched(url, parts) {
-  parts.length ? url.searchParams.set('mode_switched', parts.join(',')) : url.searchParams.delete('mode_switched');
-}
+/* Explicit AND/OR modes: qty_mode=or / dim_mode=or (absent = and). */
+function isOrMode(url, name) { return url.searchParams.get(name) === 'or'; }
 
-function toggleModeSwitched(key) {
+function toggleExplicitMode(name) {
   var url = new URL(window.location);
-  var switched = getSwitched(url);
-  var idx = switched.indexOf(key);
-  idx !== -1 ? switched.splice(idx, 1) : switched.push(key);
-  setSwitched(url, switched);
+  isOrMode(url, name) ? url.searchParams.delete(name) : url.searchParams.set(name, 'or');
   loadPage(url.pathname + url.search, true);
 }
 
@@ -221,28 +215,28 @@ function setModeBtn(btn, active, title) {
   refreshIcons();
 }
 
-function syncModeBtn(btnId, show, key, url) {
+function syncModeBtn(btnId, show, name, url) {
   var btn = $(btnId);
   if (!btn) return;
   if (!show) { btn.classList.add('hidden'); return; }
   btn.classList.remove('hidden');
-  var isOr = getSwitched(url).indexOf(key) !== -1;
+  var isOr = isOrMode(url, name);
   var dim = btnId === 'dim-mode-toggle';
   setModeBtn(btn, isOr, window._localeUI.filter[dim ? (isOr ? 'dim_mode_or' : 'dim_mode_and') : (isOr ? 'qty_mode_or' : 'qty_mode_and')]);
 }
 
 function syncFilterStates() {
   var url = new URL(window.location);
-  cleanModeSwitched(url);
+  cleanExplicitModes(url);
   var st = dimFillState();
   var formulas = isFormulasView();
   var qtyN = (window._qtySelected || []).length;
 
-  syncModeBtn('dim-mode-toggle', st.dimSet >= 2, 'dim', url);
-  syncModeBtn('qty-mode-toggle', formulas && qtyN >= 2, 'fml', url);
+  syncModeBtn('dim-mode-toggle', st.dimSet >= 2, 'dim_mode', url);
+  syncModeBtn('qty-mode-toggle', formulas && qtyN >= 2, 'qty_mode', url);
   if ($('qty-mode-toggle') && !formulas) $('qty-mode-toggle').classList.add('hidden');
 
-  toggleCls('dim-base-qty', 'active', url.searchParams.get('is_dim') === '1');
+  toggleCls('dim-base-qty', 'active', url.searchParams.get('base_only') === '1');
   toggleCls('dim-base-qty', 'disabled', formulas);
 
   toggleCls('dim-fill-zeros', 'active', st.allFilled && st.hasZero);
@@ -267,21 +261,17 @@ function syncFilterStates() {
   }
 }
 
-function cleanModeSwitched(url) {
-  var raw = url.searchParams.get('mode_switched');
-  if (!raw) return;
+function cleanExplicitModes(url) {
+  var changed = false;
   var qp = url.searchParams.get('qty');
   var dimCount = window._dimensionSymbols.filter(function(d) {
     return ['eq', 'geq', 'leq'].some(function(op) { return url.searchParams.get(d + '_' + op) !== null; });
   }).length;
-  var parts = getSwitched(url).filter(function(key) {
-    if (key === 'dim') return dimCount >= 2;
-    if (key === 'fml') return !!qp && qp.split(',').length >= 2;
-    return true;
-  });
-  if (parts.join(',') !== getSwitched(url).join(',')) {
-    setSwitched(url, parts);
+  if (url.searchParams.get('dim_mode') === 'or' && dimCount < 2) { url.searchParams.delete('dim_mode'); changed = true; }
+  if (url.searchParams.get('qty_mode') === 'or' && (!qp || qp.split(',').filter(Boolean).length < 2)) { url.searchParams.delete('qty_mode'); changed = true; }
+  if (changed) {
     history.replaceState(null, '', url.toString());
+    if (typeof syncViewTabLinks === 'function') syncViewTabLinks();
   }
 }
 
@@ -584,15 +574,15 @@ function buildFilterUrl() {
   U.stripPagingParams(sp);
   U.stripSearchParam(sp, url.pathname === '/search');
 
-  if (_topicTree && _topicTreeMode === 'checkbox' && !allRootNodesChecked()) sp.set('ids', topCheckedIds().join(','));
-  else if (_topicTree && _topicTreeMode === 'checkbox') sp.delete('ids');
-  else sp.set('ids', '');
+  if (_topicTree && _topicTreeMode === 'checkbox' && !allRootNodesChecked()) sp.set('topics', topCheckedIds().join(','));
+  else if (_topicTree && _topicTreeMode === 'checkbox') sp.delete('topics');
+  else sp.set('topics', '');
 
   var dMinEl = $('diff-min'), dMaxEl = $('diff-max');
   if (dMinEl && dMaxEl) {
     var dMin = Math.round(parseFloat(dMinEl.value)), dMax = Math.round(parseFloat(dMaxEl.value));
-    setParam(sp, 'diff_min', dMin, dMin > 1);
-    setParam(sp, 'diff_max', dMax, dMax < 10);
+    setParam(sp, 'difficulty_min', dMin, dMin > 1);
+    setParam(sp, 'difficulty_max', dMax, dMax < 10);
   }
 
   window._dimensionSymbols.forEach(function(d) {
@@ -605,6 +595,11 @@ function buildFilterUrl() {
 
   var qty = window._qtySelected || [];
   setParam(sp, 'qty', qty.join(','), qty.length > 0);
+  if (qty.length < 2) sp.delete('qty_mode');
+  var dimSetCount = window._dimensionSymbols.filter(function(d) {
+    return ['eq', 'geq', 'leq'].some(function(op) { return sp.get(d + '_' + op) !== null; });
+  }).length;
+  if (dimSetCount < 2) sp.delete('dim_mode');
 
   var sortMenu = $('sort-menu');
   var allowed = window._availableSorts || [];

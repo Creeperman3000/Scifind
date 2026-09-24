@@ -1,5 +1,6 @@
 {% macro card(href, latex=None, symbol=None, name=None, relation=None) -%}
 <div class="formula-card">
+  <button type="button" class="select-check" data-sel-href="{{ href }}" aria-pressed="false" aria-label="{{ _('tooltip.select_mode') }}" title="{{ _('tooltip.select_mode') }}"><span class="box" aria-hidden="true"></span></button>
   <a href="{{ href }}">
     {% if latex is not none %}
     <div class="formula-eqn latex-observe" data-latex="{{ latex }}"></div>
@@ -49,7 +50,7 @@
 <div class="breadcrumb-bar">
 {% for crumb in crumbs %}
   {% if not loop.first %} &gt; {% endif %}
-  <a href="{{ base }}?ids={{ crumb.id }}">{{ crumb.name }}</a>
+  <a href="{{ base }}?topics={{ crumb.id }}">{{ crumb.name }}</a>
 {% endfor %}
 {% if tail_href %}{% if crumbs %} &gt; {% endif %}<a href="{{ tail_href }}">{{ tail_name }}</a>{% endif %}
 </div>
@@ -229,7 +230,7 @@
     onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],macros:window._KATEX_MACROS});document.documentElement.classList.add('katex-ready');if(typeof renderQtyChips==='function')renderQtyChips();"
     onerror="document.documentElement.classList.add('katex-ready');"></script>
   <script defer src="{{ static_v('tree.js') }}" onload="if(typeof window._bootTopicTree==='function')window._bootTopicTree()"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/lucide@0.496.0/dist/umd/lucide.min.js" onload="if(typeof refreshIcons==='function')refreshIcons()"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/lucide@1.48.0/dist/umd/lucide.min.js" onload="if(typeof refreshIcons==='function')refreshIcons()"></script>
   <link rel="stylesheet" href="{{ static_v('base.css') }}">
   {% block styles %}{% endblock %}
 </head>
@@ -269,6 +270,18 @@
       </form>
     </div>
     <div class="topbar-right">
+      <button class="topbar-btn hidden" id="show-selected-toggle" data-action="toggle-show-selected" type="button" aria-pressed="false" title="{{ _('tooltip.show_selected') }}" aria-label="{{ _('tooltip.show_selected') }}">
+        <span id="show-selected-icon"><i data-lucide="eye" width="18" height="18"></i></span>
+      </button>
+      <button class="topbar-btn hidden" id="context-select-btn" data-action="context-select" type="button" aria-pressed="false" title="{{ _('print.add_all') }}" aria-label="{{ _('print.add_all') }}">
+        <span id="context-select-icon"><i data-lucide="check-check" width="18" height="18"></i></span>
+      </button>
+      <button class="topbar-btn" id="print-btn" data-action="goto-print" type="button" title="{{ _('tooltip.print_list') }}" aria-label="{{ _('tooltip.print_list') }}">
+        <i data-lucide="printer" width="18" height="18"></i>
+      </button>
+      <button class="topbar-btn" id="select-toggle" data-action="toggle-select-mode" type="button" aria-pressed="false" title="{{ _('tooltip.select_mode') }}" aria-label="{{ _('tooltip.select_mode') }}">
+        <span id="select-toggle-icon"><i data-lucide="list-checks" width="18" height="18"></i></span>
+      </button>
       <div class="settings-wrap">
         <button class="topbar-btn" data-action="toggle-settings" title="{{ _('tooltip.settings') }}" aria-label="{{ _('tooltip.settings') }}" aria-keyshortcuts="Control+,">
           <i data-lucide="settings" width="18" height="18"></i>
@@ -503,6 +516,59 @@
     </button>
   </div>
 
+  <div class="modal-overlay" id="print-dialog" role="dialog" aria-modal="true" aria-label="{{ _('print.title') }}">
+    {% macro paper_opts() %}{% for p in ['letter', 'legal', 'tabloid', 'a0', 'a1', 'a2', 'a3', 'a4', 'a5', 'a6'] %}<option value="{{ p }}">{{ p|upper if p.startswith('a') else p|capitalize }}</option>{% endfor %}{% endmacro %}
+    <div class="modal-content print-content">
+      <div class="dlg-head-row"><button class="modal-close formula-copy-btn dlg-x" type="button" aria-label="{{ _('tooltip.close') }}" data-action="close-print">
+        <i data-lucide="x" width="16" height="16"></i>
+      </button></div>
+      <div class="dlg-layout" id="print-layout">
+        <div class="dlg-preview-wrap"><div class="dlg-preview" id="print-preview"></div><div class="pdf-loading" id="pdf-loading" hidden>{{ _('print.compiling') }}</div></div>
+        <div class="dlg-options" id="print-options" data-unit-system="{{ g.unit_system }}">
+          <div class="dlg-side-scroll">
+          <div class="opt-group">
+            <div class="section-label">{{ _('print.layout') }}</div>
+            <div class="view-tabs" id="print-layout-seg"><button type="button" class="view-tab" data-playout="l1"><i data-lucide="book-alert" width="14" height="14"></i> {{ _('print.layout_l1') }}</button><button type="button" class="view-tab active" data-playout="l2"><i data-lucide="notebook-text" width="14" height="14"></i> {{ _('print.layout_l2') }}</button><button type="button" class="view-tab" data-playout="l3"><i data-lucide="playing-cards-fan" width="14" height="14"></i> {{ _('print.layout_l3') }}</button></div>
+          </div>
+          <div class="opt-group">
+            <div class="section-label-row"><div class="section-label">{{ _('print.columns') }}</div><output id="print-cols-val">4</output></div>
+            <div class="opt-slider"><div class="opt-track"></div><div class="opt-fill" id="print-cols-fill"></div><input type="range" id="print-cols" min="1" max="32" step="1" value="4" aria-label="{{ _('print.columns') }}"></div>
+          </div>
+          <div class="opt-group">
+            <div class="section-label-row"><div class="section-label">{{ _('print.rows') }}</div><output id="print-rows-val">16</output></div>
+            <div class="opt-slider"><div class="opt-track"></div><div class="opt-fill" id="print-rows-fill"></div><input type="range" id="print-rows" min="1" max="32" step="1" value="16" aria-label="{{ _('print.rows') }}"></div>
+          </div>
+          <div class="opt-group">
+            <label class="opt-check"><input type="checkbox" id="print-borders" checked><span class="box" aria-hidden="true"></span><span>{{ _('print.borders') }}</span></label>
+          </div>
+          <div class="opt-group">
+            <div class="opt-select-row settings-item"><label class="section-label" for="print-paper">{{ _('print.paper') }}</label><select id="print-paper">{{ paper_opts() }}</select></div>
+          </div>
+          <div class="opt-group">
+            <div class="opt-select-row settings-item"><label class="section-label" for="print-area">{{ _('print.area') }}</label><select id="print-area"><option value="paper">{{ _('print.area_paper') }}</option>{{ paper_opts() }}<option value="custom">{{ _('print.custom') }}</option></select></div>
+          </div>
+          <div class="opt-group" id="print-custom-wrap" hidden>
+            <label class="section-label" for="print-cw">{{ _('print.width_mm') }}</label>
+            <input type="number" id="print-cw" class="text-field" min="10" max="1200" step="1" value="210">
+            <label class="section-label" for="print-ch">{{ _('print.height_mm') }}</label>
+            <input type="number" id="print-ch" class="text-field" min="10" max="1200" step="1" value="297">
+          </div>
+          <div class="opt-group" id="print-fwrap">
+            <div class="section-label-row"><div class="section-label">{{ _('print.formulas') }}</div><div class="filter-buttons"><button class="filter-btn" data-print-collapse="print-flist" type="button" aria-expanded="false" aria-controls="print-flist"><span class="token-section-icon"><i data-lucide="chevron-down" width="16" height="16"></i></span></button></div></div><ul class="print-list" id="print-flist" data-collapsed="1"></ul>
+          </div>
+          <div class="opt-group" id="print-qwrap">
+            <div class="section-label-row"><div class="section-label">{{ _('print.quantities') }}</div><div class="filter-buttons"><button class="filter-btn" id="print-add-all" type="button" title="{{ _('print.add_all') }}"><i data-lucide="check-check" width="16" height="16"></i></button><button class="filter-btn" data-print-collapse="print-qlist" type="button" aria-expanded="false" aria-controls="print-qlist"><span class="token-section-icon"><i data-lucide="chevron-down" width="16" height="16"></i></span></button></div></div><ul class="print-list" id="print-qlist" data-collapsed="1"></ul>
+          </div>
+          </div>
+          <div class="dlg-side-fixed">
+            <button type="button" class="btn-ghost btn-block dlg-preview-toggle" id="dlg-preview-toggle" aria-pressed="false"><i data-lucide="eye" width="14" height="14"></i> {{ _('print.preview') }}</button>
+            <button type="button" class="btn-primary btn-block" data-action="print-now"><i data-lucide="printer" width="14" height="14"></i> {{ _('print.print_now') }}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-overlay" id="shortcuts-modal" role="dialog" aria-modal="true" aria-labelledby="shortcuts-title">
     <div class="modal-content shortcuts-content">
       <button class="modal-close formula-copy-btn" type="button" aria-label="{{ _('tooltip.close') }}" data-action="close-shortcuts">
@@ -529,6 +595,7 @@
   <script defer src="{{ static_v('filters.js') }}"></script>
   <script defer src="{{ static_v('detail.js') }}"></script>
   <script defer src="{{ static_v('app.js') }}"></script>
+  <script defer src="{{ static_v('select.js') }}"></script>
   <script defer src="{{ static_v('shortcuts.js') }}"></script>
 </body>
 </html>

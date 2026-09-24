@@ -5,10 +5,14 @@
   function $(id) { return window.SFUtils.byId(id); }
   function $$(sel, root) { return window.SFUtils.bySel(sel, root); }
   function showToast(message, type) {
+    var kind = type || 'success';
+    var icon = kind === 'error' ? 'circle-alert' : kind === 'info' ? 'info' : 'circle-check';
     var toastEl = document.createElement('div');
-    toastEl.className = 'toast ' + (type || 'success');
-    toastEl.textContent = message;
+    toastEl.className = 'toast ' + kind;
+    toastEl.innerHTML = '<i data-lucide="' + icon + '" width="16" height="16"></i><span></span>';
+    toastEl.querySelector('span').textContent = message;
     $('toast-container').appendChild(toastEl);
+    refreshIcons();
     setTimeout(function() { toastEl.style.opacity = '0'; toastEl.style.transition = 'opacity var(--dur-slow)'; setTimeout(function() { toastEl.remove(); }, 300); }, 4000);
   }
   window.showToast = showToast;
@@ -237,7 +241,8 @@
     if (!url) return;
     var want = url.indexOf('/search') !== -1 ? '' : (isFormulasView() ? 'formulas' : 'quantities');
     $$('.view-tab').forEach(function(t) {
-      t.classList.toggle('active', !!want && (t.getAttribute('href') || '').indexOf(want) !== -1);
+      var tabPath = (t.getAttribute('href') || '').split('?')[0];
+      t.classList.toggle('active', !!want && tabPath.indexOf(want) !== -1);
     });
   }
 
@@ -336,9 +341,8 @@
   }
   window._navigateTo = navigateTo;
 
-  /* Preserve current filter params across SPA link clicks (except q,
-     which only belongs to /search, and list paging, which always
-     restarts from the first chunk); link params win on conflict. */
+  /* Preserve current filter params across SPA link clicks (with exeptions) */
+  var SEL_KEYS = ['selected_formulas', 'selected_quantities', 'select_mode', 'show_selected'];
   function mergeLinkQs(href) {
     var parts = href.split('?');
     var params = new URLSearchParams(window.location.search);
@@ -346,6 +350,7 @@
     window.SFUtils.stripPagingParams(params);
     if (parts[1]) new URLSearchParams(parts[1]).forEach(function(v, k) {
       if (k === 'page' || k === 'per_page') return;
+      if (SEL_KEYS.indexOf(k) !== -1) return;
       params.set(k, v);
     });
     var qs = params.toString();
@@ -353,13 +358,26 @@
   }
 
   /* Address bar untouched, so a reload restarts from chunk one. */
+  function loadMoreHref(btn) {
+    var raw = btn.getAttribute('href');
+    try {
+      var u = new URL(raw, window.location.origin);
+      var cur = new URLSearchParams(window.location.search);
+      SEL_KEYS.forEach(function(k) {
+        var v = cur.get(k);
+        if (v === null) u.searchParams.delete(k);
+        else u.searchParams.set(k, v);
+      });
+      return u.pathname + u.search + u.hash;
+    } catch (e) { return raw; }
+  }
   function loadMoreChunk(btn) {
     if (!btn || btn.dataset.loading) return;
     var more_bar = btn.closest('[data-load-more]');
     var list_container = document.querySelector('[data-list-container]');
     if (!more_bar || !list_container) return;
     btn.dataset.loading = '1';
-    window.SFApi.getText(btn.getAttribute('href')).then(function(html) {
+    window.SFApi.getText(loadMoreHref(btn)).then(function(html) {
       var doc = new DOMParser().parseFromString(html, 'text/html');
       var items = doc.querySelector('[data-list-container]');
       if (items) list_container.insertAdjacentHTML('beforeend', items.innerHTML);
@@ -466,15 +484,15 @@
     ensureTopicTree();
     if (!_topicTree || _topicTreeMode !== 'checkbox') return;
     var url = new URL(window.location);
-    var idsParam = url.searchParams.get('ids');
+    var topicsParam = url.searchParams.get('topics');
     var excludeAll = url.searchParams.get('exclude_all') === '1';
     window._restoringFilters = true;
     try {
       var roots = treeRootNodes();
       roots.forEach(function(node) { _topicTree.checkNode(node, false); });
-      if (excludeAll || idsParam === '') return;
-      if (idsParam === null) roots.forEach(function(node) { _topicTree.checkNode(node, true); });
-      else idsParam.split(',').forEach(function(id) {
+      if (excludeAll || topicsParam === '') return;
+      if (topicsParam === null) roots.forEach(function(node) { _topicTree.checkNode(node, true); });
+      else topicsParam.split(',').forEach(function(id) {
         var node = _topicTree.getNodeById(id);
         if (node) _topicTree.checkNode(node, true);
       });
@@ -502,7 +520,7 @@
     var qr = $('qty-results');
     if (qr) qr.classList.remove('open');
 
-    var dMin = parseInt(url.searchParams.get('diff_min')), dMax = parseInt(url.searchParams.get('diff_max'));
+    var dMin = parseInt(url.searchParams.get('difficulty_min')), dMax = parseInt(url.searchParams.get('difficulty_max'));
     var dMinEl = $('diff-min'), dMaxEl = $('diff-max');
     if (!isNaN(dMin) && dMinEl) dMinEl.value = dMin;
     if (!isNaN(dMax) && dMaxEl) dMaxEl.value = dMax;
@@ -669,7 +687,7 @@
 
   function syncDockPills() {
     var dock = $('mobile-dock');
-    if (!dock || dock.offsetParent === null) return;
+    if (!dock || getComputedStyle(dock).display === 'none') return;
     var view = isFormulasView() ? 'formulas' : 'quantities';
     var onCreate = window.location.pathname === '/create';
     $$('[data-dock-view]', dock).forEach(function(btn) {
@@ -707,6 +725,24 @@
     if (focusAfter && input) input.focus();
   }
   function dockToggleSearch() { topbarEl().classList.contains('expand-search') ? exitSearch() : enterSearch(); }
+  /* Mobile system keyboard dismissal (back button / swipe) */
+  (function() {
+    if (!window.visualViewport) return;
+    var KB_OPEN_PX = 150, KB_SHUT_PX = 40, keyboardOpen = false;
+    window.visualViewport.addEventListener('resize', function() {
+      try {
+        var topbar = topbarEl(), input = searchField();
+        if (!(topbar && topbar.classList.contains('expand-search'))) return;
+        if (!(input && document.activeElement === input)) return;
+        var gap = (window.innerHeight || 0) - window.visualViewport.height;
+        if (gap > KB_OPEN_PX) { keyboardOpen = true; return; }
+        if (keyboardOpen && gap < KB_SHUT_PX) {
+          keyboardOpen = false;
+          exitSearch();
+        }
+      } catch (e) {}
+    });
+  })();
   /* Long-press pills reset their panel: filter clears dim/qty/diff,
      tree selects all, search strips q. Short taps still toggle. */
   (function() {

@@ -43,8 +43,8 @@ def _first(conn, sql, params=()):
 
 @dataclass
 class QuantityFilter:
-    ids: list = field(default_factory=list)
-    ids_provided: bool = False
+    topic_ids: list = field(default_factory=list)
+    topic_ids_provided: bool = False
     exclude_all: bool = False
     quantity_ids: list = field(default_factory=list)
     quantity_mode: str = "and"
@@ -64,10 +64,8 @@ def parse_csv_string(value):
     return [part.strip() for part in value.split(",") if part.strip()]
 
 
-def _parse_mode(value, switched, key):
-    """Resolve an and/or mode, accepting the legacy mode_switched toggle."""
-    if switched:
-        return "or" if key in switched else "and"
+def _parse_mode(value):
+    """Resolve an and/or mode."""
     return value if value in _AND_OR else "and"
 
 
@@ -82,24 +80,22 @@ def _dim_val(args, symbol, ops):
 
 def parse_filter_state(args, conn):
     """Parse query-string args into a QuantityFilter for the list pages."""
-    mode_switched = set(parse_csv_string(args.get("mode_switched", "")))
-
     ops = filter_ops(conn)
     dimension_filter = {s: dict(zip(("op", "val"), _dim_val(args, s, ops)))
                         for s in dimension_symbols(conn)}
 
-    ids_raw = args.get("ids")
+    topics_raw = args.get("topics")
     return QuantityFilter(
-        ids=parse_csv_string(ids_raw) if ids_raw is not None else [],
-        ids_provided=ids_raw is not None,
+        topic_ids=parse_csv_string(topics_raw) if topics_raw is not None else [],
+        topic_ids_provided=topics_raw is not None,
         exclude_all=args.get("exclude_all") == "1",
         quantity_ids=parse_csv_string(args.get("qty", "")),
-        quantity_mode=_parse_mode(args.get("qty_mode", "and"), mode_switched, "fml"),
-        diff_min=parse_int_or(args.get("diff_min"), MIN_DIFFICULTY),
-        diff_max=parse_int_or(args.get("diff_max"), MAX_DIFFICULTY),
+        quantity_mode=_parse_mode(args.get("qty_mode", "and")),
+        diff_min=parse_int_or(args.get("difficulty_min"), MIN_DIFFICULTY),
+        diff_max=parse_int_or(args.get("difficulty_max"), MAX_DIFFICULTY),
         dimension_filter=dimension_filter,
-        dim_mode=_parse_mode(args.get("dim_mode", "and"), mode_switched, "dim"),
-        base_quantity_only=args.get("is_dim") == "1",
+        dim_mode=_parse_mode(args.get("dim_mode", "and")),
+        base_quantity_only=args.get("base_only") == "1",
     )
 
 
