@@ -188,7 +188,7 @@
     try {
       var fit = el.classList.contains('const-value');
       katex.render(src, el, {
-        displayMode: el.classList.contains('formula-eqn'),
+        displayMode: el.classList.contains('formula-eqn') || el.getAttribute('data-display') === '1',
         throwOnError: false,
         macros: window._KATEX_MACROS || {},
         strict: fit ? false : undefined,
@@ -234,6 +234,7 @@
     renderMathInContent();
     refreshIcons();
     restoreAllFromUrl();
+    try { if (window.SFSelection) window.SFSelection.syncFromUrl(); } catch (e) {}
     updateOverflowPadding();
     updateDimNameFits();
     syncDockPills();
@@ -341,16 +342,20 @@
   }
   window._navigateTo = navigateTo;
 
-  /* Preserve current filter params across SPA link clicks (with exeptions) */
-  var SEL_KEYS = ['selected_formulas', 'selected_quantities', 'select_mode', 'show_selected'];
+  // ?sel= IS the selection store: it propagates to every same-origin view
+  // (detail pages included) so copy-URL always shares. show_selected only
+  // applies to list views.
+  var SEL_VIEW_KEYS = ['sel', 'show_selected'];
+  function isListTarget(path) { return path === '/formulas' || path === '/quantities'; }
   function mergeLinkQs(href) {
     var parts = href.split('?');
     var params = new URLSearchParams(window.location.search);
     window.SFUtils.stripSearchParam(params, false);
     window.SFUtils.stripPagingParams(params);
+    if (!isListTarget(parts[0])) params.delete('show_selected');
     if (parts[1]) new URLSearchParams(parts[1]).forEach(function(v, k) {
       if (k === 'page' || k === 'per_page') return;
-      if (SEL_KEYS.indexOf(k) !== -1) return;
+      if (k === 'show_selected' && !isListTarget(parts[0])) return;
       params.set(k, v);
     });
     var qs = params.toString();
@@ -363,7 +368,8 @@
     try {
       var u = new URL(raw, window.location.origin);
       var cur = new URLSearchParams(window.location.search);
-      SEL_KEYS.forEach(function(k) {
+      // Same-view pagination keeps ?sel=/show_selected (?sel= is the store).
+      SEL_VIEW_KEYS.forEach(function(k) {
         var v = cur.get(k);
         if (v === null) u.searchParams.delete(k);
         else u.searchParams.set(k, v);

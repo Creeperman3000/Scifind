@@ -9,9 +9,7 @@ import os
 import re
 import secrets
 import sqlite3
-import subprocess
 import sys
-import tempfile
 import time
 
 from collections import deque
@@ -35,10 +33,19 @@ from scifind_lib.db import (
 )
 from scifind_lib.formula import (
     build_dimension_symbol_triplet,
+    compute_all_formula_dimensions,
+    compute_formula_dimensions,
+    constant_dimensions,
+    dimension_columns,
+    dimension_matches,
     dimension_quantity_ids,
     dimension_symbols,
+    dimensions_from_row,
     format_dimensions_latex,
+    parse_and_preview_equation,
+    render_formula_latex,
     render_formulas_latex_batched,
+    render_tokens_latex,
 )
 from scifind_lib.i18n import load_locale_config, localise, locale_sibilants, wrap_symbol_in_latex
 from scifind_lib.fetch import (
@@ -51,12 +58,33 @@ from scifind_lib.fetch import (
     QUANTITY_SORT_KEYS,
     QuantityFilter,
     SEARCH_SORT_KEYS,
+    fetch_all_constants,
+    fetch_all_formulas,
+    fetch_all_operators,
     fetch_all_quantities,
+    fetch_constant,
+    fetch_constant_formulas,
+    fetch_detail_items,
+    fetch_formula,
+    fetch_formula_relations,
+    fetch_formula_token_quantities,
     fetch_formulas_filtered,
+    fetch_formulas_with_quantities,
     fetch_quantities_by_ids,
     fetch_quantities_filtered,
+    fetch_quantity,
+    fetch_quantity_constants,
+    fetch_quantity_formulas_by_side,
+    fetch_quantity_related_formulas,
+    fetch_quantity_units,
+    fetch_search_meta,
+    fetch_unit,
     normalize_sort,
     parse_filter_state,
+    search_entities,
+    sort_formulas,
+    sort_quantities,
+    sort_search_rows,
 )
 from scifind_lib.tree import (
     build_tree_indices,
@@ -70,16 +98,6 @@ from scifind_lib.tree import (
 )
 from scifind_lib.constants import SUPERSCRIPT_DIGITS
 from scifind_lib.conversion import UnitGraph, convert_value, validate_graph
-from scifind_lib.formula import (
-    compute_all_formula_dimensions,
-    compute_formula_dimensions,
-    constant_dimensions,
-    dimension_columns,
-    dimension_matches,
-    dimensions_from_row,
-    parse_and_preview_equation,
-    render_formula_latex,
-)
 from scifind_lib.display import (
     expand_quantity_markers,
     marker_ids_in,
@@ -95,38 +113,28 @@ from scifind_lib.export import (
     build_formula_insert_sql,
     export_payload,
 )
-from scifind_lib.fetch import (
-    fetch_all_constants,
-    fetch_all_formulas,
-    fetch_all_operators,
-    fetch_constant,
-    fetch_constant_formulas,
-    fetch_detail_items,
-    fetch_formula,
-    fetch_formula_relations,
-    fetch_formula_token_quantities,
-    fetch_formulas_with_quantities,
-    fetch_quantity,
-    fetch_quantity_constants,
-    fetch_quantity_formulas_by_side,
-    fetch_quantity_related_formulas,
-    fetch_quantity_units,
-    fetch_search_meta,
-    fetch_unit,
-    search_entities,
-    sort_formulas,
-    sort_quantities,
-    sort_search_rows,
-)
-from scifind_lib.print_tex import PAPERS_MM, build_print_tex
 from scifind_lib.units import (
     parse_compound_unit,
     resolve_base_unit,
     resolve_constant_base,
+    select_base_unit,
     select_base_units_batched,
 )
 from scifind_lib.operators import operand_info, render_template as render_op_template
-from scifind_lib.parser import check_equation_length, parse_bracket_keys
+from scifind_lib.parser import (
+    check_equation_length,
+    parse_bracket_keys,
+    parse_equation,
+    quantity_token_key,
+    reduce_rpn_to_tree,
+)
+from scifind_lib.selection import (
+    compact_to_token_dicts,
+    decode_selection,
+    encode_selection,
+    normalize_selection_payload,
+    token_dicts_to_compact,
+)
 
 app = Flask(
     __name__,
@@ -940,10 +948,10 @@ def _safe_dims(conn, fn, *args):
 def _with_latex(conn, rows, locale, id_key="id"):
     """Attach rendered formula latex to each row dict (batched, 3 queries)."""
     annotated = [dict(r) for r in rows]
-    ids = [r.get(id_key) for r in annotated if r.get(id_key)]
+    ids = [r.get(id_key) for r in annotated if r.get(id_key) and not r.get("latex")]
     latex_map = render_formulas_latex_batched(conn, ids, locale=locale) if ids else {}
     for r in annotated:
-        r["latex"] = latex_map.get(r.get(id_key), "") or ""
+        r["latex"] = latex_map.get(r.get(id_key), "") or r.get("latex") or ""
     return annotated
 
 
@@ -1217,25 +1225,90 @@ def _page_batch(rows, locale, tree):
     return page_items, pagination
 
 
-_SEL_ID_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,80}$")
+def _json_body(*, force=False):
+    try:
+        body = request.get_json(silent=True, force=force)
+    except Exception:
+        return None
+    return body if isinstance(body, dict) else None
 
-_FETCH_COLS = {"formula": "id, name", "quantity": "id, name, symbol"}
+
+def _selection_payload_from_request():
+    sel_token = (request.args.get("sel") or "").strip()
+    if sel_token:
+        try:
+            return normalize_selection_payload(decode_selection(sel_token))
+        except ValueError:
+            pass
+    return normalize_selection_payload({})
 
 
-def _sel_ids(value, limit=500):
-    vals = value.split(",") if isinstance(value, str) else value
-    if not isinstance(vals, (list, tuple)):
-        return []
-    return list(dict.fromkeys(
-        s for v in vals if (s := v.strip() if isinstance(v, str) else "") and _SEL_ID_RE.match(s)))[:limit]
+def _active_ids(payload, key, off_key):
+    off = payload.get(off_key) or {}
+    return [i for i in payload.get(key, []) if i not in off]
 
 
 def _show_ids(name):
-    return _sel_ids(request.args.get(name)), request.args.get("show_selected") == "1" and name in request.args
+    payload = _selection_payload_from_request()
+    is_formulas = name == "selected_formulas"
+    ids = _active_ids(payload, "f" if is_formulas else "q", "off" if is_formulas else "qoff")
+    off_key, custom_key = ("off", "cf") if is_formulas else ("qoff", "cq")
+    has_custom = any(c.get("i") not in (payload.get(off_key) or {}) for c in payload.get(custom_key, []))
+    show_only = request.args.get("show_selected") == "1" and (
+        "sel" in request.args and bool(ids or has_custom))
+    return ids, show_only, payload
 
 
-def _show_only_heading(total):
-    return f"{_('select.show_selected_only')} ({total})"
+def _formula_entry(conn, sid, snap, locale):
+    """Render one compact formula snapshot to a display entry (None if invalid)."""
+    name = (snap.get("n") or "").strip() or sid
+    tokens = compact_to_token_dicts(snap.get("t") or [])
+    if not tokens:
+        return None
+    try:
+        latex = render_tokens_latex(conn, tokens, locale=locale)
+    except Exception:
+        return None
+    return {"id": sid, "name": name, "latex": latex} if latex else None
+
+
+def _quantity_entry(sid, snap):
+    """Render one compact quantity snapshot to a display entry (None if invalid)."""
+    name = (snap.get("n") or "").strip() or sid
+    return {"id": sid, "name": name, "symbol": snap.get("s") or "",
+            "unit_latex": wrap_symbol_in_latex(snap.get("u") or "")}
+
+
+def _custom_entries(conn, payload, locale, kind):
+    """(customs, modified) display entries for kind 'f' (fo/cf) or 'q' (qo/cq)."""
+    id_key, over_key, custom_key = ("f", "fo", "cf") if kind == "f" else ("q", "qo", "cq")
+    wanted = set(payload.get(id_key) or []) | {c.get("i") for c in payload.get(custom_key) or []}
+    customs, modified, seen = [], {}, set()
+    for item in payload.get(custom_key, []):
+        sid = item.get("i")
+        if not sid or sid in seen or sid not in wanted:
+            continue
+        seen.add(sid)
+        entry = (_formula_entry(conn, sid, item, locale) if kind == "f"
+                 else _quantity_entry(sid, item))
+        if entry is not None:
+            customs.append(entry)
+    for sid, snap in (payload.get(over_key) or {}).items():
+        if sid not in wanted or sid in modified:
+            continue
+        entry = (_formula_entry(conn, sid, snap, locale) if kind == "f"
+                 else _quantity_entry(sid, snap))
+        if entry is not None:
+            modified[sid] = entry
+    return customs, modified
+
+
+def _custom_formula_entries(conn, payload, locale):
+    return _custom_entries(conn, payload, locale, "f")
+
+
+def _custom_quantity_entries(conn, payload, locale):
+    return _custom_entries(conn, payload, locale, "q")
 
 
 def _order_by_ids(rows, ids):
@@ -1243,33 +1316,31 @@ def _order_by_ids(rows, ids):
     return [by_id[i] for i in ids if i in by_id]
 
 
-def _fetch_by_ids(conn, table, ids, extra=""):
-    if not ids or table not in _FETCH_COLS:
+def _fetch_by_ids(conn, table, ids):
+    if not ids:
         return []
-    rows = conn.execute(
-        f"SELECT {_FETCH_COLS[table]} FROM {table} WHERE id IN ({','.join('?' for _ in ids)}){extra}", ids)
+    marks = ",".join("?" for _ in ids)
+    extra = " AND hidden = 0" if table == "quantity" else ""
+    cols = "id, name, symbol" if table == "quantity" else "id, name"
+    rows = conn.execute(f"SELECT {cols} FROM {table} WHERE id IN ({marks}){extra}", ids)
     return _order_by_ids([dict(r) for r in rows], ids)
 
 
 def _enrich_quantities(conn, rows, locale, system):
     rows = [dict(r) for r in rows]
     base_map = select_base_units_batched(conn, [q["id"] for q in rows], system)
-    for q in rows:
-        q["unit_latex"] = render_compound_unit(base_map.get(q["id"]), locale)[1]
+    for quantity_row in rows:
+        quantity_row["unit_latex"] = render_compound_unit(base_map.get(quantity_row["id"]), locale)[1]
     return rows
 
 
 def _selection_payload(conn, f_ids, q_ids, locale, system):
     return (_with_latex(conn, _fetch_by_ids(conn, "formula", f_ids), locale),
-            _enrich_quantities(conn, _fetch_by_ids(conn, "quantity", q_ids, " AND hidden = 0"), locale, system))
+            _enrich_quantities(conn, _fetch_by_ids(conn, "quantity", q_ids), locale, system))
 
 
 def _loc_name(item, locale):
     return localise(item.get("name"), locale) or item["id"]
-
-
-def _formula_dict(formula, locale):
-    return {"id": formula["id"], "name": _loc_name(formula, locale), "latex": formula.get("latex") or ""}
 
 
 def _quantity_row(row, locale):
@@ -1318,19 +1389,41 @@ def all_quantities():
 
     system = g.unit_system
     filtered = _filtered_quantities(conn, fs, topic_filter)
-    qsel, show_only = _show_ids("selected_quantities")
-    filtered = _order_by_ids([dict(r) for r in fetch_all_quantities(conn)], qsel) if show_only \
-        else sort_quantities(conn, filtered, sort_key, locale)
+    qsel, show_only, payload = _show_ids("selected_quantities")
+    if show_only:
+        qoff = payload.get("qoff") or {}
+        qcustoms, qmodified = _custom_quantity_entries(conn, payload, locale)
+        customs = [c for c in qcustoms if c["id"] not in qoff]
+        filtered = _order_by_ids([dict(r) for r in fetch_all_quantities(conn)], qsel)
+        for row in filtered:
+            if row.get("id") in qmodified:
+                m = qmodified[row["id"]]
+                row["name"] = m["name"]
+                row["symbol"] = m["symbol"]
+                row["_snapshot_unit_latex"] = m.get("unit_latex") or ""
+        filtered = filtered + [
+            {"id": c["id"], "name": c["name"], "symbol": c["symbol"],
+             "_snapshot_unit_latex": c.get("unit_latex") or ""}
+            for c in customs if c["id"] not in {r["id"] for r in filtered}]
+    else:
+        filtered = sort_quantities(conn, filtered, sort_key, locale)
     page_items, pagination = _page_batch(filtered, locale, tree)
-    base_map = select_base_units_batched(conn, [q["id"] for q in page_items], system)
+    # Snapshot rows carry their own unit (via _snapshot_unit_latex);
+    # only DB rows resolve a base unit.
+    base_map = select_base_units_batched(
+        conn, [q["id"] for q in page_items if "_snapshot_unit_latex" not in q], system)
     for quantity in page_items:
+        if "_snapshot_unit_latex" in quantity:
+            quantity["default_unit_symbol_latex"] = quantity.pop("_snapshot_unit_latex")
+            quantity.setdefault("default_unit_html", Markup(""))
+            continue
         quantity["default_unit_html"], quantity["default_unit_symbol_latex"] = render_compound_unit(
             base_map.get(quantity["id"]), locale)
 
     heading = _("detail.base_quantities") if fs.base_quantity_only else _heading_from_compressed(
         _("detail.quantities"), compressed, tree, locale, fs, conn)
     if show_only:
-        heading = _show_only_heading(len(filtered))
+        heading = f"{_('select.show_selected_only')} ({len(filtered)})"
     return render_template(
         "quantities.html",
         quantities=page_items,
@@ -1354,15 +1447,26 @@ def all_formulas():
 
     formulas = _filtered_formulas(conn, fs, topic_filter)
 
-    sel, show_only = _show_ids("selected_formulas")
-    formulas = _order_by_ids([dict(r) for r in fetch_all_formulas(conn)], sel) if show_only \
-        else sort_formulas(conn, formulas, sort_key, locale)
+    sel, show_only, payload = _show_ids("selected_formulas")
+    if show_only:
+        customs, modified = _custom_formula_entries(conn, payload, locale)
+        off = payload.get("off") or {}
+        customs = [c for c in customs if c["id"] not in off]
+        formulas = _order_by_ids([dict(r) for r in fetch_all_formulas(conn)], sel)
+        formulas = formulas + [c for c in customs if c["id"] not in {r["id"] for r in formulas}]
+    else:
+        customs, modified = [], {}
+        formulas = sort_formulas(conn, formulas, sort_key, locale)
     page_items, pagination = _page_batch(formulas, locale, tree)
     page_items = _with_latex(conn, page_items, locale)
+    for row in page_items:
+        if row.get("id") in modified:
+            row["name"] = modified[row["id"]]["name"]
+            row["latex"] = modified[row["id"]]["latex"]
 
     heading = _heading_from_compressed(_("nav.formulas"), compressed, tree, locale, fs, conn)
     if show_only:
-        heading = _show_only_heading(len(formulas))
+        heading = f"{_('select.show_selected_only')} ({len(formulas)})"
     return render_template(
         "formulas.html",
         formulas=page_items,
@@ -1391,31 +1495,259 @@ def export():
     return resp
 
 
-@app.route("/api/selection-preview")
+@app.route("/api/selection-preview", methods=["GET", "POST"])
 def selection_preview():
+    """Print-dialog data for a selection payload."""
     conn = get_db()
     locale = getattr(g, "locale", DEFAULT_LOCALE)
     system = g.unit_system
-    f_ids = _sel_ids(request.args.get("selected_formulas"))
-    q_ids = _sel_ids(request.args.get("selected_quantities"))
+    payload = None
+    if request.method == "POST":
+        body = _json_body()
+        if body is not None:
+            if isinstance(body.get("sel"), str) and body.get("sel"):
+                try:
+                    payload = decode_selection(body["sel"])
+                except ValueError:
+                    # Bad token: reuse inline body, never unrelated query args.
+                    payload = normalize_selection_payload(body)
+            elif body:
+                payload = normalize_selection_payload(body)
+    if payload is None:
+        payload = _selection_payload_from_request()
+    f_ids = _active_ids(payload, "f", "off")
+    q_ids = _active_ids(payload, "q", "qoff")
 
     formulas, q_rows = _selection_payload(conn, f_ids, q_ids, locale, system)
+    customs, modified = _custom_formula_entries(conn, payload, locale)
+    qcustoms, qmodified = _custom_quantity_entries(conn, payload, locale)
+    for row in q_rows:
+        if row.get("id") in qmodified:
+            m = qmodified[row["id"]]
+            row["name"] = m["name"]
+            row["symbol"] = m["symbol"]
+            row["unit_latex"] = m.get("unit_latex") or ""
+    active_customs = [c for c in customs if c["id"] not in (payload.get("off") or {})]
+    for formula in formulas:
+        if formula.get("id") in modified:
+            formula["latex"] = modified[formula["id"]]["latex"]
+            formula["name"] = modified[formula["id"]]["name"]
+    formulas = formulas + [c for c in active_customs
+                            if c["id"] not in {f["id"] for f in formulas}]
+    db_qids = {r["id"] for r in q_rows}
+    custom_quantities = [c for c in qcustoms
+                         if c["id"] not in (payload.get("qoff") or {})
+                         and c["id"] not in db_qids]
 
-    new = []
+    new_quantities = []
     if f_ids:
         marks = ",".join("?" for _ in f_ids)
-        seen = [dict(r) for r in conn.execute(
+        seen_rows = [dict(r) for r in conn.execute(
             "SELECT DISTINCT q.id, q.name, q.symbol FROM formula_token ft"
             f" JOIN quantity q ON q.id = ft.quantity_id WHERE ft.formula_id IN ({marks}) AND q.hidden = 0", f_ids)]
-        qset = set(q_ids)
-        new = sorted((r for r in _enrich_quantities(conn, seen, locale, system) if r["id"] not in qset),
-                     key=lambda r: _loc_name(r, locale))
+        qset = set(q_ids) | {c["id"] for c in custom_quantities}
+        new_quantities = sorted(
+            (r for r in _enrich_quantities(conn, seen_rows, locale, system) if r["id"] not in qset),
+            key=lambda r: _loc_name(r, locale))
 
     return _json_cached({
-        "formulas": [_formula_dict(f, locale) for f in formulas],
+        "formulas": [{"id": f["id"], "name": _loc_name(f, locale), "latex": f.get("latex") or ""} for f in formulas],
         "quantities": [_quantity_row(r, locale) for r in q_rows],
-        "in_formula_new": [_quantity_row(r, locale) for r in new],
+        "custom_quantities": [_quantity_row(r, locale) for r in custom_quantities],
+        "in_formula_new": [_quantity_row(r, locale) for r in new_quantities],
     }, 60)
+
+
+@app.route("/api/selection-share", methods=["POST"])
+def selection_share():
+    """Mint a ``sel`` share token from a selection payload."""
+    body = _json_body(force=True)
+    if body is None:
+        return {"error": _err("error.params_required")}, 400
+    try:
+        token = encode_selection(body)
+    except ValueError as exc:
+        return {"error": str(exc)[:200]}, 400
+    return _json_cached({"sel": token}, 60)
+
+
+@app.route("/api/selection-resolve", methods=["GET", "POST"])
+def selection_resolve():
+    """Decode a ``sel`` token back to a normalized payload."""
+    token = ""
+    if request.method == "POST":
+        body = _json_body()
+        if body is not None:
+            token = (body.get("sel") or "").strip()
+    if not token:
+        token = (request.args.get("sel") or "").strip()
+    try:
+        payload = decode_selection(token)
+    except ValueError as exc:
+        return {"error": str(exc)[:200]}, 400
+    return _json_cached(payload, 60)
+
+
+def _equation_overrides():
+    """Per-occurrence {key: {symbol, name}} overrides from the JSON body."""
+    body = _json_body() or {}
+    overrides = body.get("overrides")
+    if isinstance(overrides, dict):
+        return {k: v for k, v in overrides.items() if isinstance(v, dict)}
+    return {}
+
+
+def _node_to_equation(node):
+    """FormulaNode tree -> parseable equation string (fully parenthesised)."""
+    if node.kind == "quantity":
+        lab = node.label or ""
+        if lab and "]" not in lab and "[" not in lab:
+            return f"{node.quantity_id}[{lab}]"
+        return node.quantity_id
+    if node.kind == "constant":
+        return node.constant_id
+    if node.kind == "number":
+        return repr(node.value)
+    oid = node.operator_id
+    kids = [_node_to_equation(c) for c in node.children]
+    if node.fixity == "prefix":
+        return f"({oid} {' '.join(kids)})"
+    if node.fixity == "postfix":
+        return f"({kids[0]} {oid})"
+    return f"({' '.join([kids[0]] + [x for pair in zip([oid] * (len(kids) - 1), kids[1:]) for x in pair])})"
+
+
+def _db_formula_token_dicts(conn, formula_id, locale):
+    """DB token rows -> RPN token dicts with plain-string overwrites."""
+    rows = conn.execute(
+        "SELECT * FROM formula_token WHERE formula_id = ? ORDER BY position",
+        (formula_id,)).fetchall()
+    out = []
+    for r in rows:
+        kind = r["token_kind"]
+        if kind == "quantity":
+            entry = {"token_kind": "quantity", "quantity_id": r["quantity_id"]}
+            if sym := localise(r["symbol_overwrite"] or "", locale):
+                entry["symbol_overwrite"] = sym
+            if nam := localise(r["name_overwrite"] or "", locale):
+                entry["name_overwrite"] = nam
+            out.append(entry)
+        elif kind == "constant":
+            out.append({"token_kind": "constant", "constant_id": r["constant_id"]})
+        elif kind == "number":
+            out.append({"token_kind": "number", "value": r["value"]})
+        elif kind == "operator":
+            out.append({"token_kind": "operator", "operator_id": r["operator_id"]})
+    return out
+
+
+def _formula_variables(conn, tokens, locale):
+    """Override-table rows for quantity tokens (mirrors /create preview keys)."""
+    ids = [t["quantity_id"] for t in tokens if t.get("token_kind") == "quantity"]
+    by_id = {}
+    if ids:
+        marks = ",".join("?" for _ in ids)
+        for r in conn.execute(
+                f"SELECT id, name, symbol FROM quantity WHERE id IN ({marks})", ids):
+            by_id[r["id"]] = dict(r)
+    variables = []
+    for pos, tok in enumerate(tokens, start=1):
+        if tok.get("token_kind") != "quantity":
+            continue
+        qid = tok["quantity_id"]
+        row = by_id.get(qid)
+        if row is None:
+            continue
+        variables.append({
+            "key": quantity_token_key(qid, tok.get("label"), pos),
+            "id": qid, "alias": tok.get("label") or "",
+            "symbol": row.get("symbol") or "",
+            "name": localise(row.get("name"), locale) or qid,
+            "symbol_overwrite": tok.get("symbol_overwrite") or "",
+            "name_overwrite": tok.get("name_overwrite") or "",
+        })
+    return variables
+
+
+def _apply_parse_overrides(tokens, overrides):
+    for pos, tok in enumerate(tokens, start=1):
+        if tok.get("token_kind") != "quantity":
+            continue
+        ov = (overrides or {}).get(quantity_token_key(tok.get("quantity_id"), tok.get("label"), pos)) or {}
+        if ov.get("symbol"):
+            tok["symbol_overwrite"] = ov["symbol"]
+        if ov.get("name"):
+            tok["name_overwrite"] = ov["name"]
+
+
+@app.route("/api/formula-tokens")
+def formula_tokens():
+    """Compact tokens + reconstructed equation for one DB formula (edit prefill)."""
+    sid = (request.args.get("id") or "").strip()[:80]
+    if not sid:
+        return {"error": _err("error.params_required")}, 400
+    conn = get_db()
+    locale = getattr(g, "locale", DEFAULT_LOCALE)
+    row = fetch_formula(conn, sid)
+    if row is None:
+        return {"error": _err("error.not_found")}, 404
+    tokens = _db_formula_token_dicts(conn, sid, locale)
+    if not tokens:
+        return {"error": _err("error.not_found")}, 404
+    try:
+        equation = _node_to_equation(reduce_rpn_to_tree(conn, tokens))
+    except ValueError as exc:
+        return {"error": str(exc)[:200]}, 400
+    return _json_cached({"id": sid, "name": localise(row["name"], locale) or sid,
+                         "equation": equation,
+                         "tokens": token_dicts_to_compact(tokens),
+                         "variables": _formula_variables(conn, tokens, locale)}, 3600)
+
+
+@app.route("/api/formula-parse", methods=["POST"])
+def formula_parse():
+    """Parse equation + overwrites -> latex + compact tokens (custom preview)."""
+    body = _json_body() or {}
+    equation = body.get("equation") or ""
+    if error := check_equation_length(equation, CREATE_EQUATION_MAX_LENGTH)[1]:
+        return {"error": error}, 400
+    conn = get_db()
+    locale = getattr(g, "locale", DEFAULT_LOCALE)
+    try:
+        tokens = parse_equation(conn, equation)
+    except ValueError as exc:
+        return {"error": str(exc)[:200]}, 400
+    if not tokens:
+        return {"error": _err("error.params_required")}, 400
+    _apply_parse_overrides(tokens, _equation_overrides())
+    try:
+        latex = render_tokens_latex(conn, tokens, locale=locale)
+    except Exception as exc:
+        return {"error": str(exc)[:200]}, 400
+    if not latex:
+        return {"error": _err("error.not_found")}, 400
+    return _json_cached({"latex": latex, "tokens": token_dicts_to_compact(tokens),
+                         "variables": _formula_variables(conn, tokens, locale)}, 60)
+
+
+@app.route("/api/quantity-fields")
+def quantity_fields():
+    """Name/symbol/unit strings for one DB quantity (edit prefill)."""
+    sid = (request.args.get("id") or "").strip()[:80]
+    if not sid:
+        return {"error": _err("error.params_required")}, 400
+    conn = get_db()
+    locale = getattr(g, "locale", DEFAULT_LOCALE)
+    row = fetch_quantity(conn, sid)
+    if row is None:
+        return {"error": _err("error.not_found")}, 404
+    unit = ""
+    base = select_base_unit(conn, sid, getattr(g, "unit_system", None) or "SI")
+    if base is not None:
+        unit = base.get("symbol") or "" if base.get("kind") != "compound_unit" \
+            else base.get("symbol_overwrite") or ""
+    return _json_cached({"id": sid, "name": localise(row["name"], locale) or sid,
+                         "symbol": row["symbol"] or "", "unit": unit}, 3600)
 
 
 @app.route("/api/filter-ids")
@@ -1427,75 +1759,15 @@ def filter_ids():
         conn, fs, tree, compressed, sort_key, topic_filter = _list_base(
             request.args, FORMULA_SORT_KEYS, DEFAULT_FORMULA_SORT)
         rows = sort_formulas(conn, _filtered_formulas(conn, fs, topic_filter), sort_key, locale)
-        ids = [f["id"] for f in rows[:500]]
+        ids = [f["id"] for f in rows]
     elif view == "quantities":
         conn, fs, tree, compressed, sort_key, topic_filter = _list_base(
             request.args, QUANTITY_SORT_KEYS, DEFAULT_QUANTITY_SORT)
         rows = sort_quantities(conn, _filtered_quantities(conn, fs, topic_filter), sort_key, locale)
-        ids = [q["id"] for q in rows[:500]]
+        ids = [q["id"] for q in rows]
     else:
         return {"error": _err("error.params_required")}, 400
     return _json_cached({"ids": ids}, 60)
-
-
-def _clamp_num(value, default, lo, hi, cast=float):
-    try:
-        return max(lo, min(hi, cast(value)))
-    except (TypeError, ValueError):
-        return default
-
-
-@app.route("/api/print-pdf", methods=["POST"])
-def print_pdf():
-    limited = _rate_limit(f"printpdf:{request.remote_addr or 'anon'}", 12)
-    if limited is not None:
-        return limited
-    payload = request.get_json(force=True, silent=True)
-    if not isinstance(payload, dict):
-        return {"error": _err("error.params_required")}, 400
-    conn = get_db()
-    locale = getattr(g, "locale", DEFAULT_LOCALE)
-    system = g.unit_system
-    f_ids = _sel_ids(payload.get("selected_formulas"))
-    q_ids = _sel_ids(payload.get("selected_quantities"))
-    if not f_ids and not q_ids:
-        return {"error": _err("print.empty")}, 400
-    if len(f_ids) + len(q_ids) > 500:
-        return {"error": _err("print.failed")}, 400
-    layout = payload.get("layout") if payload.get("layout") in ("l1", "l2", "l3") else "l2"
-    cols = _clamp_num(payload.get("cols", 4), 4, 1, 32, int)
-    rows = _clamp_num(payload.get("rows", 16), 16, 1, 32, int)
-    borders_raw = payload.get("borders", True)
-    borders = str(borders_raw).lower() in ("1", "true", "yes", "on") if isinstance(borders_raw, str) else bool(borders_raw)
-    paper = payload.get("paper") if payload.get("paper") in PAPERS_MM else ("letter" if system == "Imperial" else "a4")
-    area = payload.get("area") if payload.get("area") in (*PAPERS_MM, "custom", "paper") else "paper"
-    pw, ph = PAPERS_MM[paper]
-    area_w, area_h = ((_clamp_num(payload.get("cw"), pw, 10.0, 1200.0), _clamp_num(payload.get("ch"), ph, 10.0, 1200.0)) if area == "custom" else PAPERS_MM.get(area, (pw, ph)))
-
-    formulas, q_rows = _selection_payload(conn, f_ids, q_ids, locale, system)
-    if not formulas and not q_rows:
-        return {"error": _err("print.empty")}, 400
-    tex = build_print_tex([_formula_dict(f, locale) for f in formulas], [_quantity_row(r, locale) for r in q_rows],
-                          layout=layout, cols=cols, rows=rows, borders=borders, paper=paper, area_w=area_w, area_h=area_h)
-    try:
-        pdf = _compile_tex(tex)
-    except Exception as exc:
-        logger.warning("print-pdf compile failed: %s", exc)
-        return {"error": _err("print.failed")}, 500
-    return Response(pdf, mimetype="application/pdf",
-                    headers={"Content-Disposition": 'inline; filename="scifind-print.pdf"'})
-
-
-def _compile_tex(tex):
-    with tempfile.TemporaryDirectory(prefix="scifind-print-") as tmp:
-        Path(tmp, "doc.tex").write_text(tex, encoding="utf-8")
-        proc = subprocess.run(["xelatex", "-interaction=nonstopmode", "-halt-on-error",
-                               "-no-shell-escape", "doc.tex"],
-                              cwd=tmp, capture_output=True, timeout=60)
-        pdf = Path(tmp, "doc.pdf")
-        if proc.returncode or not pdf.exists():
-            raise RuntimeError("xelatex failed rc=%s" % proc.returncode)
-        return pdf.read_bytes()
 
 
 @app.route("/create")

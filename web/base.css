@@ -203,7 +203,8 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-
 
 /* ---- 5. Topbar + search ---- */
 .topbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
   align-items: center;
   padding: 0 12px;
   border-bottom: 1px solid var(--border);
@@ -213,8 +214,8 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-
   flex-shrink: 0;
   gap: 8px;
 }
-.topbar-left { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.topbar-right { display: flex; align-items: center; gap: 4px; flex-shrink: 0; margin-left: auto; }
+.topbar-left { display: flex; align-items: center; gap: 8px; min-width: 0; grid-column: 1; justify-self: start; max-width: 100%; }
+.topbar-right { display: flex; align-items: center; gap: 4px; min-width: 0; grid-column: 3; justify-self: end; max-width: 100%; }
 
 /* Shared icon-button base: topbar, filter, copy, sort-caret, search-cancel. */
 :is(.topbar-btn, .filter-btn, .formula-copy-btn, .units-sort-btn, .si-caret-btn, .search-cancel) {
@@ -244,13 +245,14 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-
   font-weight: 700;
   font-size: 1.1rem;
   color: var(--text);
-  flex-shrink: 0;
+  flex-shrink: 1;
+  min-width: 0;
 }
 .topbar-logo svg { stroke: var(--accent); flex-shrink: 0; }
 .topbar-logo .logo-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.topbar-search { flex: 1 1 0; min-width: 0; display: flex; justify-content: center; }
-.topbar-search form { width: 100%; max-width: 500px; }
+.topbar-search { min-width: 0; width: 100%; max-width: 100%; grid-column: 2; justify-self: center; display: flex; justify-content: center; }
+.topbar-search form { width: 100%; max-width: 450px; min-width: 0; margin-inline: auto; }
 .search-input-wrap { position: relative; display: flex; align-items: center; }
 .topbar-search input {
   flex: 1;
@@ -315,9 +317,10 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-
 .formula-copy-menu button:hover { background: var(--bg-secondary); }
 .search-suggestion .ss-kind { margin-left: auto; padding-left: 12px; font-size: var(--fs-xs); color: var(--text-secondary); }
 
+.topbar.expand-search { grid-template-columns: minmax(0, 1fr); }
 .topbar.expand-search .topbar-left { display: none; }
 .topbar.expand-search .topbar-right { display: none; }
-.topbar.expand-search .topbar-search { display: flex; }
+.topbar.expand-search .topbar-search { display: flex; grid-column: 1; max-width: none; }
 .topbar.expand-search .topbar-search form { flex: 1; max-width: none; }
 
 /* ---- 6. App layout: sidebars + main ---- */
@@ -825,7 +828,15 @@ html.suppress-transitions .sidebar { transition: none !important; }
 .modal-content > #modal-title, .modal-content > #shortcuts-title { flex-shrink: 0; margin: 0 0 12px; }
 .modal-content > #modal-step, .modal-content > .modal-body { flex: 1; overflow-y: auto; min-height: 0; }
 .modal-content > .modal-footer { flex-shrink: 0; margin-top: 16px; }
-.modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; align-items: center; }
+.modal-actions a.btn-primary:hover, .modal-actions a.btn-ghost:hover { text-decoration: none; }
+
+/* Shared dialog form stack: /create translate dialog + print edit dialog. */
+.translate-form { display: flex; flex-direction: column; gap: 12px; }
+.translate-form > .detail-desc { margin: 0; padding: 0; }
+.tr-label-row { display: flex; align-items: center; gap: 6px; }
+.tr-label-row .filter-btn { margin-left: auto; }
+.var-table .qty-symbol { display: inline-block; min-width: 1.5em; }
 
 /* ---- 10. Cards + detail pages ---- */
 .formula-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
@@ -934,15 +945,35 @@ html.suppress-transitions .sidebar { transition: none !important; }
 }
 
 .sql-block { position: relative; margin-bottom: 16px; }
-.sql-block pre {
+/* Shared SQL surface: pre (read-only) and textarea (editable) stay in sync. */
+.sql-block pre, .sql-block textarea {
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
+  line-height: inherit;
   white-space: pre-wrap;
-  padding: 16px 56px 16px 16px;
   min-height: 60px;
   color: var(--text);
   overflow-wrap: anywhere;
 }
+.sql-block pre {
+  padding: 16px 56px 16px 16px;
+}
+.sql-block textarea {
+  display: block;
+  width: 100%;
+  padding: 16px;
+  background: transparent;
+  border: none;
+  resize: none;
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  field-sizing: content;
+  min-height: 60px;
+  height: auto;
+}
+.sql-block textarea:focus { outline: none; }
 .sql-block > .formula-copy-btn { position: absolute; top: 8px; right: 8px; }
 /* Self-sufficient: carries its own size/background so it never depends on
    source order vs .formula-copy-btn (both classes are used together). */
@@ -990,6 +1021,10 @@ table.var-table .var-c1, table.qty-list-table .qty-c1 { width: 1px; }
 table.var-table th:first-child,
 table.qty-list-table th:first-child, table.qty-list-table td:first-child { white-space: nowrap; }
 table.var-overrides-table .var-c1 { width: 1px; }
+/* Override tables share one surface everywhere: /create page, translate dialog, print edit dialog. */
+table.var-table { border-collapse: collapse; font-size: var(--fs-lg); width: 100%; }
+table.var-table th, table.var-table td { border: 1px solid var(--border); padding: 6px 28px 6px 10px; text-align: left; }
+table.var-table th { background: var(--bg-secondary); font-weight: 600; }
 /* Overlay avoids shoving long unit names onto another line; touch keeps in-flow below */
 .units-ref-btn {
   position: absolute;
@@ -1476,18 +1511,10 @@ tr.is-ref .units-ref-btn .ref-ic-active { display: inline-block; }
 }
 .lang-picker input[type=checkbox] { position: absolute; opacity: 0; pointer-events: none; }
 
-.var-table .qty-symbol { display: inline-block; min-width: 1.5em; }
-
-.tr-label-row { display: flex; align-items: center; gap: 6px; }
-.tr-label-row .filter-btn { margin-left: auto; }
-
 .var-table tr.qty-row-placeholder { opacity: 0.4; }
 .var-table tr.qty-row-placeholder input[disabled] { background: transparent; cursor: default; }
 
 .var-table .qty-occ { color: var(--text-secondary); font-family: var(--font-mono); font-size: 0.85em; margin-left: 4px; }
-
-.translate-form { display: flex; flex-direction: column; gap: 12px; }
-.translate-form > .detail-desc { margin: 0; padding: 0; }
 
 #description, #links { margin-top: 8px; }
 #var-overrides-section { margin-top: 12px; }
@@ -1594,7 +1621,7 @@ tbody[data-list-container] tr.kb-current,
 
 /* ---- 20. Selection for print ---- */
 #select-toggle.active, #context-select-btn.active { color: var(--accent); }
-#print-btn:disabled, #show-selected-toggle:disabled, [data-action="print-now"]:disabled { opacity: 0.35; }
+#print-btn:disabled, #show-selected-toggle:disabled, #share-btn:disabled, [data-action="print-now"]:disabled { opacity: 0.35; }
 .select-check {
   display: none; position: absolute; top: 8px; right: 8px; z-index: 2; width: 24px; height: 24px;
   padding: 0; background: var(--bg); border: none; cursor: pointer; align-items: center; justify-content: center;
@@ -1619,17 +1646,18 @@ table.has-select .select-check.inline { position: absolute; left: 5px; top: 50%;
 .dlg-layout { display: flex; gap: 16px; flex: 1; min-height: 0; }
 .dlg-preview-wrap { flex: 1; min-width: 0; display: flex; position: relative; }
 .dlg-preview {
-  flex: 1; min-width: 0; overflow-y: auto; padding: 0; font-size: 15px;
-  /* Print paper: literal black-on-white by design, not theme tokens. */
-  color: #000; background: #fff;
+  flex: 1; min-width: 0; overflow: auto; padding: 12px; font-size: 15px;
+  /* Screen-only viewer chrome: gray surround, white paper. Print CSS is separate. */
+  color: #000; background: #808080;
   border: 1px solid var(--border); border-radius: var(--radius-md);
+  touch-action: pan-x pan-y;
 }
 .dlg-preview a { color: #000; }
 .dlg-options { width: 320px; flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; }
 .dlg-side-scroll { flex: 1; overflow-y: auto; min-height: 0; display: flex; flex-direction: column; gap: 14px; padding: 28px 12px 8px 2px; }
 .dlg-side-scroll > .opt-group:first-child .section-label,
 .dlg-side-scroll > .opt-group:first-child .section-label-row { margin-top: 0; }
-.dlg-side-fixed { flex-shrink: 0; display: flex; flex-direction: column; gap: 8px; padding: 12px 20px 0 0; border-top: 1px solid var(--border); }
+.dlg-side-fixed { flex-shrink: 0; display: flex; flex-direction: column; gap: 8px; padding: 12px 20px 0 0; }
 .btn-block { width: 100%; }
 .dlg-preview-toggle { display: none; }
 #print-layout-seg.view-tabs { margin-bottom: 0; }
@@ -1653,10 +1681,14 @@ button.view-tab { font-family: inherit; cursor: pointer; }
 .print-row-sym { font-weight: 600; flex-shrink: 0; }
 .print-row-sym .katex { font-size: 1em; }
 .print-row-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-#print-pdf-frame { width: 100%; height: 100%; min-height: 320px; border: 0; background: #fff; display: block; flex: 1; }
-.pdf-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text-secondary); font-size: var(--fs-md); z-index: 5; }
-.pdf-loading[hidden] { display: none; }
+.dlg-preview .pview-page { margin: 0 auto 16px; box-shadow: 0 1px 5px rgba(0,0,0,.45); }
+.dlg-preview .pview-page:last-child { margin-bottom: 0; }
+.dlg-preview .print-hint { background: #fff; border-radius: var(--radius-sm); padding: 12px 14px; }
+.print-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text-secondary); font-size: var(--fs-md); z-index: 5; }
+.print-loading[hidden] { display: none; }
 .print-hint { font-size: var(--fs-sm); color: var(--text-secondary); }
+.print-row-edit { margin-left: auto; flex-shrink: 0; }
+.print-row-edit.is-edited { color: var(--accent); }
 @media (width < 768px) {
   #print-dialog { padding: 8px; }
   .modal-content.print-content { max-width: 100%; height: calc(100vh - 16px); height: calc(100dvh - 16px); max-height: calc(100vh - 16px); max-height: calc(100dvh - 16px); overflow: hidden; padding: 12px 6px 12px 12px; }
@@ -1673,5 +1705,4 @@ button.view-tab { font-family: inherit; cursor: pointer; }
   .dlg-layout.show-preview .dlg-side-scroll { display: none; }
   .dlg-layout.show-preview .dlg-options { flex: 0 0 auto; }
   .dlg-preview-toggle { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
-  #print-pdf-frame { min-height: 0; }
 }

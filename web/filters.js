@@ -573,6 +573,8 @@ function buildFilterUrl() {
   U.stripTopicParams(sp);
   U.stripPagingParams(sp);
   U.stripSearchParam(sp, url.pathname === '/search');
+  // A new filter query exits the selected-only view but keeps the selection (?sel=).
+  ['show_selected'].forEach(function(k) { sp.delete(k); });
 
   if (_topicTree && _topicTreeMode === 'checkbox' && !allRootNodesChecked()) sp.set('topics', topCheckedIds().join(','));
   else if (_topicTree && _topicTreeMode === 'checkbox') sp.delete('topics');

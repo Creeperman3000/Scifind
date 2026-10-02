@@ -55,8 +55,39 @@ The `/create` page uses AJAX endpoints (not meant to be called directly):
 | Base only   | `base_only=1`                        | Only base quantities (`/quantities`)            |
 | Sort        | `sort=<key>`                         | Sort order                                      |
 | Exclude all | `exclude_all=1`                      | Empty result set (nothing selected)             |
-| Selection   | `selected_formulas`, `selected_quantities` | Print selection (CSV ids)                 |
-|             | `select_mode=1`, `show_selected=1`   | Selection UI mode / selected-only view          |
+| Selection view | `sel=<token>`, `show_selected=1`   | Selected-only view (single opaque share token) |
+
+### Selection
+
+The working selection set lives in the browsing URL itself: `?sel=` is the
+single source of truth (in-memory store mirrors it). Every toggle, edit, or
+custom add re-mints the token and `replaceState`s the address bar (debounced);
+if a mint exceeds the token budget the change is reverted with an error, so
+URL and state can never diverge. Copying the URL always shares the full
+selection — no `localStorage`, no import step, no per-tab drift. Bulk adds
+(select-all) pack the largest fitting prefix when the list exceeds the token
+budget and say how many were added. `?sel=` propagates across SPA navigations including detail pages; a new filter query
+keeps `?sel=` but exits the selected-only view. Select mode is session-scoped
+UI state, never a URL parameter.
+
+Explicit shares use one versioned token minted by `POST /api/selection-share`:
+
+- `?sel=s2.<base64url(gzip(json))>` embeds the id lists **plus** modified
+  formulas (`fo`), custom formulas (`cf`), quantity overrides (`qo`), and
+  custom quantities (`cq`) as compact tokens (`["q", qid, sym?, nam?, label?]`,
+  `["c", id]`, `["o", id]`, `["n", value]`) and display strings — the receiver
+  renders the sender's edited content, not stale DB rows.
+  Codec: `scifind_lib/selection.py`. The only budget is the token length
+  (8000 chars); id counts are dynamic, not capped.
+- Opening `…?sel=<token>` (e.g. `/formulas?sel=…`) imports the set into the
+  local store and cleans the address bar. `?sel=…&show_selected=1` renders the
+  server-side selected-only list (`/formulas`, `/quantities`).
+- The print dialog talks to `POST /api/selection-preview` with the same JSON
+  payload (no URL length limits).
+- Formula edits use `GET /api/formula-tokens?id=…` (prefill) and
+  `POST /api/formula-parse` (equation + overwrites → latex + compact tokens);
+  quantity edits use `GET /api/quantity-fields?id=…` (prefill).
+- `GET|POST /api/selection-resolve?sel=…` decodes a token back to its payload.
 
 ### Sorting
 

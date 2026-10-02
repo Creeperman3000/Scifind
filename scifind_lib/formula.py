@@ -392,6 +392,19 @@ def render_formulas_latex_batched(conn, formula_ids, locale="en-us"):
     return latex_by_id
 
 
+def render_tokens_latex(conn, tokens, locale="en-us"):
+    """Render LaTeX for in-memory token dicts (e.g. parsed from pasted SQL)."""
+    if not tokens:
+        return ""
+    operators = load_operators(conn)
+    qty_map = bulk_entity_rows(conn, "quantity", "id, name, symbol",
+        [t.get("quantity_id") for t in tokens if t.get("token_kind") == "quantity"])
+    const_map = bulk_entity_rows(conn, "constant", "id, symbol",
+        [t.get("constant_id") for t in tokens if t.get("token_kind") == "constant"])
+    tree = reduce_rpn_to_tree_preloaded(tokens, operators, qty_map, const_map)
+    return _latex_node(tree, locale) if tree is not None else ""
+
+
 def _empty_preview(error=""):
     return {"tokens": [], "latex": "", "dim_latex": "", "variables": [], "error": error}
 
