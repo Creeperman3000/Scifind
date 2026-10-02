@@ -38,34 +38,31 @@ from scifind_lib.units import (
 )
 
 def format_unit_symbol_plain(compound_unit_json, prefix_symbols=None):
-    """Render a compound_unit JSON list as a compact string like m·s⁻².
-
-    SI prefixes come from `prefix_symbols`, else fall back to ``10^{p}·``.
-    """
+    """Compact string like m·s⁻² (`prefix_symbols` overrides SI symbols)."""
     parts = []
     for uid, exp, prefix in parse_compound_unit_parts(compound_unit_json):
         if prefix is not None:
             key = int(prefix) if float(prefix) == int(prefix) else prefix
             sym = (prefix_symbols or {}).get(key, (prefix_symbols or {}).get(prefix))
-            ptxt = str(int(prefix)) if float(prefix) == int(prefix) else str(float(prefix))
-            base = f"{sym}{uid}" if sym else f"10^{{{ptxt}}}·{uid}"
+            prefix_text = str(int(prefix)) if float(prefix) == int(prefix) else str(float(prefix))
+            base = f"{sym}{uid}" if sym else f"10^{{{prefix_text}}}·{uid}"
         else:
             base = uid
-        etxt = str(int(exp)) if float(exp) == int(exp) else str(float(exp))
-        parts.append(f"{base}{etxt.translate(SUPERSCRIPT_DIGITS)}")
+        exp_text = str(int(exp)) if float(exp) == int(exp) else str(float(exp))
+        parts.append(f"{base}{exp_text.translate(SUPERSCRIPT_DIGITS)}")
     return "·".join(parts)
 
 
 def group_by_topic(rows, tree, locale="en-us"):
     by_topic = {}
     for row in rows:
-        topic = topic_name(row["topic_id"], tree, locale) or row["topic_id"]
+        topic = topic_name(row["topic"], tree, locale) or row["topic"]
         by_topic.setdefault(topic, []).append(row)
     return by_topic
 
 
 def render_variable_symbol(item, locale="en-us"):
-    """Render the base variable symbol (without exponent) for display tables."""
+    """Base variable symbol (without exponent) for display tables."""
     var = (localise(item.get("symbol_overwrite") or "", locale)
            or item.get("quantity_symbol")
            or item.get("quantity_id")

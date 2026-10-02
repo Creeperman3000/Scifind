@@ -24,7 +24,7 @@ depth-first order over the tree (e.g. `kinematics` is `2` under
 |--------|------|-------------|
 | `id` | TEXT | Primary key |
 | `name` | TEXT | JSON i18n: `{"en-us": "...", "en-uk": "..."}` |
-| `topic_id` | TEXT | FK → topic.id |
+| `topic` | TEXT | FK → topic.id |
 | `difficulty` | INTEGER | 1–10 |
 | `description` | TEXT | JSON i18n |
 | `links` | TEXT | JSON array of URLs: `["https://...", ...]` |
@@ -120,7 +120,7 @@ the exponent column name derives as `'dim_' + dim_symbol`
 | `name`                 | TEXT    | JSON i18n                                         |
 | `symbol`               | TEXT    | LaTeX symbol                                      |
 | `symbol_overwrite`     | TEXT    | JSON i18n symbol override                         |
-| `topic_id`             | TEXT    | FK → topic.id                                     |
+| `topic`             | TEXT    | FK → topic.id                                     |
 | `difficulty`           | INTEGER | 1–10                                              |
 | `description`          | TEXT    | JSON i18n                                         |
 | `links`                | TEXT    | JSON array of URLs                                |

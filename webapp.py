@@ -241,14 +241,14 @@ def _attach_breadcrumbs_batched(rows, locale, tree, name_map=None, parent_map=No
     name_map = name_map if name_map is not None else topic_name_map(tree, locale)
     parent_map = parent_map if parent_map is not None else build_tree_indices(tree)["parent"]
     for row in rows:
-        ids = topic_path(tree, row.get("topic_id"), _parent_map=parent_map)
+        ids = topic_path(tree, row.get("topic"), _parent_map=parent_map)
         row["breadcrumbs"] = [{"id": n, "name": name_map.get(n, n)} for n in ids] if ids else []
     return rows
 
 
 def _passes_topic_difficulty(item, topic_filter, fs):
     """Shared topic + difficulty gate for the quantities/formulas list pages."""
-    if topic_filter and item.get("topic_id") not in topic_filter:
+    if topic_filter and item.get("topic") not in topic_filter:
         return False
     diff = item.get("difficulty")
     return diff is None or fs.diff_min <= diff <= fs.diff_max

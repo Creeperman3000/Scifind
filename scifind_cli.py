@@ -140,7 +140,7 @@ def command_show(args):
         tree = load_tree(conn)
     print(f"\n  {_st('bold', localise(row['name'], 'en-us'))}  "
           f"{difficulty_to_stars(row['difficulty'])}")
-    if (topic := topic_name(row["topic_id"], tree)):
+    if (topic := topic_name(row["topic"], tree)):
         print(f"  {_st('cyan', topic)}  (difficulty {row['difficulty']}/10)")
     if latex:
         print(f"\n  $$\n  {latex}\n  $$")

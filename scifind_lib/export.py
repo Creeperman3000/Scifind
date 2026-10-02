@@ -14,7 +14,7 @@ from scifind_lib.util import safe_json_dict, slugify_text
 
 QTY_OVERRIDE_FIELDS = ("symbol_overwrite", "name_overwrite")  # schema order
 _QTY_OVERRIDE_ALIASES = {"symbol_overwrite": "symbol", "name_overwrite": "name"}
-FORMULA_COLUMNS = ["id", "name", "topic_id", "difficulty", "description", "links"]
+FORMULA_COLUMNS = ["id", "name", "topic", "difficulty", "description", "links"]
 TOKEN_COLUMNS = [
     "formula_id", "position", "token_kind", "quantity_id", "constant_id",
     "operator_id", "value", "symbol_overwrite", "name_overwrite",  # schema order
@@ -167,7 +167,7 @@ EXPORT_TABLE_COLUMNS = {
         "system", "is_base",
     ],
     "quantity": [
-        "id", "name", "symbol", "symbol_overwrite", "topic_id",
+        "id", "name", "symbol", "symbol_overwrite", "topic",
         "difficulty", "description", "links", "per_overwrite",
         "hidden", "dim_symbol", "dim_position",
     ],

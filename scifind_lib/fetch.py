@@ -154,21 +154,21 @@ def fetch_formula_token_quantities(conn, formula_id):
 _SEARCH_META_SQL = {
     "formula": (
         "SELECT id, name, json_extract(name, '$.en-us') AS name_en,"
-        " topic_id, difficulty FROM formula WHERE id IN ({})"
+        " topic, difficulty FROM formula WHERE id IN ({})"
     ),
     "quantity": (
-        "SELECT id, name, symbol, topic_id, difficulty"
+        "SELECT id, name, symbol, topic, difficulty"
         " FROM quantity WHERE id IN ({})"
     ),
     "unit": (
         "SELECT u.id, u.name, u.symbol, u.quantity_id,"
-        " q.topic_id AS quantity_topic, q.difficulty AS quantity_difficulty"
+        " q.topic AS quantity_topic, q.difficulty AS quantity_difficulty"
         " FROM unit u LEFT JOIN quantity q ON q.id = u.quantity_id"
         " WHERE u.id IN ({})"
     ),
     "constant": (
         "SELECT c.id, c.name, c.symbol, c.difficulty,"
-        " q.topic_id AS quantity_topic"
+        " q.topic AS quantity_topic"
         " FROM constant c LEFT JOIN quantity q ON q.id = c.quantity_id"
         " WHERE c.id IN ({})"
     ),
@@ -190,7 +190,7 @@ def _quantity_rows(conn, from_join, where="", params=()):
     cols = ", ".join(f"q.{c}" for c in dimension_columns(conn))
     rows = _all(conn,
         f"SELECT DISTINCT q.id, q.name, q.symbol, {_NAME_EN},"
-        f" q.topic_id, q.difficulty, {cols}"
+        f" q.topic, q.difficulty, {cols}"
         f" FROM {from_join} {where}", params)
     return sort_quantities_base_first(rows, conn)
 
@@ -247,14 +247,14 @@ def fetch_quantity_formulas_by_side(conn, quantity_id):
     rows = _all(conn,
         "SELECT f.id, f.name,"
         f" {_NAME_EN},"
-        " f.topic_id, f.difficulty,"
+        " f.topic, f.difficulty,"
         " ft.token_kind, ft.quantity_id, ft.operator_id"
         " FROM formula f"
         " JOIN formula_token ft ON ft.formula_id = f.id"
         " WHERE f.id IN ("
         " SELECT DISTINCT formula_id FROM formula_token"
         " WHERE quantity_id = ? AND token_kind = 'quantity')"
-        " ORDER BY f.topic_id, f.difficulty, f.id, ft.position",
+        " ORDER BY f.topic, f.difficulty, f.id, ft.position",
         (quantity_id,))
 
     primary_out, non_primary_out = [], []
@@ -262,7 +262,7 @@ def fetch_quantity_formulas_by_side(conn, quantity_id):
         token_rows = list(token_rows)
         header = token_rows[0]
         formula = {"id": fid, "name": header["name"], "name_en": header["name_en"],
-                   "topic_id": header["topic_id"], "difficulty": header["difficulty"]}
+                   "topic": header["topic"], "difficulty": header["difficulty"]}
         (primary_out if quantity_id in _left_of_first_comparison(token_rows)
          else non_primary_out).append(formula)
     return primary_out, non_primary_out
@@ -291,7 +291,7 @@ def fetch_quantities_by_ids(conn, quantity_ids):
 def fetch_unit(conn, unit_id):
     return _first(conn,
         "SELECT u.*, json_extract(q.name, '$.en-us') AS quantity_name,"
-        " q.topic_id, json_extract(u.name, '$.en-us') AS name_en"
+        " q.topic, json_extract(u.name, '$.en-us') AS name_en"
         " FROM unit u JOIN quantity q ON q.id = u.quantity_id"
         " WHERE u.id = ?",
         (unit_id,))
@@ -329,7 +329,7 @@ def fetch_all_constants(conn):
 def fetch_constant(conn, constant_id):
     """One constant row with localisation helpers and its linked quantity."""
     return _first(conn,
-        "SELECT c.*, rq.topic_id,"
+        "SELECT c.*, rq.topic,"
         " json_extract(c.name, '$.en-us') AS name_en,"
         " json_extract(c.description, '$.en-us') AS description_en,"
         " rq.id AS related_quantity_id,"
@@ -346,11 +346,11 @@ def fetch_constant_formulas(conn, constant_id):
     return _all(conn,
         "SELECT DISTINCT f.id, f.name,"
         f" json_extract(f.name, '$.en-us') AS name_en,"
-        " f.topic_id AS topic_id, f.difficulty"
+        " f.topic AS topic, f.difficulty"
         " FROM formula_token ft"
         " JOIN formula f ON f.id = ft.formula_id"
         " WHERE ft.token_kind = 'constant' AND ft.constant_id = ?"
-        " ORDER BY f.topic_id, f.difficulty, f.id",
+        " ORDER BY f.topic, f.difficulty, f.id",
         (constant_id,))
 
 
@@ -373,8 +373,8 @@ def fetch_all_operators(conn):
 def fetch_all_formulas(conn):
     return _all(conn,
         "SELECT f.id, f.name, json_extract(f.name, '$.en-us') AS name_en,"
-        " f.topic_id AS topic_id, f.difficulty"
-        " FROM formula f ORDER BY f.topic_id, f.difficulty, f.id")
+        " f.topic AS topic, f.difficulty"
+        " FROM formula f ORDER BY f.topic, f.difficulty, f.id")
 
 
 def _topic_diff_where(alias, topic_ids, diff_min, diff_max, extra=()):
@@ -382,7 +382,7 @@ def _topic_diff_where(alias, topic_ids, diff_min, diff_max, extra=()):
     where, params = list(extra), []
     if topic_ids:
         marks, vals = in_clause(list(topic_ids))
-        where.append(f"{alias}.topic_id IN ({marks})")
+        where.append(f"{alias}.topic IN ({marks})")
         params.extend(vals)
     if diff_min is not None and diff_max is not None:
         where.append(f"{alias}.difficulty BETWEEN ? AND ?")
@@ -396,10 +396,10 @@ def fetch_formulas_filtered(conn, topic=None, diff_min=None, diff_max=None,
     ids = topic_ids or ([topic] if topic else None)
     where, params = _topic_diff_where("f", ids, diff_min, diff_max)
     sql = ("SELECT f.id, f.name, json_extract(f.name, '$.en-us') AS name_en,"
-           " f.topic_id, f.difficulty FROM formula f")
+           " f.topic, f.difficulty FROM formula f")
     if where:
         sql += " WHERE " + " AND ".join(where)
-    return _all(conn, sql + " ORDER BY f.topic_id, f.difficulty, f.id", params)
+    return _all(conn, sql + " ORDER BY f.topic, f.difficulty, f.id", params)
 
 
 def fetch_quantities_filtered(conn, topic_ids=None, diff_min=None, diff_max=None,
@@ -568,7 +568,7 @@ def entity_sort_key(row, sort_key, locale, tree_order, qty_const_tokens=None):
         diff = row.get("difficulty") or 0
         return _difficulty_key(diff, sort_key, row["id"])
     if sort_key in ("topic_tree", "topic_alpha"):
-        topic = row.get("topic_id") or ""
+        topic = row.get("topic") or ""
         if sort_key == "topic_alpha":
             return (topic, row["id"])
         return (tree_order.get(topic, UNKNOWN_TREE_SORT_KEY), topic, row["id"])

@@ -100,13 +100,13 @@ def topic_name_map(tree, locale="en-us"):
     return {n["id"]: localise(n.get("translations") or {}, locale) for n in nodes}
 
 
-def topic_name(topic_id, tree, locale="en-us"):
-    if not topic_id:
+def topic_name(topic, tree, locale="en-us"):
+    if not topic:
         return None
     found = []
 
     def visit(node):
-        if node["id"] == topic_id:
+        if node["id"] == topic:
             found.append(localise(node.get("translations") or {}, locale))
     walk_tree(tree or [], visit)
     return found[0] if found else None
@@ -135,5 +135,5 @@ def _topic_tree_order_uncached(conn):
 
 
 def topic_tree_order(conn):
-    """{topic_id: position} over the science tree, from ``topic.position``."""
+    """{topic: position} over the science tree, from ``topic.position``."""
     return request_cached("_topic_tree_order", lambda: _topic_tree_order_uncached(conn))

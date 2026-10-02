@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS topic (
 CREATE TABLE IF NOT EXISTS formula (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL,       -- JSON i18n: {"en-us":"...","en-uk":"..."}
-    topic_id    TEXT REFERENCES topic(id),
+    topic       TEXT REFERENCES topic(id),
     difficulty  INTEGER CHECK (difficulty BETWEEN 1 AND 10),
     description TEXT,                -- JSON i18n
     links       TEXT,                -- JSON array of URL strings: ["https://...", ...]
@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS quantity (
     name             TEXT NOT NULL,       -- JSON i18n
     symbol           TEXT NOT NULL,
     symbol_overwrite TEXT,                -- JSON i18n override of quantity symbol
-    topic_id         TEXT REFERENCES topic(id),
+    topic            TEXT REFERENCES topic(id),
     difficulty       INTEGER CHECK (difficulty BETWEEN 1 AND 10),
     hidden           BOOLEAN NOT NULL DEFAULT 0 CHECK (hidden IN (0,1)),
     description      TEXT,                -- JSON i18n
@@ -188,8 +188,8 @@ CREATE INDEX IF NOT EXISTS idx_formula_token_kind_const ON formula_token(token_k
 CREATE INDEX IF NOT EXISTS idx_formula_token_fid_pos ON formula_token(formula_id, position);
 CREATE INDEX IF NOT EXISTS idx_unit_qty_sys_base ON unit(quantity_id, system, is_base);
 CREATE INDEX IF NOT EXISTS idx_unit_sys_base ON unit(system, is_base);
-CREATE INDEX IF NOT EXISTS idx_quantity_topic_diff ON quantity(topic_id, difficulty);
-CREATE INDEX IF NOT EXISTS idx_formula_topic_diff ON formula(topic_id, difficulty);
+CREATE INDEX IF NOT EXISTS idx_quantity_topic_diff ON quantity(topic, difficulty);
+CREATE INDEX IF NOT EXISTS idx_formula_topic_diff ON formula(topic, difficulty);
 CREATE INDEX IF NOT EXISTS idx_quantity_hidden ON quantity(hidden);
 CREATE INDEX IF NOT EXISTS idx_constant_quantity ON constant(quantity_id);
 CREATE INDEX IF NOT EXISTS idx_quantity_dim_symbol ON quantity(dim_symbol);
