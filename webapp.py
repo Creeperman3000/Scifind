@@ -3,13 +3,16 @@
 
 import gzip
 import html as html_module
+import ipaddress
 import json
 import logging
+import math
 import os
 import re
 import secrets
 import sqlite3
 import sys
+import threading
 import time
 
 from collections import deque
@@ -467,26 +470,90 @@ def _inject_csrf_token():
 
 
 _RATE_LIMIT_BUCKETS: dict = {}
-_RATE_LIMIT_MAX_BUCKETS = 10000
+_RATE_LIMIT_LOCK = threading.Lock()
 
 
-def _rate_limit(bucket, max_per_minute):
-    """Sliding-window limiter."""
+def _rate_limit_max_buckets():
+    try:
+        return max(100, int(os.environ.get("SCIFIND_RL_MAX_BUCKETS", "10000")))
+    except (TypeError, ValueError):
+        return 10000
+
+
+def _rl(key, default):
+    """Per-minute limit for ``key``, overridable via ``SCIFIND_RL_<KEY>``."""
+    try:
+        return max(0, int(os.environ.get(f"SCIFIND_RL_{key.upper()}", str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+_RATE_LIMIT_DEFAULTS = {
+    "search": 300,
+    "suggest": 600,
+    "latex": 600,
+    "units_column": 600,
+    "formulas": 300,
+    "quantities": 300,
+    "filter_ids": 300,
+    "sel_preview": 300,
+    "export": 60,
+    "share": 200,
+    "custom": 200,
+    "preview": 200,
+    "build_sql": 200,
+    "light": 600,
+}
+
+
+def _limited(prefix):
+    return _rate_limit(prefix, _rl(prefix, _RATE_LIMIT_DEFAULTS[prefix]))
+
+
+def _client_ip():
+    """Best-effort client IP. Only trusts X-Forwarded-For when the app
+    runs behind a known reverse proxy (``SCIFIND_TRUST_PROXY=1``)."""
+    remote = request.remote_addr or "anon"
+    if os.environ.get("SCIFIND_TRUST_PROXY", "").lower() not in ("1", "true", "yes"):
+        return remote
+    xff = request.headers.get("X-Forwarded-For", "")
+    if not xff:
+        return remote
+    first = xff.split(",")[0].strip().strip("[]")
+    if not first:
+        return remote
+    try:
+        ipaddress.ip_address(first)
+    except ValueError:
+        return remote
+    return first
+
+
+def _rate_limit(prefix, max_per_minute):
+    """Sliding-window limiter. Returns a 429 tuple with ``Retry-After``
+    when full (bucket key is never echoed back); else records the hit."""
+
     try:
         max_n = int(max_per_minute)
     except (TypeError, ValueError):
         return None
     if max_n <= 0:
         return None
+    bucket = f"{prefix}:{_client_ip()}"
     now = time.monotonic()
-    window = _RATE_LIMIT_BUCKETS.setdefault(bucket, deque())
-    if len(_RATE_LIMIT_BUCKETS) > _RATE_LIMIT_MAX_BUCKETS:
-        _RATE_LIMIT_BUCKETS.pop(next(iter(_RATE_LIMIT_BUCKETS)))
-    while window and window[0] < now - 60.0:
-        window.popleft()
-    if len(window) >= max_n:
-        return (f"{_err('error.rate_limit')}: {bucket}", 429)
-    window.append(now)
+    with _RATE_LIMIT_LOCK:
+        window = _RATE_LIMIT_BUCKETS.setdefault(bucket, deque())
+        if len(_RATE_LIMIT_BUCKETS) > _rate_limit_max_buckets():
+            _RATE_LIMIT_BUCKETS.pop(next(iter(_RATE_LIMIT_BUCKETS)))
+        while window and window[0] < now - 60.0:
+            window.popleft()
+        if len(window) >= max_n:
+            retry_after = str(max(1, int(math.ceil(window[0] + 60.0 - now))))
+            headers = {"Retry-After": retry_after,
+                       "RateLimit-Limit": str(max_n),
+                       "RateLimit-Remaining": "0"}
+            return (_err("error.rate_limit"), 429, headers)
+        window.append(now)
     return None
 
 
@@ -1081,7 +1148,7 @@ def base_units_page():
 
 @app.route("/search")
 def search_page():
-    limited = _rate_limit(f"search:{request.remote_addr or 'anon'}", 30)
+    limited = _limited("search")
     if limited is not None:
         return limited
     query = request.args.get("q", "").strip()[:SEARCH_QUERY_MAX_LENGTH]
@@ -1140,6 +1207,9 @@ def _json_cached(payload, max_age):
 
 @app.route("/api/search-suggestions")
 def search_suggestions():
+    limited = _limited("suggest")
+    if limited is not None:
+        return limited
     query = request.args.get("q", "").strip()[:SUGGEST_QUERY_MAX_LENGTH]
     locale = getattr(g, "locale", DEFAULT_LOCALE)
     suggestions = search_entities(get_db(), query, limit=8, locale=locale)
@@ -1150,6 +1220,9 @@ def search_suggestions():
 @app.route("/api/quantities-filter")
 def quantities_filter_data():
     """Lazy filter data for the quantity chips."""
+    limited = _limited("light")
+    if limited is not None:
+        return limited
     locale = getattr(g, "locale", DEFAULT_LOCALE)
     try:
         rows = fetch_all_quantities(get_db())
@@ -1165,7 +1238,7 @@ LATEX_UNICODE_MAX_LENGTH = 4000
 @app.route("/api/latex2unicode")
 def latex2unicode():
     """Unicode approximation of a LaTeX fragment (live-preview pages)."""
-    limited = _rate_limit(f"latex:{request.remote_addr or 'anon'}", 30)
+    limited = _limited("latex")
     if limited is not None:
         return limited
     tex = request.args.get("tex", "")[:LATEX_UNICODE_MAX_LENGTH]
@@ -1175,7 +1248,7 @@ def latex2unicode():
 @app.route("/api/units-column")
 def units_column_data():
     """One conversion column for a quantity's unit tables (lazy ref-switch)."""
-    limited = _rate_limit(f"unitscol:{request.remote_addr or 'anon'}", 30)
+    limited = _limited("units_column")
     if limited is not None:
         return limited
     qid = (request.args.get("quantity") or "").strip()[:100]
@@ -1377,6 +1450,9 @@ def _filtered_quantities(conn, fs, topic_filter):
 
 @app.route("/quantities")
 def all_quantities():
+    limited = _limited("quantities")
+    if limited is not None:
+        return limited
     conn, fs, tree, compressed, sort_key, topic_filter = _list_base(
         request.args, QUANTITY_SORT_KEYS, DEFAULT_QUANTITY_SORT)
     fs.quantity_mode = "or"
@@ -1436,6 +1512,9 @@ def all_quantities():
 
 @app.route("/formulas")
 def all_formulas():
+    limited = _limited("formulas")
+    if limited is not None:
+        return limited
     conn, fs, tree, compressed, sort_key, topic_filter = _list_base(
         request.args, FORMULA_SORT_KEYS, DEFAULT_FORMULA_SORT)
     locale = g.locale
@@ -1479,7 +1558,7 @@ def all_formulas():
 
 @app.route("/export")
 def export():
-    limited = _rate_limit(f"export:{request.remote_addr or 'anon'}|{request.endpoint or '?'}", 6)
+    limited = _limited("export")
     if limited is not None:
         return limited
     fmt = request.args.get("format") or request.cookies.get("sf_export_format", "csv")
@@ -1498,6 +1577,9 @@ def export():
 @app.route("/api/selection-preview", methods=["GET", "POST"])
 def selection_preview():
     """Print-dialog data for a selection payload."""
+    limited = _limited("sel_preview")
+    if limited is not None:
+        return limited
     conn = get_db()
     locale = getattr(g, "locale", DEFAULT_LOCALE)
     system = g.unit_system
@@ -1561,6 +1643,9 @@ def selection_preview():
 @app.route("/api/selection-share", methods=["POST"])
 def selection_share():
     """Mint a ``sel`` share token from a selection payload."""
+    limited = _limited("share")
+    if limited is not None:
+        return limited
     body = _json_body(force=True)
     if body is None:
         return {"error": _err("error.params_required")}, 400
@@ -1574,6 +1659,9 @@ def selection_share():
 @app.route("/api/selection-resolve", methods=["GET", "POST"])
 def selection_resolve():
     """Decode a ``sel`` token back to a normalized payload."""
+    limited = _limited("light")
+    if limited is not None:
+        return limited
     token = ""
     if request.method == "POST":
         body = _json_body()
@@ -1683,6 +1771,9 @@ def _apply_parse_overrides(tokens, overrides):
 @app.route("/api/formula-tokens")
 def formula_tokens():
     """Compact tokens + reconstructed equation for one DB formula (edit prefill)."""
+    limited = _limited("light")
+    if limited is not None:
+        return limited
     sid = (request.args.get("id") or "").strip()[:80]
     if not sid:
         return {"error": _err("error.params_required")}, 400
@@ -1707,6 +1798,9 @@ def formula_tokens():
 @app.route("/api/formula-parse", methods=["POST"])
 def formula_parse():
     """Parse equation + overwrites -> latex + compact tokens (custom preview)."""
+    limited = _limited("custom")
+    if limited is not None:
+        return limited
     body = _json_body() or {}
     equation = body.get("equation") or ""
     if error := check_equation_length(equation, CREATE_EQUATION_MAX_LENGTH)[1]:
@@ -1733,6 +1827,9 @@ def formula_parse():
 @app.route("/api/quantity-fields")
 def quantity_fields():
     """Name/symbol/unit strings for one DB quantity (edit prefill)."""
+    limited = _limited("light")
+    if limited is not None:
+        return limited
     sid = (request.args.get("id") or "").strip()[:80]
     if not sid:
         return {"error": _err("error.params_required")}, 400
@@ -1753,6 +1850,9 @@ def quantity_fields():
 @app.route("/api/filter-ids")
 def filter_ids():
     """All ids matching the current list filters (across pages), for select-all."""
+    limited = _limited("filter_ids")
+    if limited is not None:
+        return limited
     view = request.args.get("view")
     locale = getattr(g, "locale", DEFAULT_LOCALE)
     if view == "formulas":
@@ -1789,7 +1889,7 @@ def _equation_error():
 @app.route("/create/preview-render", methods=["POST"])
 def create_preview_render():
     """Form-POST version of /api/preview that also returns detail_items HTML."""
-    limited = _rate_limit(f"preview:{request.remote_addr or 'anon'}", 20)
+    limited = _limited("preview")
     if limited is not None:
         return limited
     if error := _equation_error():
@@ -1858,6 +1958,9 @@ def _render_token_section(label, target_id, items, kind, locale, no_match_label)
 @app.route("/create/token-sidebar")
 def create_token_sidebar():
     """Server-rendered Q/C/O token sidebar for the /create page."""
+    limited = _limited("light")
+    if limited is not None:
+        return limited
     conn, locale = get_db(), g.locale
     no_results = _("create.no_results")
     sections = "".join(_render_token_section(_(key), tid, fn(conn), kind, locale, no_results)
@@ -1909,6 +2012,9 @@ def _render_menu_item(node, name_map):
 
 @app.route("/create/breadcrumb")
 def create_breadcrumb():
+    limited = _limited("light")
+    if limited is not None:
+        return limited
     topic = (request.args.get("topic") or "").strip()[:200] or None
     tree = load_tree(get_db())
     name_map = topic_name_map(tree, g.locale)
@@ -1918,6 +2024,9 @@ def create_breadcrumb():
 @app.route("/create/languages")
 def create_languages():
     """Available locales plus the GitHub repo slug for new-issue links."""
+    limited = _limited("light")
+    if limited is not None:
+        return limited
     items = [{"code": code, "name": loc.get("meta", {}).get("name", code)}
              for code, loc in sorted(_available_locales().items())]
     return {"current": getattr(g, "locale", DEFAULT_LOCALE), "locales": items,
@@ -1967,7 +2076,7 @@ def _sql_error(message, code=None):
 @app.route("/create/build-sql", methods=["POST"])
 def create_build_sql():
     """Form-POST equivalent of /api/build-sql returning rendered modal HTML."""
-    limited = _rate_limit(f"buildsql:{request.remote_addr or 'anon'}", 20)
+    limited = _limited("build_sql")
     if limited is not None:
         return limited
     if error := _equation_error():

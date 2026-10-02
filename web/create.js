@@ -295,7 +295,9 @@
     }).then((langs) => {
       flow.availableLanguages = (langs && langs.locales) || [];
       if (langs && langs.repo) window._scifindRepo = langs.repo;
+      const vars = flow.variables;
       resetFlow();
+      flow.variables = vars;
       $('modal-step').innerHTML = '';
       $('modal-actions').innerHTML = '';
       pushPage({ kind: 'pick', selected: [] });

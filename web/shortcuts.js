@@ -75,6 +75,11 @@
     if (logo) { hidePending(); logo.click(); return; }
     navTo('/formulas');
   }
+  function printShortcut(e) {
+    if (e) e.preventDefault();
+    var dlg = $('print-dialog');
+    clickAction(dlg && dlg.classList.contains('open') ? 'print-now' : 'goto-print');
+  }
 
   function sidebarClosed(side) { return !window.SFUtils.sidebarOpenAttr(side); }
   function ensureSidebar(side, fn) {
@@ -559,9 +564,21 @@
     return true;
   }
 
+  /* ---- Selection & print (s-prefix): reuses the topbar buttons as actions ---- */
+  function handleSelectKey(k) {
+    var lk = (k || '').toLowerCase();
+    if (lk === 's') clickAction('toggle-select-mode');
+    else if (lk === 'a') clickAction('context-select');
+    else if (lk === 'o') clickAction('toggle-show-selected');
+    else if (lk === 'p') printShortcut();
+    else if (lk === 'y') clickAction('share-selection');
+    return true;
+  }
+
   /* ---- Pending-prefix indicator ---- */
   var PENDING_STATIC = {
     g: [['f', 'nav.formulas', 'Formulas'], ['q', 'detail.quantities', 'Quantities'], ['c', 'settings.create', 'Create'], ['h', 'shortcut.go_home', 'Home']],
+    s: [['s', 'tooltip.select_mode', 'Select'], ['a', 'print.add_all', 'Add all'], ['o', 'tooltip.show_selected', 'Show selected only'], ['p', 'tooltip.print_list', 'Print'], ['y', 'print.share_link', 'Share']],
   };
   function filterPendingOptions() {
     return [['q', t('detail.quantity', 'Quantity')], ['Q', modeToggleLabel(false)],
@@ -604,6 +621,7 @@
     var opts = [['/', t('tooltip.focus_search', 'Search')], ['?', t('shortcut.help_toggle', 'Shortcuts')],
       ['[', t('tooltip.toggle_sidebar', 'Sidebar')], [']', t('tooltip.toggle_tree', 'Tree')], ['g', t('shortcut.dot_go', 'Go…')]];
     if (list) opts.push(['f', t('shortcut.section_filters', 'Filter…')]);
+    opts.push(['s', t('shortcut.section_select', 'Select…')]);
     if ($('formula-tex')) opts.push(['c', t('shortcut.section_copy', 'Copy…')]);
     else if (list) opts.push(['c', t('shortcut.section_clear', 'Clear…')]);
     if (nav) {
@@ -711,7 +729,17 @@
       { html: '<kbd>g</kbd> <kbd>q</kbd> / <kbd>Alt 2</kbd>', labelKey: 'detail.quantities', labelFallback: 'Quantities' },
       { html: '<kbd>g</kbd> <kbd>c</kbd>', labelKey: 'settings.create', labelFallback: 'Create' },
       { html: '<kbd>g</kbd> <kbd>h</kbd>', labelKey: 'shortcut.go_home', labelFallback: 'Home' },
+      { html: '<kbd>v</kbd>', labelKey: 'tooltip.select_mode', labelFallback: 'Select' },
+      { html: '<kbd>p</kbd> / <kbd>Ctrl P</kbd>', labelKey: 'tooltip.print_list', labelFallback: 'Print' },
       { html: '<kbd>Esc</kbd>', labelKey: 'shortcut.esc_close', labelFallback: 'Close dialog, menu or highlight, or clear search' },
+    ] },
+    { titleKey: 'shortcut.section_select', titleFallback: 'Selection & print', rows: [
+      { html: '<kbd>s</kbd> <kbd>s</kbd> / <kbd>v</kbd>', labelKey: 'tooltip.select_mode', labelFallback: 'Select' },
+      { html: '<kbd>x</kbd> / <kbd>Space</kbd>', labelKey: 'shortcut.select_item', labelFallback: 'Toggle current item' },
+      { html: '<kbd>s</kbd> <kbd>a</kbd>', labelKey: 'print.add_all', labelFallback: 'Add all' },
+      { html: '<kbd>s</kbd> <kbd>o</kbd>', labelKey: 'tooltip.show_selected', labelFallback: 'Show selected only' },
+      { html: '<kbd>s</kbd> <kbd>p</kbd> / <kbd>p</kbd> / <kbd>Ctrl P</kbd>', labelKey: 'tooltip.print_list', labelFallback: 'Print' },
+      { html: '<kbd>s</kbd> <kbd>y</kbd>', labelKey: 'print.share_link', labelFallback: 'Share' },
     ] },
     { titleKey: 'shortcut.section_filters', titleFallback: 'Filters', rows: [
       { html: '<kbd>f</kbd> <kbd>q</kbd>', labelKey: 'detail.quantity', labelFallback: 'Quantity' },
@@ -917,11 +945,14 @@
       'g': function() { setPending('g'); },
       'f': function() { if (isListView()) setPending('f'); },
       'c': function() { if ($('formula-tex') || isListView()) setPending('c'); },
+      's': function() { setPending('s'); },
       'j': function() { moveVertical(1); },
       'k': function() { moveVertical(-1); },
       'h': function() { handleHorizontal(-1); },
       'l': function() { handleHorizontal(1); },
       'm': function() { if (isListView()) loadMore(); },
+      'v': function() { clickAction('toggle-select-mode'); },
+      'p': function() { printShortcut(e); },
       'e': function() { if ($('equation')) { e.preventDefault(); focusEl($('equation')); } },
       'E': function() { if ($('equation')) { e.preventDefault(); focusEl($('equation')); } },
       'ArrowDown': function() { if (moveVertical(1)) e.preventDefault(); },
@@ -939,6 +970,7 @@
       else if (k === 'c' || k === 'C') gotoCreate();
       else if (k === 'h' || k === 'H') gotoHome();
     },
+    s: function(k) { handleSelectKey(k); },
     f: function(k) { handleFilterKey(k); },
     fr: function(k) { setDiffBound(false, k); },
     fR: function(k) { setDiffBound(true, k); },
@@ -956,6 +988,7 @@
       }
       if (e.key === ',') { e.preventDefault(); if (isSettingsOpen()) closeSettings(); else openSettings(); return; }
       if (e.key === 'k' || e.key === 'K') { e.preventDefault(); focusSearch(); return; }
+      if (e.key === 'p' || e.key === 'P') { printShortcut(e); return; }
       if ((e.key === 'b' || e.key === 'B') && !e.shiftKey) { e.preventDefault(); clickAction('toggle-sidebar-left'); return; }
       if (e.key === 'B' && e.shiftKey) { e.preventDefault(); clickAction('toggle-sidebar-right'); return; }
       return;

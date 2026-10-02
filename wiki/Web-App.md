@@ -33,7 +33,15 @@ The DB is created automatically on first run if missing.
 single CSV file — use the CLI (`scifind_cli.py export --format csv`) for
 plain CSV output to stdout, or `--format csvdir` for per-table files.
 The chosen format is remembered in the `sf_export_format` cookie.
-Export is rate-limited to 6 requests/minute per client.
+Export is rate-limited to 60 requests/minute per client (heaviest endpoint,
+strictest tier). Page/API limits per client IP per minute: search, formulas,
+quantities, filter-ids, selection-preview 300; suggestions, latex2unicode,
+units-column and other light/cached endpoints 600; selection-share,
+formula-parse, preview-render, build-sql 200. All 429 responses carry a
+`Retry-After` header. Each `SCIFIND_RL_<KEY>` env var overrides one tier
+(`SEARCH`, `SUGGEST`, `LATEX`, `UNITS_COLUMN`, `FORMULAS`, `QUANTITIES`,
+`FILTER_IDS`, `SEL_PREVIEW`, `EXPORT`, `SHARE`, `CUSTOM`, `PREVIEW`,
+`BUILD_SQL`, `LIGHT`).
 
 The `/create` page uses AJAX endpoints (not meant to be called directly):
 `POST /create/preview-render`, `POST /create/build-sql`,
@@ -146,3 +154,6 @@ All optional environment variables:
 | `SCIFIND_MAX_UPLOAD_MB` | `1`                      | Max request body size in MB                     |
 | `SCIFIND_COOKIE_SECURE` | off                      | Set `Secure` on session cookies (`1`/`true`/`yes`) |
 | `SCIFIND_GITHUB_REPO`   | `Creeperman3000/Scifind` | Repo slug used for reporting issues |
+| `SCIFIND_TRUST_PROXY`   | off                      | Trust `X-Forwarded-For` for rate-limit client IP (`1`/`true`/`yes`, only behind a known reverse proxy) |
+| `SCIFIND_RL_MAX_BUCKETS` | `10000`                 | Max tracked rate-limit buckets |
+| `SCIFIND_RL_<KEY>`      | see tiers above          | Per-tier per-minute limit override |
