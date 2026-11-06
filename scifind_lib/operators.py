@@ -393,6 +393,17 @@ def _resolve_factor(factor, child_infos, op_id):
         raise ValueError(f"exponent must be a number; got kind={info.get('kind')!r}")
     raise ValueError(f"exponent must be a number; got kind={info.get('kind')!r}")
 
+def _try_resolve_factor(factor, child_infos, op_id):
+    """Return numeric factor or None when value_of points at non-numeric operand."""
+    if isinstance(factor, dict) and "value_of" in factor:
+        j = factor["value_of"] + len(child_infos) if factor["value_of"] < 0 else factor["value_of"]
+        if 0 <= j < len(child_infos):
+            info = child_infos[j]
+            if not (info.get("kind") == "number" and info.get("value") is not None):
+                return None
+    return _resolve_factor(factor, child_infos, op_id)
+
+
 def apply_dim_spec(spec, child_dims, child_infos, op_id):
     n = len(child_dims)
     width = len(child_dims[0]) if child_dims else 0
@@ -422,5 +433,21 @@ def apply_dim_spec(spec, child_dims, child_infos, op_id):
     elif len(raw) != n:
         raise ValueError(f"operator {op_id!r}: {len(raw)} factors for {n} operands")
     else:
-        weights = [_resolve_factor(f, child_infos, op_id) for f in raw]
+        weights = [_try_resolve_factor(factor, child_infos, op_id) for factor in raw]
+        if any(w is None for w in weights):
+            # Unknown exponents scale only dimensionless vectors since unknown*0 == 0.
+            result_dims = []
+            for i in range(width):
+                bad_idx = next(
+                    (j for j, w in enumerate(weights)
+                     if w is None and abs(child_dims[j][i]) > DIM_TOLERANCE),
+                    None,
+                )
+                if bad_idx is not None:
+                    raise ValueError(f"exponent must be a number; got kind={child_infos[bad_idx].get('kind')!r}")
+                result_dims.append(sum(
+                    w * vec[i] for w, vec in zip(weights, child_dims)
+                    if w is not None
+                ))
+            return result_dims
     return [sum(w * vec[i] for w, vec in zip(weights, child_dims)) for i in range(width)]

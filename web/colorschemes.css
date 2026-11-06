@@ -1,0 +1,417 @@
+/*
+  Sources:
+  - Catppuccin        github.com/catppuccin/palette
+  - Tokyo Night       github.com/folke/tokyonight.nvim (night / day)
+  - Kanagawa          github.com/rebelot/kanagawa.nvim (wave / dragon / lotus)
+  - Rosé Pine         github.com/rose-pine/palette
+  - Dracula / AluCard github.com/dracula/dracula-theme
+  - Everforest        github.com/sainnhe/everforest (medium)
+  - Nord              github.com/arcticicestudio/nord (snow storm for light)
+  - Gruvbox           github.com/morhetz/gruvbox
+  - Solarized         ethanschoonover.com/solarized
+  - AMOLED / Accessibility / Default: custom
+*/
+
+/* ---- Accessibility ----------------------------------------------------- */
+
+:root[data-cs="accessibility"][data-theme="dark"] {
+  --bg: #000;
+  --bg-secondary: #0f0f0f;
+  --bg-tertiary: #1e1e1e;
+  --text: #fff;
+  --text-secondary: #e6e6e6;
+  --border: #8f8f8f;
+  --accent: #ffd60a;
+  --accent-hover: color-mix(in srgb, var(--accent) 86%, #000);
+  --accent-ring: color-mix(in srgb, var(--accent) 25%, transparent);
+  --on-accent: #000;
+  --success: #00e676;
+  --danger: #ff5555;
+}
+
+:root[data-cs="accessibility"][data-theme="light"] {
+  --bg: #fff;
+  --bg-secondary: #e6e6e6;
+  --bg-tertiary: #d6d6d6;
+  --text: #000;
+  --text-secondary: #404040;
+  --border: #555;
+  --accent: #0d47a1;
+  --accent-hover: color-mix(in srgb, var(--accent) 86%, #000);
+  --accent-ring: color-mix(in srgb, var(--accent) 25%, transparent);
+  --on-accent: #fff;
+  --success: #006400;
+  --danger: #b00020;
+}
+
+/* ---- AMOLED ------------------------------------------------------------ */
+
+:root[data-cs="amoled"][data-theme="dark"] {
+  --bg: #000;
+  --bg-secondary: #0d0d0d;
+  --bg-tertiary: #191919;
+  --border: #2a2a2a;
+  --text: #e0e0e0;
+  --text-secondary: #999;
+  --accent: #3b82f6;
+  --accent-hover: color-mix(in srgb, var(--accent) 84%, var(--bg));
+  --accent-ring: color-mix(in srgb, var(--accent) 16%, transparent);
+  --on-accent: #fff;
+  --success: #16a34a;
+  --danger: #dc2626;
+}
+
+:root[data-cs="amoled"][data-theme="light"] {
+  /* Light default already uses pure white. */
+  --bg: #fff;
+}
+
+/* ---- Catppuccin --------------------------------------------------------- */
+
+:root[data-cs="catppuccin-frappe"][data-theme="dark"] {
+  --bg: #303446;
+  --bg-secondary: #414559;
+  --bg-tertiary: #51576d;
+  --border: #626880;
+  --text: #c6d0f5;
+  --text-secondary: #a5adce;
+  --accent: #8caaee;
+  --accent-hover: color-mix(in srgb, var(--accent) 84%, var(--bg));
+  --accent-ring: color-mix(in srgb, var(--accent) 16%, transparent);
+  --on-accent: #303446;
+  --success: #a6d189;
+  --danger: #e78284;
+}
+
+:root[data-cs="catppuccin-macchiato"][data-theme="dark"] {
+  --bg: #24273a;
+  --bg-secondary: #363a4f;
+  --bg-tertiary: #494d64;
+  --border: #5b6078;
+  --text: #cad3f5;
+  --text-secondary: #a5adcb;
+  --accent: #8aadf4;
+  --accent-hover: color-mix(in srgb, var(--accent) 84%, var(--bg));
+  --accent-ring: color-mix(in srgb, var(--accent) 16%, transparent);
+  --on-accent: #24273a;
+  --success: #a6da95;
+  --danger: #ed8796;
+}
+
+:root[data-cs="catppuccin-mocha"][data-theme="dark"] {
+  --bg: #1e1e2e;
+  --bg-secondary: #313244;
+  --bg-tertiary: #45475a;
+  --border: #585b70;
+  --text: #cdd6f4;
+  --text-secondary: #a6adc8;
+  --accent: #89b4fa;
+  --accent-hover: color-mix(in srgb, var(--accent) 84%, var(--bg));
+  --accent-ring: color-mix(in srgb, var(--accent) 16%, transparent);
+  --on-accent: #1e1e2e;
+  --success: #a6e3a1;
+  --danger: #f38ba8;
+}
+
+:root[data-cs="catppuccin-latte"][data-theme="light"] {
+  --bg: #eff1f5;
+  --bg-secondary: #e6e9ef;
+  --bg-tertiary: #dce0e8;
+  --border: #ccd0da;
+  --text: #4c4f69;
+  --text-secondary: #6c6f85;
+  --accent: #1e66f5;
+  --accent-hover: color-mix(in srgb, var(--accent) 86%, #000);
+  --accent-ring: color-mix(in srgb, var(--accent) 12%, transparent);
+  --on-accent: #eff1f5;
+  --success: #40a02b;
+  --danger: #d20f39;
+}
+
+/* ---- Dracula / AluCard -------------------------------------------------- */
+
+:root[data-cs="dracula"][data-theme="dark"] {
+  --bg: #282a36;
+  --bg-secondary: #343746;
+  --bg-tertiary: #424450;
+  --border: #44475a;
+  --text: #f8f8f2;
+  --text-secondary: #6272a4;
+  --accent: #bd93f9;
+  --accent-hover: color-mix(in srgb, var(--accent) 84%, var(--bg));
+  --accent-ring: color-mix(in srgb, var(--accent) 16%, transparent);
+  --on-accent: #21222c;
+  --success: #50fa7b;
+  --danger: #ff5555;
+}
+
+:root[data-cs="dracula-alucard"][data-theme="light"] {
+  --bg: #fffbeb;
+  --bg-secondary: #efeddc;
+  --bg-tertiary: #cfcfde;
+
+  --border: color-mix(in srgb, var(--text-secondary) 22%, var(--bg-tertiary));
+  --text: #1f1f1f;
+  --text-secondary: #6c664b;
+  --accent: #644ac9;
+  --accent-hover: color-mix(in srgb, var(--accent) 86%, #000);
+  --accent-ring: color-mix(in srgb, var(--accent) 12%, transparent);
+  --on-accent: #fffbeb;
+  --success: #14710a;
+  --danger: #cb3a2a;
+}
+
+/* ---- Everforest (medium) ------------------------------------------------ */
+
+:root[data-cs="everforest"][data-theme="dark"] {
+  --bg: #2d353b;
+  --bg-secondary: #343f44;
+  --bg-tertiary: #3d484d;
+  --border: #4f585e;
+  --text: #d3c6aa;
+  --text-secondary: #859289;
+  --accent: #a7c080;
+  --accent-hover: color-mix(in srgb, var(--accent) 84%, var(--bg));
+  --accent-ring: color-mix(in srgb, var(--accent) 16%, transparent);
+  --on-accent: #2d353b;
+  --success: #83c092;
+  --danger: #e67e80;
+}
+
+:root[data-cs="everforest-light"][data-theme="light"] {
+  --bg: #fdf6e3;
+  --bg-secondary: #f4f0d9;
+  --bg-tertiary: #efebd4;
+  --border: #e0dcc7;
+  --text: #5c6a72;
+  --text-secondary: #708089;
+  --accent: #3a94c5;
+  --accent-hover: color-mix(in srgb, var(--accent) 86%, #000);
+  --accent-ring: color-mix(in srgb, var(--accent) 12%, transparent);
+  --on-accent: #fdf6e3;
+  --success: #8da101;
+  --danger: #f85552;
+}
+
+/* ---- Gruvbox ------------------------------------------------------------ */
+
+:root[data-cs="gruvbox"][data-theme="dark"] {
+  --bg: #282828;
+  --bg-secondary: #3c3836;
+  --bg-tertiary: #504945;
+  --border: #665c54;
+  --text: #ebdbb2;
+  --text-secondary: #928374;
+  --accent: #83a598;
+  --accent-hover: color-mix(in srgb, var(--accent) 84%, var(--bg));
+  --accent-ring: color-mix(in srgb, var(--accent) 16%, transparent);
+  --on-accent: #282828;
+  --success: #b8bb26;
+  --danger: #fb4934;
+}
+
+:root[data-cs="gruvbox-light"][data-theme="light"] {
+  --bg: #fbf1c7;
+  --bg-secondary: #ebdbb2;
+  --bg-tertiary: #d5c4a1;
+  --border: #bdae93;
+  --text: #3c3836;
+  --text-secondary: #928374;
+  --accent: #076678;
+  --accent-hover: color-mix(in srgb, var(--accent) 86%, #000);
+  --accent-ring: color-mix(in srgb, var(--accent) 12%, transparent);
+  --on-accent: #fbf1c7;
+  --success: #79740e;
+  --danger: #9d0006;
+}
+
+/* ---- Kanagawa ----------------------------------------------------------- */
+
+:root[data-cs="kanagawa-wave"][data-theme="dark"] {
+  --bg: #1f1f28;
+  --bg-secondary: #2a2a37;
+  --bg-tertiary: #363646;
+  --border: #54546d;
+  --text: #dcd7ba;
+  --text-secondary: #727169;
+  --accent: #7e9cd8;
+  --accent-hover: color-mix(in srgb, var(--accent) 84%, var(--bg));
+  --accent-ring: color-mix(in srgb, var(--accent) 16%, transparent);
+  --on-accent: #1f1f28;
+  --success: #98bb6c;
+  --danger: #e82424;
+}
+
+:root[data-cs="kanagawa-dragon"][data-theme="dark"] {
+  --bg: #181616;
+  --bg-secondary: #282727;
+  --bg-tertiary: #393836;
+  --border: #625e5a;
+  --text: #c5c9c5;
+  --text-secondary: #737c73;
+  --accent: #8ba4b0;
+  --accent-hover: color-mix(in srgb, var(--accent) 84%, var(--bg));
+  --accent-ring: color-mix(in srgb, var(--accent) 16%, transparent);
+  --on-accent: #181616;
+  --success: #87a987;
+  --danger: #c4746e;
+}
+
+:root[data-cs="kanagawa-lotus"][data-theme="light"] {
+  --bg: #f2ecbc;
+  --bg-secondary: #e5ddb0;
+  --bg-tertiary: #dcd5ac;
+  --border: #d5cea3;
+  --text: #545464;
+  --text-secondary: #8a8980;
+  --accent: #4d699b;
+  --accent-hover: color-mix(in srgb, var(--accent) 86%, #000);
+  --accent-ring: color-mix(in srgb, var(--accent) 12%, transparent);
+  --on-accent: #f2ecbc;
+  --success: #6f894e;
+  --danger: #c84053;
+}
+
+/* ---- Nord --------------------------------------------------------------- */
+
+:root[data-cs="nord"][data-theme="dark"] {
+  --bg: #2e3440;
+  --bg-secondary: #3b4252;
+  --bg-tertiary: #434c5e;
+  --border: #4c566a;
+  --text: #d8dee9;
+  --text-secondary: #7b88a1;
+  --accent: #88c0d0;
+  --accent-hover: color-mix(in srgb, var(--accent) 84%, var(--bg));
+  --accent-ring: color-mix(in srgb, var(--accent) 16%, transparent);
+  --on-accent: #2e3440;
+  --success: #a3be8c;
+  --danger: #bf616a;
+}
+
+:root[data-cs="nord-light"][data-theme="light"] {
+  --bg: #eceff4;
+  --bg-secondary: #e5e9f0;
+  --bg-tertiary: #d8dee9;
+
+  --border: color-mix(in srgb, var(--text) 16%, var(--bg));
+  --text: #2e3440;
+  --text-secondary: #434c5e;
+  --accent: #5e81ac;
+  --accent-hover: color-mix(in srgb, var(--accent) 86%, #000);
+  --accent-ring: color-mix(in srgb, var(--accent) 12%, transparent);
+  --on-accent: #eceff4;
+  --success: #a3be8c;
+  --danger: #bf616a;
+}
+
+/* ---- Rosé Pine ---------------------------------------------------------- */
+
+:root[data-cs="rose-pine"][data-theme="dark"] {
+  --bg: #191724;
+  --bg-secondary: #1f1d2e;
+  --bg-tertiary: #26233a;
+  --border: #403d52;
+  --text: #e0def4;
+  --text-secondary: #6e6a86;
+  --accent: #ebbcba;
+  --accent-hover: color-mix(in srgb, var(--accent) 84%, var(--bg));
+  --accent-ring: color-mix(in srgb, var(--accent) 16%, transparent);
+  --on-accent: #191724;
+  --success: #9ccfd8;
+  --danger: #eb6f92;
+}
+
+:root[data-cs="rose-pine-moon"][data-theme="dark"] {
+  --bg: #232136;
+  --bg-secondary: #2a273f;
+  --bg-tertiary: #393552;
+  --border: #44415a;
+  --text: #e0def4;
+  --text-secondary: #6e6a86;
+  --accent: #ea9a97;
+  --accent-hover: color-mix(in srgb, var(--accent) 84%, var(--bg));
+  --accent-ring: color-mix(in srgb, var(--accent) 16%, transparent);
+  --on-accent: #232136;
+  --success: #9ccfd8;
+  --danger: #eb6f92;
+}
+
+:root[data-cs="rose-pine-dawn"][data-theme="light"] {
+  --bg: #faf4ed;
+  --bg-secondary: #f2e9e1;
+  --bg-tertiary: #dfdad9;
+  --border: #cecacd;
+  --text: #464261;
+  --text-secondary: #797593;
+  --accent: #286983;
+  --accent-hover: color-mix(in srgb, var(--accent) 86%, #000);
+  --accent-ring: color-mix(in srgb, var(--accent) 12%, transparent);
+  --on-accent: #faf4ed;
+  --success: #56949f;
+  --danger: #b4637a;
+}
+
+/* ---- Solarized ---------------------------------------------------------- */
+
+:root[data-cs="solarized"][data-theme="dark"] {
+  --bg: #002b36;
+  --bg-secondary: #073642;
+  --bg-tertiary: color-mix(in srgb, var(--text-secondary) 14%, var(--bg-secondary));
+  --border: #586e75;
+  --text: #839496;
+  --text-secondary: #586e75;
+  --accent: #268bd2;
+  --accent-hover: color-mix(in srgb, var(--accent) 84%, var(--bg));
+  --accent-ring: color-mix(in srgb, var(--accent) 16%, transparent);
+  --on-accent: #002b36;
+  --success: #859900;
+  --danger: #dc322f;
+}
+
+:root[data-cs="solarized-light"][data-theme="light"] {
+  --bg: #fdf6e3;
+  --bg-secondary: #eee8d5;
+  --bg-tertiary: color-mix(in srgb, var(--text-secondary) 10%, var(--bg-secondary));
+  --border: color-mix(in srgb, var(--text-secondary) 30%, var(--bg));
+  --text: #657b83;
+  --text-secondary: #586e75;
+  --accent: #268bd2;
+  --accent-hover: color-mix(in srgb, var(--accent) 86%, #000);
+  --accent-ring: color-mix(in srgb, var(--accent) 12%, transparent);
+  --on-accent: #fdf6e3;
+  --success: #859900;
+  --danger: #dc322f;
+}
+
+/* ---- Tokyo Night -------------------------------------------------------- */
+
+:root[data-cs="tokyo-night"][data-theme="dark"] {
+  --bg: #1a1b26;
+  --bg-secondary: #292e42;
+  --bg-tertiary: #414868;
+  --border: #565f89;
+  --text: #c0caf5;
+  --text-secondary: #a9b1d6;
+  --accent: #7aa2f7;
+  --accent-hover: color-mix(in srgb, var(--accent) 84%, var(--bg));
+  --accent-ring: color-mix(in srgb, var(--accent) 16%, transparent);
+  --on-accent: #1a1b26;
+  --success: #9ece6a;
+  --danger: #f7768e;
+}
+
+:root[data-cs="tokyo-night-light"][data-theme="light"] {
+  --bg: #e1e2e7;
+  --bg-secondary: #d0d5e3;
+  --bg-tertiary: #c4c8da;
+  --border: #b4b5b9;
+  --text: #3760bf;
+  --text-secondary: #6172b0;
+  --accent: #2e7de9;
+  --accent-hover: color-mix(in srgb, var(--accent) 86%, #000);
+  --accent-ring: color-mix(in srgb, var(--accent) 12%, transparent);
+  --on-accent: #e1e2e7;
+  --success: #587539;
+  --danger: #c64343;
+}

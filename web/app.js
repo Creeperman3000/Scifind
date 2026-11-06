@@ -900,6 +900,7 @@
   window.SFUtils.installSingleClickListener();
   var CHANGE_ACTIONS = {
     'switch-theme': switchTheme,
+    'switch-colorscheme': switchColorscheme,
     'switch-lang': function(v) { reloadWithCookie('sf_locale', v); },
     'switch-dim-mode': function(v) { reloadWithCookie('sf_dim_mode', v); },
     'switch-unit-system': function(v) { reloadWithCookie('sf_unit_system', v); },
@@ -925,22 +926,116 @@
   });
 
   function prefersDark() { return window.matchMedia('(prefers-color-scheme: dark)').matches; }
-  function applyTheme(dark) { document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light'); }
+  function storedTheme() {
+    var t = localStorage.getItem('sf-theme');
+    return (t === 'light' || t === 'dark') ? t : 'system';
+  }
+  function resolvedTheme() { return storedTheme() === 'system' ? (prefersDark() ? 'dark' : 'light') : storedTheme(); }
+
+  /* Colorscheme <-> theme linking: schemes that lack both palettes are swapped
+     for their family's counterpart when the active theme has no matching variant. */
+  var CS_DARK_ONLY = { 'catppuccin-frappe': 1, 'catppuccin-macchiato': 1, 'catppuccin-mocha': 1, 'dracula': 1, 'kanagawa-wave': 1, 'kanagawa-dragon': 1, 'rose-pine': 1, 'rose-pine-moon': 1 };
+  var CS_LIGHT_ONLY = { 'catppuccin-latte': 1, 'dracula-alucard': 1, 'everforest-light': 1, 'gruvbox-light': 1, 'kanagawa-lotus': 1, 'nord-light': 1, 'rose-pine-dawn': 1, 'solarized-light': 1, 'tokyo-night-light': 1 };
+  var CS_COUNTERPART = {
+    'catppuccin-frappe': 'catppuccin-latte',
+    'catppuccin-macchiato': 'catppuccin-latte',
+    'catppuccin-mocha': 'catppuccin-latte',
+    'catppuccin-latte': 'catppuccin-mocha',
+    'dracula': 'dracula-alucard',
+    'dracula-alucard': 'dracula',
+    'everforest': 'everforest-light',
+    'everforest-light': 'everforest',
+    'gruvbox': 'gruvbox-light',
+    'gruvbox-light': 'gruvbox',
+    'kanagawa-wave': 'kanagawa-lotus',
+    'kanagawa-dragon': 'kanagawa-lotus',
+    'kanagawa-lotus': 'kanagawa-wave',
+    'nord': 'nord-light',
+    'nord-light': 'nord',
+    'rose-pine': 'rose-pine-dawn',
+    'rose-pine-moon': 'rose-pine-dawn',
+    'rose-pine-dawn': 'rose-pine',
+    'solarized': 'solarized-light',
+    'solarized-light': 'solarized',
+    'tokyo-night': 'tokyo-night-light',
+    'tokyo-night-light': 'tokyo-night'
+  };
+
+  function storedColorscheme() { return localStorage.getItem('sf-colorscheme') || 'default'; }
+
+  /* Keep the selected colorscheme compatible with the resolved theme. */
+  function ensureVariant() {
+    var cs = storedColorscheme(), theme = resolvedTheme();
+    if (cs === 'default') return;
+    if (!(theme === 'dark' ? CS_LIGHT_ONLY[cs] : CS_DARK_ONLY[cs])) return;
+    var alt = CS_COUNTERPART[cs] || 'default';
+    if (alt !== 'default' && (theme === 'dark' ? CS_DARK_ONLY[alt] : CS_LIGHT_ONLY[alt])) localStorage.setItem('sf-colorscheme', alt);
+    else localStorage.removeItem('sf-colorscheme');
+  }
+
+  /* data-theme is always resolved explicitly (also under "system"), so the
+     [data-theme]-qualified colorscheme selectors always have a token to match. */
+  function syncAppearance() {
+    var cs = storedColorscheme(), root = document.documentElement;
+    if (cs === 'default') root.removeAttribute('data-cs'); else root.setAttribute('data-cs', cs);
+    root.setAttribute('data-theme', resolvedTheme());
+  }
+
+  /* The colorscheme dropdown only lists palettes that match the active theme. */
+  function filterColorschemeOptions() {
+    var sel = $('setting-colorscheme');
+    if (!sel) return;
+    if (!sel._csOptions) {
+      sel._csOptions = [];
+      for (var i = 0; i < sel.options.length; i++) {
+        var o = sel.options[i];
+        sel._csOptions.push({ value: o.value, label: o.textContent, variant: o.getAttribute('data-variant') });
+      }
+    }
+    var theme = resolvedTheme(), list = [], opt, j;
+    for (j = 0; j < sel._csOptions.length; j++) {
+      if (!sel._csOptions[j].variant || sel._csOptions[j].variant === theme) list.push(sel._csOptions[j]);
+    }
+    sel.textContent = '';
+    for (j = 0; j < list.length; j++) {
+      opt = document.createElement('option');
+      opt.value = list[j].value;
+      opt.textContent = list[j].label;
+      if (list[j].variant) opt.setAttribute('data-variant', list[j].variant);
+      sel.appendChild(opt);
+    }
+    sel.value = storedColorscheme();
+    syncSelectWrap(sel);
+  }
+
+  /* The settings selects are wrapped in custom dropdowns — re-render the wrapper. */
+  function syncSelectWrap(sel) {
+    var wrap = sel.closest('.cselect');
+    if (!wrap) return;
+    var menu = wrap.querySelector('.cselect-menu');
+    var ctrl = menu && menu._morphCtrl;
+    if (ctrl && ctrl.sync) ctrl.sync();
+  }
 
   function switchTheme(theme) {
-    var dark = theme === 'dark' ? true : theme === 'light' ? false : prefersDark();
-    if (theme === 'dark' || theme === 'light') localStorage.setItem('sf-theme', theme);
-    else { localStorage.removeItem('sf-theme'); document.documentElement.removeAttribute('data-theme'); }
-    applyTheme(dark);
+    if (theme === 'light' || theme === 'dark') localStorage.setItem('sf-theme', theme);
+    else localStorage.removeItem('sf-theme');
+    ensureVariant(); syncAppearance(); filterColorschemeOptions();
+    var st = $('setting-theme');
+    if (st) { st.value = storedTheme(); syncSelectWrap(st); }
+  }
+
+  function switchColorscheme(cs) {
+    if (cs === 'default') localStorage.removeItem('sf-colorscheme');
+    else localStorage.setItem('sf-colorscheme', cs);
+    ensureVariant(); syncAppearance(); filterColorschemeOptions();
   }
 
   (function() {
-    var t = localStorage.getItem('sf-theme');
-    if (t) { switchTheme(t); var st = $('setting-theme'); if (st) st.value = t; return; }
-    if (prefersDark()) applyTheme(true);
-    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(e) {
-      if (!localStorage.getItem('sf-theme')) applyTheme(e.matches);
-    });
+    ensureVariant(); syncAppearance(); filterColorschemeOptions();
+    var st = $('setting-theme'); if (st) st.value = storedTheme();
+    var mql = window.matchMedia('(prefers-color-scheme: dark)');
+    if (mql.addEventListener) mql.addEventListener('change', function() { ensureVariant(); syncAppearance(); filterColorschemeOptions(); });
   })();
 
   function reloadWithCookie(name, value) {

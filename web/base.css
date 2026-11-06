@@ -755,7 +755,10 @@ html.suppress-transitions .sidebar { transition: none !important; }
   padding: 4px;
 }
 .dropdown-menu.open { display: block; }
-.settings-menu { top: 100%; margin-top: 4px; min-width: 280px; padding: 8px; z-index: var(--z-popover); }
+/* Abs-positioned menus shrink-to-fit capped by the tiny .settings-wrap
+   containing block, so the width must be set explicitly instead of letting
+   content grow it (the wide colorscheme trigger forced ugly wrapping). */
+.settings-menu { top: 100%; margin-top: 4px; width: 340px; max-width: calc(100vw - 24px); padding: 8px; z-index: var(--z-popover); }
 .settings-item {
   display: flex;
   align-items: center;

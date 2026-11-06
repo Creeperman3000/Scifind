@@ -219,7 +219,7 @@
   <meta name="description" content="{{ g.locale_seo_description }}">
   <meta name="keywords" content="{{ g.locale_seo_keywords }}">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <script>(function(){try{var t=localStorage.getItem('sf-theme');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+  <script>(function(){try{var cs=localStorage.getItem('sf-colorscheme'),t=localStorage.getItem('sf-theme');if(t!=='light'&&t!=='dark')t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';var e=document.documentElement;e.setAttribute('data-theme',t);if(cs&&cs!=='default')e.setAttribute('data-cs',cs);}catch(e){}})();</script>
   <title>{% block title %}Scifind{% endblock %}</title>
   <link rel="icon" type="image/svg+xml" href="{{ static_v('favicon.svg') }}">
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
@@ -232,6 +232,7 @@
   <script defer src="{{ static_v('tree.js') }}" onload="if(typeof window._bootTopicTree==='function')window._bootTopicTree()"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/lucide@1.48.0/dist/umd/lucide.min.js" onload="if(typeof refreshIcons==='function')refreshIcons()"></script>
   <link rel="stylesheet" href="{{ static_v('base.css') }}">
+  <link rel="stylesheet" href="{{ static_v('colorschemes.css') }}">
   {% block styles %}{% endblock %}
 </head>
 <body>
@@ -296,6 +297,38 @@
               <option value="system">{{ _('settings.theme_system') }}</option>
               <option value="light">{{ _('settings.theme_light') }}</option>
               <option value="dark">{{ _('settings.theme_dark') }}</option>
+            </select>
+          </div>
+          <div class="settings-item">
+            <label for="setting-colorscheme">{{ _('settings.colorscheme') }}</label>
+            <select id="setting-colorscheme" data-action="switch-colorscheme">
+              <option value="default">Default</option>
+              <option value="accessibility" data-variant="dark">Accessibility</option>
+              <option value="amoled" data-variant="dark">AMOLED</option>
+              <option value="catppuccin-frappe" data-variant="dark">Catppuccin Frappé</option>
+              <option value="catppuccin-macchiato" data-variant="dark">Catppuccin Macchiato</option>
+              <option value="catppuccin-mocha" data-variant="dark">Catppuccin Mocha</option>
+              <option value="dracula" data-variant="dark">Dracula</option>
+              <option value="everforest" data-variant="dark">Everforest</option>
+              <option value="gruvbox" data-variant="dark">Gruvbox</option>
+              <option value="kanagawa-dragon" data-variant="dark">Kanagawa Dragon</option>
+              <option value="kanagawa-wave" data-variant="dark">Kanagawa Wave</option>
+              <option value="nord" data-variant="dark">Nord</option>
+              <option value="rose-pine" data-variant="dark">Rosé Pine</option>
+              <option value="rose-pine-moon" data-variant="dark">Rosé Pine Moon</option>
+              <option value="solarized" data-variant="dark">Solarized</option>
+              <option value="tokyo-night" data-variant="dark">Tokyo Night</option>
+              <option value="accessibility" data-variant="light">Accessibility</option>
+              <option value="dracula-alucard" data-variant="light">AluCard</option>
+              <option value="amoled" data-variant="light">AMOLED</option>
+              <option value="catppuccin-latte" data-variant="light">Catppuccin Latte</option>
+              <option value="everforest-light" data-variant="light">Everforest</option>
+              <option value="gruvbox-light" data-variant="light">Gruvbox</option>
+              <option value="kanagawa-lotus" data-variant="light">Kanagawa Lotus</option>
+              <option value="nord-light" data-variant="light">Nord Light</option>
+              <option value="rose-pine-dawn" data-variant="light">Rosé Pine Dawn</option>
+              <option value="solarized-light" data-variant="light">Solarized</option>
+              <option value="tokyo-night-light" data-variant="light">Tokyo Night</option>
             </select>
           </div>
           <div class="settings-item">
